@@ -1,0 +1,18 @@
+# Built outputs
+.gradle/
+build/
+app/build/
+
+# IDE
+.idea/
+*.iml
+
+# Local config
+local.properties
+
+# Debug / profiling
+*.hprof
+
+# Claude
+.claude/
+
