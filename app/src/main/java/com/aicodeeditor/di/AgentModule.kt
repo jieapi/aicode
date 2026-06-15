@@ -21,6 +21,7 @@ import com.aicodeeditor.feature.agent.domain.tool.editor.DeleteCodeTool
 import com.aicodeeditor.feature.agent.domain.tool.editor.InsertCodeTool
 import com.aicodeeditor.feature.agent.domain.tool.editor.ReplaceCodeTool
 import com.aicodeeditor.feature.agent.domain.tool.code.ParseCodeTool
+import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
 import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.workflow.StandardAgentWorkflow
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
