@@ -13,9 +13,16 @@ android {
     defaultConfig {
         applicationId = "com.aicodeeditor"
         minSdk = 26
-        targetSdk = 34
+        // 锁定 targetSdk 28：Android 10+（API 29+）的 W^X/SELinux 策略禁止执行 App 可写
+        // 数据目录里的文件，PRoot 二进制将无法运行（同 Termux 的取舍）。代价：不能上 Google Play。
+        targetSdk = 28
         versionCode = 1
         versionName = "1.0.0"
+
+        // 仅打包 arm64-v8a 的 rootfs/proot，避免无意义地为其它架构膨胀 APK。
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -106,6 +113,15 @@ dependencies {
 
     // Kotlin 序列化
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    // 容器：解压 Alpine rootfs tar.gz（正确处理 symlink/hardlink/权限位）
+    implementation("org.apache.commons:commons-compress:1.26.2")
+
+    // Termux 开源终端组件：terminal-emulator 负责 VT100/ANSI 解析与 PTY（自带 native .so），
+    // terminal-view 是渲染用的 Android View。经 JitPack 分发（com.github.<user>.<repo> 坐标形式），
+    // 避免自行实现终端模拟器。
+    implementation("com.github.termux.termux-app:terminal-emulator:v0.118.0")
+    implementation("com.github.termux.termux-app:terminal-view:v0.118.0")
 
     // WebView (用于代码编辑器)
     implementation("androidx.webkit:webkit:1.11.0")
