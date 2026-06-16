@@ -11,5 +11,7 @@ interface AIProviderRepository {
     suspend fun saveProvider(provider: AIProviderConfig)
     suspend fun deleteProvider(id: String)
     suspend fun setActiveProvider(id: String)
+    suspend fun setSelectedModel(id: String, model: String)
+    suspend fun updateModels(id: String, models: List<String>)
     suspend fun initializeDefaultProvidersIfEmpty()
 }
