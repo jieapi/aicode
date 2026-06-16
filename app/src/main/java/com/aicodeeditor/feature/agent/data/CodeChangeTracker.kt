@@ -29,35 +29,19 @@ class CodeChangeTracker {
                 )
             }
 
-            toolCall.name == "replace_code" && result is ToolResult.Success -> {
-                val filePath = toolCall.arguments["file_path"]?.toString()?.removeSurrounding("\"") ?: return emptyList()
-                val startLine = toolCall.arguments["start_line"]?.toString()?.toIntOrNull() ?: 1
-                val endLine = toolCall.arguments["end_line"]?.toString()?.toIntOrNull() ?: 1
-                val newCode = toolCall.arguments["new_code"]?.toString()?.removeSurrounding("\"") ?: ""
+            toolCall.name == "edit_file" && result is ToolResult.Success -> {
+                val filePath = toolCall.arguments["path"]?.toString()?.removeSurrounding("\"") ?: return emptyList()
+                val oldCode = toolCall.arguments["old_string"]?.toString()?.removeSurrounding("\"") ?: ""
+                val newCode = toolCall.arguments["new_string"]?.toString()?.removeSurrounding("\"") ?: ""
                 newChanges.add(
                     CodeChange(
                         filePath = filePath,
+                        // 字符串匹配编辑不依赖行号；0 表示「按内容定位，非行号区间」
                         type = ChangeType.REPLACE,
-                        startLine = startLine,
-                        endLine = endLine,
-                        oldCode = "",
+                        startLine = 0,
+                        endLine = 0,
+                        oldCode = oldCode,
                         newCode = newCode
-                    )
-                )
-            }
-
-            toolCall.name == "insert_code" && result is ToolResult.Success -> {
-                val filePath = toolCall.arguments["file_path"]?.toString()?.removeSurrounding("\"") ?: return emptyList()
-                val line = toolCall.arguments["line"]?.toString()?.toIntOrNull() ?: 1
-                val code = toolCall.arguments["code"]?.toString()?.removeSurrounding("\"") ?: ""
-                newChanges.add(
-                    CodeChange(
-                        filePath = filePath,
-                        type = ChangeType.INSERT,
-                        startLine = line,
-                        endLine = line,
-                        oldCode = "",
-                        newCode = code
                     )
                 )
             }
