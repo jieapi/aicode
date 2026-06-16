@@ -227,6 +227,7 @@ fun AIChatPanel(
                     value = inputText,
                     onValueChange = { inputText = it },
                     onSend = sendMessage,
+                    onStop = { viewModel.stopAgent() },
                     isBusy = isBusy,
                     workspaceViewModel = workspaceViewModel,
                     activeProvider = activeProvider,
