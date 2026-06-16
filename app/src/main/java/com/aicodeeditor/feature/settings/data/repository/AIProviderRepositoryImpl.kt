@@ -50,6 +50,14 @@ class AIProviderRepositoryImpl @Inject constructor(
         aiProviderDao.activateProvider(id)
     }
 
+    override suspend fun setSelectedModel(id: String, model: String) {
+        aiProviderDao.setSelectedModel(id, model)
+    }
+
+    override suspend fun updateModels(id: String, models: List<String>) {
+        aiProviderDao.setModels(id, models.joinToString("\n"))
+    }
+
     override suspend fun initializeDefaultProvidersIfEmpty() {
         val currentActive = aiProviderDao.getActiveProviderSync()
         if (currentActive == null) {
@@ -63,8 +71,10 @@ class AIProviderRepositoryImpl @Inject constructor(
                 type = ProviderType.OPENAI.name,
                 apiKey = "", // User needs to configure this
                 baseUrl = "https://api.openai.com/",
-                defaultModel = "gpt-4-turbo",
-                isActive = true
+                defaultModel = "gpt-4o",
+                isActive = true,
+                models = listOf("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo").joinToString("\n"),
+                selectedModel = "gpt-4o"
             )
 
             val defaultAnthropic = AIProviderEntity(
@@ -73,8 +83,10 @@ class AIProviderRepositoryImpl @Inject constructor(
                 type = ProviderType.ANTHROPIC.name,
                 apiKey = "",
                 baseUrl = "https://api.anthropic.com/",
-                defaultModel = "claude-3-opus-20240229",
-                isActive = false
+                defaultModel = "claude-3-5-sonnet-20241022",
+                isActive = false,
+                models = listOf("claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229").joinToString("\n"),
+                selectedModel = "claude-3-5-sonnet-20241022"
             )
 
             aiProviderDao.insertProvider(defaultOpenAI)
@@ -83,6 +95,7 @@ class AIProviderRepositoryImpl @Inject constructor(
     }
 
     private fun AIProviderEntity.toDomainModel(): AIProviderConfig {
+        val modelList = models.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
         return AIProviderConfig(
             id = id,
             name = name,
@@ -90,7 +103,9 @@ class AIProviderRepositoryImpl @Inject constructor(
             apiKey = apiKey,
             baseUrl = baseUrl,
             defaultModel = defaultModel,
-            isActive = isActive
+            isActive = isActive,
+            models = modelList,
+            selectedModel = selectedModel.ifBlank { defaultModel }
         )
     }
 
@@ -102,7 +117,9 @@ class AIProviderRepositoryImpl @Inject constructor(
             apiKey = apiKey,
             baseUrl = baseUrl,
             defaultModel = defaultModel,
-            isActive = isActive
+            isActive = isActive,
+            models = models.joinToString("\n"),
+            selectedModel = selectedModel.ifBlank { defaultModel }
         )
     }
 }
