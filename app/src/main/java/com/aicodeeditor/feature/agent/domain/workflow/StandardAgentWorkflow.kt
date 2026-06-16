@@ -223,6 +223,12 @@ class StandardAgentWorkflow @Inject constructor(
             你是一个 AI 编程助手，可以通过调用工具来帮助用户完成编程任务（读写文件、修改代码、执行命令等）。
             当需要操作文件或运行命令时，请直接调用提供的工具，不要把工具调用写成普通文本或代码块。
 
+            工具使用约定:
+            - read_file 读文件；修改已有文件优先用 edit_file（基于 old_string/new_string 精确匹配，
+              改前先 read_file 拿到确切原文，old_string 要带足够上下文以保证唯一）。
+            - write_file 用于新建文件或整文件重写；不要用它做局部小改动。
+            - 其余操作（列目录、搜索、构建、lint、格式化、git 等）一律通过 execute_command 执行 shell 命令。
+
             路径约定（重要）:
             - 项目根目录固定为容器内路径 /workspace。
             - 所有文件路径都基于 /workspace，例如 /workspace/src/Main.kt，或直接用相对路径 src/Main.kt。
