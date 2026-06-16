@@ -11,8 +11,8 @@ class ToolRegistry {
         tools[name] = tool
     }
 
-    fun getTool(name: String): AgentTool {
-        return tools[name] ?: throw IllegalArgumentException("工具不存在: $name")
+    fun getTool(name: String): AgentTool? {
+        return tools[name]
     }
 
     fun getAvailableTools(): List<AgentTool> {
