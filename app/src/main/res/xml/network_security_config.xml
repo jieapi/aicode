@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        AI provider Base URLs are user-configurable and may point at plain-HTTP
+        endpoints (self-hosted proxies, LAN servers). Permit cleartext so those
+        endpoints work. Note: HTTP traffic, including the API key, is unencrypted.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
