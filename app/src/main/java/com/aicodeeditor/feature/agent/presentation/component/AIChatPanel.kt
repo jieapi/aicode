@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
@@ -127,10 +128,13 @@ fun AIChatPanel(
         }
     }
 
-    // 新消息、流式文字或工具实时输出更新时自动滚动到底部。
-    LaunchedEffect(messages.size, messages.lastOrNull()?.content, runningTool?.text) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+    // 新消息、流式文字或工具实时输出更新时自动滚动到底部；
+    // 「思考中」气泡出现/消失（isBusy 变化）也一并滚动到可见。
+    LaunchedEffect(messages.size, messages.lastOrNull()?.content, runningTool?.text, isBusy) {
+        val extra = if (isBusy && runningTool == null) 1 else 0
+        val target = messages.size - 1 + extra
+        if (target >= 0) {
+            listState.animateScrollToItem(target)
         }
     }
 
@@ -201,6 +205,11 @@ fun AIChatPanel(
                                 // 命中运行中工具的占位行时，传入实时累积输出叠加渲染。
                                 val live = runningTool?.takeIf { it.messageId == message.id }?.text
                                 AgentMessageItem(message = message, liveOutput = live)
+                            }
+                            // 等待模型返回期间（无工具在流式输出）显示「思考中」占位气泡，
+                            // 避免发送后聊天区一片空白、像没反应。
+                            if (isBusy && runningTool == null) {
+                                item(key = "__thinking__") { ThinkingBubble() }
                             }
                         }
                     }
@@ -385,6 +394,38 @@ fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
     }
 }
 
+/** 等待模型返回时的占位气泡：左对齐、与助手气泡同款，内含 spinner + 提示文字。 */
+@Composable
+private fun ThinkingBubble() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(Radius.md, Radius.md, Radius.md, Radius.xs),
+            color = MaterialTheme.colorScheme.surface,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.width(Spacing.sm))
+                Text(
+                    text = "正在生成…",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
 /**
  * 工具消息：默认折叠为一行「状态图标 + 工具名 + 箭头」，点击展开查看完整结果。
  * [liveOutput] 非空时进入「实时输出」模式：自动展开、显示 spinner 与逐行累积输出。
@@ -466,6 +507,7 @@ private fun ChatInputBar(
     value: String,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
+    onStop: () -> Unit,
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
     activeProvider: AIProviderConfig?,
@@ -530,7 +572,7 @@ private fun ChatInputBar(
                     ModelChip(provider = activeProvider, onSelectModel = onSelectModel)
                 }
                 Spacer(Modifier.weight(1f))
-                SendButton(enabled = canSend, isBusy = isBusy, onClick = onSend)
+                SendButton(canSend = canSend, isBusy = isBusy, onSend = onSend, onStop = onStop)
             }
         }
     }
@@ -641,8 +683,10 @@ private fun ModelChip(
 }
 
 @Composable
-private fun SendButton(enabled: Boolean, isBusy: Boolean, onClick: () -> Unit) {
-    val bg = if (enabled) {
+private fun SendButton(canSend: Boolean, isBusy: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
+    // 运行中：圆形按钮变为「停止」，点击打断；空闲：发送箭头，仅在可发送时点亮。
+    val clickable = isBusy || canSend
+    val bg = if (clickable) {
         Modifier.background(brandGradient)
     } else {
         Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
@@ -653,20 +697,21 @@ private fun SendButton(enabled: Boolean, isBusy: Boolean, onClick: () -> Unit) {
             .size(40.dp)
             .clip(CircleShape)
             .then(bg)
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = clickable, onClick = if (isBusy) onStop else onSend),
         contentAlignment = Alignment.Center
     ) {
         if (isBusy) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Icon(
+                Icons.Default.Stop,
+                contentDescription = "停止",
+                tint = androidx.compose.ui.graphics.Color.White,
+                modifier = Modifier.size(20.dp)
             )
         } else {
             Icon(
                 Icons.Default.ArrowUpward,
                 contentDescription = "发送",
-                tint = if (enabled) androidx.compose.ui.graphics.Color.White
+                tint = if (canSend) androidx.compose.ui.graphics.Color.White
                 else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )

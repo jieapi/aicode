@@ -14,6 +14,7 @@ import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import com.aicodeeditor.feature.agent.domain.tool.ToolStreamEvent
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonObject
@@ -177,6 +178,9 @@ class StandardAgentWorkflow @Inject constructor(
                             }
                         }
                         (finalResult ?: ToolResult.Error("流式工具未返回结果")).toString()
+                    } catch (e: CancellationException) {
+                        // 用户主动停止：让取消向上传播，终止整个流（并触发 runCommandStream 回收进程）。
+                        throw e
                     } catch (e: Exception) {
                         FileLogger.e(TAG, "流式工具执行失败: ${toolCall.name}", e)
                         "Error: 工具执行失败: ${e.message}"
@@ -211,6 +215,8 @@ class StandardAgentWorkflow @Inject constructor(
         val tool = toolRegistry.getTool(name) ?: return "Error: 工具 $name 不存在"
         return try {
             tool.execute(arguments).toString()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "工具执行失败: $name", e)
             "Error: 工具执行失败: ${e.message}"
