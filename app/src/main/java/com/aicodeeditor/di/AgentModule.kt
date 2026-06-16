@@ -3,8 +3,10 @@ package com.aicodeeditor.di
 import android.content.Context
 import androidx.room.Room
 import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
+import com.aicodeeditor.feature.agent.data.local.dao.ChatSessionDao
+import com.aicodeeditor.feature.settings.data.local.dao.AIProviderDao
+import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
-import com.aicodeeditor.feature.settings.data.repository.AIProviderRepositoryImpl
 import com.aicodeeditor.feature.agent.data.local.database.AgentDatabase
 import com.aicodeeditor.feature.agent.data.CodeChangeTracker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -13,14 +15,9 @@ import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIApi
 import com.aicodeeditor.feature.agent.domain.provider.AIProvider
 import com.aicodeeditor.feature.agent.domain.provider.AnthropicAdapter
 import com.aicodeeditor.feature.agent.domain.provider.OpenAIAdapter
-import com.aicodeeditor.feature.agent.domain.tool.file.CreateFileTool
-import com.aicodeeditor.feature.agent.domain.tool.file.ListFilesTool
 import com.aicodeeditor.feature.agent.domain.tool.file.ReadFileTool
 import com.aicodeeditor.feature.agent.domain.tool.file.WriteFileTool
-import com.aicodeeditor.feature.agent.domain.tool.editor.DeleteCodeTool
-import com.aicodeeditor.feature.agent.domain.tool.editor.InsertCodeTool
-import com.aicodeeditor.feature.agent.domain.tool.editor.ReplaceCodeTool
-import com.aicodeeditor.feature.agent.domain.tool.code.ParseCodeTool
+import com.aicodeeditor.feature.agent.domain.tool.editor.EditFileTool
 import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
 import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.workflow.StandardAgentWorkflow
@@ -54,6 +51,12 @@ object AgentModule {
     @Singleton
     fun provideAgentMessageDao(database: AgentDatabase): AgentMessageDao {
         return database.agentMessageDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideChatSessionDao(database: AgentDatabase): ChatSessionDao {
+        return database.chatSessionDao()
     }
 
     @Provides
@@ -125,22 +128,14 @@ object AgentModule {
     fun provideToolRegistry(
         readFileTool: ReadFileTool,
         writeFileTool: WriteFileTool,
-        listFilesTool: ListFilesTool,
-        createFileTool: CreateFileTool,
-        insertCodeTool: InsertCodeTool,
-        replaceCodeTool: ReplaceCodeTool,
-        deleteCodeTool: DeleteCodeTool,
-        parseCodeTool: ParseCodeTool
+        editFileTool: EditFileTool,
+        executeCommandTool: ExecuteCommandTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("read_file", readFileTool)
             register("write_file", writeFileTool)
-            register("list_files", listFilesTool)
-            register("create_file", createFileTool)
-            register("insert_code", insertCodeTool)
-            register("replace_code", replaceCodeTool)
-            register("delete_code", deleteCodeTool)
-            register("parse_code", parseCodeTool)
+            register("edit_file", editFileTool)
+            register("execute_command", executeCommandTool)
         }
     }
 
@@ -154,8 +149,10 @@ object AgentModule {
     @Singleton
     fun provideAgentWorkflow(
         toolRegistry: ToolRegistry,
-        @Named("OpenAIProvider") aiProvider: AIProvider // Defaulting to OpenAI for now
+        aiProviderRepository: AIProviderRepository,
+        @Named("OpenAIProvider") openAIProvider: AIProvider,
+        @Named("AnthropicProvider") anthropicProvider: AIProvider
     ): AgentWorkflow {
-        return StandardAgentWorkflow(toolRegistry, aiProvider)
+        return StandardAgentWorkflow(toolRegistry, aiProviderRepository, openAIProvider, anthropicProvider)
     }
 }

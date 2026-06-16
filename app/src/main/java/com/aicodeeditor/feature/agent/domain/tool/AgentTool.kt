@@ -1,5 +1,6 @@
 package com.aicodeeditor.feature.agent.domain.tool
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
@@ -48,6 +49,28 @@ abstract class AgentTool {
             }
         )
     }
+
+    /**
+     * 生成符合 JSON Schema 的参数描述，用于真正传给大模型的 function-calling 接口
+     * （OpenAI 的 function.parameters / Anthropic 的 input_schema）。
+     */
+    fun toJsonSchema(): Map<String, Any> {
+        val properties = LinkedHashMap<String, Any>()
+        val required = mutableListOf<String>()
+        parameters.forEach { (key, param) ->
+            val prop = LinkedHashMap<String, Any>()
+            prop["type"] = param.type.name.lowercase()
+            prop["description"] = param.description
+            param.enum?.let { prop["enum"] = it }
+            properties[key] = prop
+            if (param.required) required.add(key)
+        }
+        return mapOf(
+            "type" to "object",
+            "properties" to properties,
+            "required" to required
+        )
+    }
 }
 
 data class ToolDefinition(
@@ -69,3 +92,21 @@ data class ToolCall(
     val name: String,
     val arguments: Map<String, JsonElement>
 )
+
+/**
+ * 可流式执行的工具：在最终结果产生之前，逐步 emit 过程输出（如命令的逐行 stdout），
+ * 让 UI 能实时显示「执行过程」而非只有最终结果。
+ *
+ * 实现类应同时实现 [AgentTool.execute] 作为非流式兜底；工作流优先走 [executeStream]。
+ */
+interface StreamingAgentTool {
+    fun executeStream(args: Map<String, JsonElement>): Flow<ToolStreamEvent>
+}
+
+/** 流式工具执行过程中产生的事件。 */
+sealed class ToolStreamEvent {
+    /** 一段新的过程输出（通常是一行）。 */
+    data class Progress(val chunk: String) : ToolStreamEvent()
+    /** 执行结束，附最终聚合结果（喂回模型用）。 */
+    data class Completed(val result: ToolResult) : ToolStreamEvent()
+}

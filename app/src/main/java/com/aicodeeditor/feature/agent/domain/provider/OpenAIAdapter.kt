@@ -4,53 +4,62 @@ import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIApi
 import com.aicodeeditor.feature.agent.data.remote.openai.ChatCompletionRequest
 import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIChatMessage
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
+import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIToolCall
 import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIToolDefinition
+import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIFunctionDefinition
 
 class OpenAIAdapter @Inject constructor(
     private val api: OpenAIApi
 ) : AIProvider {
 
-    // Default model to use
-    var model = "gpt-4-turbo"
+    override var apiKey = ""
+    override var baseUrl = "https://api.openai.com/"
+    override var model = "gpt-4-turbo"
 
-    override suspend fun complete(request: String, messages: List<AgentMessage>): AIResponse {
-        val openAIMessages = convertToOpenAIMessages(messages)
-        // Add the current request as a user message
-        openAIMessages.add(OpenAIChatMessage(role = "user", content = request))
+    override suspend fun complete(
+        systemPrompt: String,
+        messages: List<AgentMessage>,
+        tools: List<AgentTool>
+    ): AIResponse {
+        val openAIMessages = buildList {
+            if (systemPrompt.isNotBlank()) {
+                add(OpenAIChatMessage(role = "system", content = systemPrompt))
+            }
+            addAll(convertToOpenAIMessages(messages))
+        }
+
+        val toolDefs = tools.takeIf { it.isNotEmpty() }?.map { tool ->
+            OpenAIToolDefinition(
+                function = OpenAIFunctionDefinition(
+                    name = tool.name,
+                    description = tool.description,
+                    parameters = tool.toJsonSchema()
+                )
+            )
+        }
 
         val response = api.createChatCompletion(
-            ChatCompletionRequest(
+            url = joinUrl(baseUrl, "v1/chat/completions"),
+            authorization = "Bearer $apiKey",
+            request = ChatCompletionRequest(
                 model = model,
                 messages = openAIMessages,
+                tools = toolDefs,
                 stream = false
             )
         )
 
-        val choice = response.choices.firstOrNull()
-        val message = choice?.message
+        val message = response.choices.firstOrNull()?.message
         val content = message?.content ?: ""
-
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
 
-        return AIResponse(
-            content = content,
-            toolCalls = toolCalls
-        )
-    }
-
-    override fun completeStream(request: String, messages: List<AgentMessage>): Flow<String> = flow {
-        // Simple implementation that just calls the non-streaming version and emits the result
-        // A true streaming implementation would use Server-Sent Events (SSE) parsing
-        val response = complete(request, messages)
-        emit(response.content)
+        return AIResponse(content = content, toolCalls = toolCalls)
     }
 
     private fun convertToOpenAIMessages(messages: List<AgentMessage>): MutableList<OpenAIChatMessage> {
@@ -66,14 +75,16 @@ class OpenAIAdapter @Inject constructor(
                 is AgentMessage.ToolResultMessage -> OpenAIChatMessage(
                     role = "tool",
                     content = message.result,
-                    tool_call_id = message.id // Note: In a real app we need to track tool_call_ids
+                    tool_call_id = message.id
                 )
             }
         }.toMutableList()
     }
 
     private fun convertToToolCall(openAIToolCall: OpenAIToolCall): ToolCall {
-        val argumentsJson = Json.parseToJsonElement(openAIToolCall.function.arguments).jsonObject
+        val argumentsJson = runCatching {
+            Json.parseToJsonElement(openAIToolCall.function.arguments).jsonObject
+        }.getOrElse { JsonObject(emptyMap()) }
         return ToolCall(
             id = openAIToolCall.id,
             name = openAIToolCall.function.name,
@@ -87,7 +98,7 @@ class OpenAIAdapter @Inject constructor(
             type = "function",
             function = com.aicodeeditor.feature.agent.data.remote.openai.OpenAIFunctionCall(
                 name = toolCall.name,
-                arguments = toolCall.arguments.toString()
+                arguments = JsonObject(toolCall.arguments).toString()
             )
         )
     }

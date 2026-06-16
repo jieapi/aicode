@@ -4,32 +4,46 @@ import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicApi
 import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicMessageRequest
 import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicMessage
 import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicContentBlock
+import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicToolDefinition
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
+import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import javax.inject.Inject
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 class AnthropicAdapter @Inject constructor(
     private val api: AnthropicApi
 ) : AIProvider {
 
-    // Default model to use
-    var model = "claude-3-opus-20240229"
-    var apiKey = "" // In real app, this should come from a secure storage
+    override var apiKey = ""
+    override var baseUrl = "https://api.anthropic.com/"
+    override var model = "claude-3-opus-20240229"
 
-    override suspend fun complete(request: String, messages: List<AgentMessage>): AIResponse {
+    override suspend fun complete(
+        systemPrompt: String,
+        messages: List<AgentMessage>,
+        tools: List<AgentTool>
+    ): AIResponse {
         val anthropicMessages = convertToAnthropicMessages(messages)
-        anthropicMessages.add(AnthropicMessage(role = "user", content = request))
+
+        val toolDefs = tools.takeIf { it.isNotEmpty() }?.map { tool ->
+            AnthropicToolDefinition(
+                name = tool.name,
+                description = tool.description,
+                input_schema = tool.toJsonSchema()
+            )
+        }
 
         val response = api.createMessage(
+            url = joinUrl(baseUrl, "v1/messages"),
             apiKey = apiKey,
             request = AnthropicMessageRequest(
                 model = model,
                 messages = anthropicMessages,
+                system = systemPrompt.ifBlank { null },
+                tools = toolDefs,
                 stream = false
             )
         )
@@ -41,10 +55,7 @@ class AnthropicAdapter @Inject constructor(
             when (block.type) {
                 "text" -> contentText += block.text ?: ""
                 "tool_use" -> {
-                    val arguments = block.input?.let {
-                        Json.parseToJsonElement(Json.encodeToString(MapSerializer, it)).jsonObject
-                    } ?: JsonObject(emptyMap())
-
+                    val arguments = block.input?.let { mapToJson(it) } ?: JsonObject(emptyMap())
                     toolCalls.add(
                         ToolCall(
                             id = block.id ?: "",
@@ -56,16 +67,7 @@ class AnthropicAdapter @Inject constructor(
             }
         }
 
-        return AIResponse(
-            content = contentText,
-            toolCalls = toolCalls
-        )
-    }
-
-    override fun completeStream(request: String, messages: List<AgentMessage>): Flow<String> = flow {
-         // Simple implementation that just calls the non-streaming version and emits the result
-        val response = complete(request, messages)
-        emit(response.content)
+        return AIResponse(content = contentText, toolCalls = toolCalls)
     }
 
     private fun convertToAnthropicMessages(messages: List<AgentMessage>): MutableList<AnthropicMessage> {
@@ -83,9 +85,8 @@ class AnthropicAdapter @Inject constructor(
                     }
 
                     for (toolCall in message.toolCalls) {
-                         // Converting arguments back to Map
-                         // In a real app we need a proper JSON to Map converter
-                         val inputMap = emptyMap<String, Any>()
+                         @Suppress("UNCHECKED_CAST")
+                         val inputMap = jsonElementToMap(JsonObject(toolCall.arguments)) as Map<String, Any>
 
                          contentBlocks.add(
                             AnthropicContentBlock(
@@ -121,15 +122,31 @@ class AnthropicAdapter @Inject constructor(
         return result
     }
 
-    // Helper objects for serialization (placeholder)
-    private object MapSerializer : kotlinx.serialization.KSerializer<Map<String, Any>> {
-        override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor
-            get() = TODO("Not yet implemented")
-        override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: Map<String, Any>) {
-            TODO("Not yet implemented")
+    /** Convert a Map<String, Any> (from Gson) to a JsonObject */
+    private fun mapToJson(map: Map<String, Any>): JsonObject {
+        val mutable = mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
+        for ((k, v) in map) {
+            mutable[k] = when (v) {
+                is String -> JsonPrimitive(v)
+                is Number -> JsonPrimitive(v)
+                is Boolean -> JsonPrimitive(v)
+                is Map<*, *> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    mapToJson(v as Map<String, Any>)
+                }
+                else -> JsonPrimitive(v.toString())
+            }
         }
-        override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): Map<String, Any> {
-            TODO("Not yet implemented")
+        return JsonObject(mutable)
+    }
+
+    /** Convert a JsonObject back to Map<String, Any> for Anthropic API */
+    private fun jsonElementToMap(element: kotlinx.serialization.json.JsonElement): Any {
+        return when (element) {
+            is JsonObject -> element.mapValues { (_, v) -> jsonElementToMap(v) }
+            is kotlinx.serialization.json.JsonArray -> element.map { jsonElementToMap(it) }
+            is JsonPrimitive -> element.contentOrNull ?: ""
+            else -> element.toString()
         }
     }
 }

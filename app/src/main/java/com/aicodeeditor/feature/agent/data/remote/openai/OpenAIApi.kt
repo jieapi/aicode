@@ -1,19 +1,14 @@
 package com.aicodeeditor.feature.agent.data.remote.openai
 
-import okhttp3.ResponseBody
 import retrofit2.http.Body
 import retrofit2.http.POST
-import retrofit2.http.Streaming
+import retrofit2.http.Url
 
 interface OpenAIApi {
-    @POST("v1/chat/completions")
+    @POST
     suspend fun createChatCompletion(
+        @Url url: String,
+        @retrofit2.http.Header("Authorization") authorization: String,
         @Body request: ChatCompletionRequest
     ): ChatCompletionResponse
-
-    @Streaming
-    @POST("v1/chat/completions")
-    suspend fun createChatCompletionStream(
-        @Body request: ChatCompletionRequest
-    ): ResponseBody
 }
