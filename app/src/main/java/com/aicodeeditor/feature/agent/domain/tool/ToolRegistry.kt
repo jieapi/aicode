@@ -15,6 +15,14 @@ class ToolRegistry {
         return tools[name]
     }
 
+    fun unregister(name: String) {
+        tools.remove(name)
+    }
+
+    fun getToolNames(): Set<String> {
+        return tools.keys.toSet()
+    }
+
     fun getAvailableTools(): List<AgentTool> {
         return tools.values.toList()
     }
