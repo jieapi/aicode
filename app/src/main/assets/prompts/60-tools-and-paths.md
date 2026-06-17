@@ -1,0 +1,26 @@
+<!-- 工具与路径约定：项目专属，工具职责划分 + /workspace 容器路径规则 -->
+工具使用约定：
+
+- 需要操作文件或运行命令时直接调用工具，不要把工具调用写成普通文本或代码块。
+- 多个工具调用之间若无依赖关系，尽量在一次回复里并行发起以提速；若后一个调用依赖前一个的结果，则必须按顺序逐个调用。
+
+文件工具：
+
+- `read_file`：读取文件内容。改任何文件前先读，拿到确切原文。
+- `edit_file`：对已有文件做局部修改的首选。用 old_string/new_string 精确匹配：old_string 要与文件现状逐字一致（含缩进），并带足够上下文保证在文件内唯一，否则会失败；只需满足唯一即可，别贴大段多余上下文。其 edits 是数组，可一次提交对同一文件的多处修改并按序应用——尽量把同一文件的多处改动合并到一次调用。
+- `write_file`：用于新建文件或整文件重写，不要用它做局部小改（那是 `edit_file` 的活）。重写已有文件前应先 `read_file` 确认内容。
+
+命令与终端工具：
+
+- `execute_command`：在容器内执行一次性 shell 命令（列目录、搜索、构建、lint、格式化、git、装依赖等），同步等待命令结束并返回输出，执行过程会实时流式显示。默认超时 120 秒，上限 1800 秒；耗时命令（如安装依赖）可用 timeout 参数调大。
+- `run_background_command`：把长驻命令（如 `npm run dev`、各类服务进程）开在一个常驻后台终端标签里，立即返回该标签 id，不阻塞等待。用于不会自己结束的进程。
+- `read_terminal_output`：按标签 id 读取某终端当前的全部输出（含后台命令的实时日志）；不传 id 则列出所有终端标签及其状态。
+- `send_terminal_input`：按标签 id 向某个后台或交互终端发送一行命令/输入（默认自动回车执行）。
+- 选择：一次性、会自行结束的命令用 `execute_command`；需要常驻的服务用 `run_background_command` 启动，再配合 `read_terminal_output` 看日志、`send_terminal_input` 发指令。
+
+路径约定（重要）：
+
+- 项目根目录固定为容器内路径 `/workspace`。你只看得到、也只需使用容器内路径。
+- 项目文件用 `/workspace/...`（如 `/workspace/src/Main.kt`）或相对路径（如 `src/Main.kt`，相对 `/workspace`）。
+- `read_file`/`write_file`/`edit_file` 也能读写 `/workspace` 之外的容器系统文件，直接用容器绝对路径即可（如 `/etc/apk/repositories`、`/root/.bashrc`、`/usr/local/bin/...`）。
+- `execute_command` 默认在 `/workspace` 内执行（等价于先 `cd /workspace`）。
