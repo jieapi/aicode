@@ -21,19 +21,60 @@ data class ToolParameter(
     val type: ParameterType,
     val description: String,
     val required: Boolean = true,
-    val enum: List<String>? = null
+    val enum: List<String>? = null,
+    /**
+     * 当 [type] 为 [ParameterType.ARRAY] 时，描述数组元素的 JSON Schema（原样并入
+     * function-calling 的 items 字段）。例如元素是对象时传
+     * `{"type":"object","properties":{...},"required":[...]}`。为空则不输出 items。
+     */
+    val itemsSchema: Map<String, Any>? = null
 )
 
 enum class ParameterType {
     STRING, INTEGER, BOOLEAN, ARRAY, OBJECT
 }
 
+enum class ToolPermissionPolicy {
+    AUTO_APPROVE, ASK
+}
+
+data class PendingToolPermission(
+    val id: String,
+    val toolName: String,
+    val title: String,
+    val summary: String,
+    val details: String,
+    val argsPreview: String,
+    /**
+     * 「始终允许」会记忆的模式列表（shell 命令为程序名前缀，如 `git`；非 shell 工具为 `*`）。
+     * 为空表示该调用不可记忆（命令不可静态判定），UI 应禁用「始终允许」、只留单次放行。
+     * 由 [com.aicodeeditor.feature.agent.domain.permission.ToolPermissionPolicyEngine] 评估后填入。
+     */
+    val rememberablePatterns: List<String> = emptyList()
+)
+
 abstract class AgentTool {
     abstract val name: String
     abstract val description: String
     abstract val parameters: Map<String, ToolParameter>
+    open val permissionPolicy: ToolPermissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
 
     abstract suspend fun execute(args: Map<String, JsonElement>): ToolResult
+
+    open fun buildPermissionRequest(
+        callId: String,
+        args: Map<String, JsonElement>,
+        argsPreview: String
+    ): PendingToolPermission {
+        return PendingToolPermission(
+            id = callId,
+            toolName = name,
+            title = "确认执行工具",
+            summary = "AI 请求执行 $name",
+            details = argsPreview,
+            argsPreview = argsPreview
+        )
+    }
 
     fun toToolDefinition(): ToolDefinition {
         return ToolDefinition(
@@ -53,8 +94,11 @@ abstract class AgentTool {
     /**
      * 生成符合 JSON Schema 的参数描述，用于真正传给大模型的 function-calling 接口
      * （OpenAI 的 function.parameters / Anthropic 的 input_schema）。
+     *
+     * 设为 open：MCP 等外部工具携带的是任意原始 inputSchema，无法用受限的 [ParameterType]
+     * 枚举表达，需要覆写本方法直接透传服务端 schema。
      */
-    fun toJsonSchema(): Map<String, Any> {
+    open fun toJsonSchema(): Map<String, Any> {
         val properties = LinkedHashMap<String, Any>()
         val required = mutableListOf<String>()
         parameters.forEach { (key, param) ->
@@ -62,6 +106,7 @@ abstract class AgentTool {
             prop["type"] = param.type.name.lowercase()
             prop["description"] = param.description
             param.enum?.let { prop["enum"] = it }
+            if (param.type == ParameterType.ARRAY) param.itemsSchema?.let { prop["items"] = it }
             properties[key] = prop
             if (param.required) required.add(key)
         }
