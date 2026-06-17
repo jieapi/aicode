@@ -22,8 +22,8 @@ private val Context.workspaceDataStore by preferencesDataStore(name = "workspace
 /**
  * 管理 App 内的"工作区/项目"。
  *
- * 所有项目都放在外部私有目录 `getExternalFilesDir(null)/projects/<name>` 下：
- * 这是真实文件系统路径，[java.io.File] 工具与 PRoot 容器挂载都能直接使用，且无需运行时存储权限。
+ * 所有项目都放在内部私有目录 `filesDir/projects/<name>` 下：这是 ext4 真实路径，[java.io.File]
+ * 工具与 PRoot 容器挂载都能直接使用，无需运行时存储权限，且支持 symlink（emulated 存储不支持）。
  * 当前选中的工作区名持久化在 DataStore 中，重启后保留。
  */
 @Singleton
@@ -37,10 +37,15 @@ class WorkspaceRepository @Inject constructor(
 
     private val currentNameKey = stringPreferencesKey("current_workspace_name")
 
-    /** 所有项目的父目录；优先用外部私有目录，不可用时回退到内部 filesDir。 */
+    /**
+     * 所有项目的父目录，固定用内部 filesDir（app 私有 ext4）。
+     *
+     * 必须是 ext4：外部私有目录（getExternalFilesDir）落在 emulated/FUSE 存储，内核拒绝
+     * symlink()，npm/pnpm/yarn/git 建软链时会 `EACCES symlink` 而失败。filesDir 是 ext4，
+     * symlink 原生可用，所有工具链零配置即可跑。对外可见性由 DocumentsProvider 暴露，不依赖物理位置。
+     */
     private val projectsRoot: File by lazy {
-        val base = context.getExternalFilesDir(null) ?: context.filesDir
-        File(base, "projects").apply { mkdirs() }
+        File(context.filesDir, "projects").apply { mkdirs() }
     }
 
     private val _workspaces = MutableStateFlow<List<Workspace>>(emptyList())

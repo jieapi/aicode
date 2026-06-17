@@ -65,7 +65,7 @@ fun WorkspaceChip(
     Row(
         modifier = modifier
             .clip(RoundedCornerShape(Radius.pill))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.primaryContainer)
             .clickable { showSheet = true }
             .padding(horizontal = Spacing.md, vertical = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
@@ -73,7 +73,7 @@ fun WorkspaceChip(
         Icon(
             Icons.Default.Folder,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(Spacing.xs))
@@ -87,7 +87,7 @@ fun WorkspaceChip(
         Icon(
             Icons.Default.UnfoldMore,
             contentDescription = "切换工作区",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(16.dp)
         )
     }
