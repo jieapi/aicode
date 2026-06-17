@@ -1,6 +1,5 @@
 package com.aicodeeditor.core.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -28,61 +27,62 @@ object Spacing {
 object Radius {
     val xs = 4.dp
     val sm = 8.dp
-    val md = 14.dp
-    val lg = 20.dp
+    val md = 10.dp
+    val lg = 14.dp
     val pill = 999.dp
 }
 
 /**
- * 品牌强调色，跨明暗主题保持一致的渐变端点。
+ * 品牌强调色：蓝白基调下只保留清晰的主蓝与浅蓝层级。
  */
 object Brand {
-    val Indigo = Color(0xFF6366F1)
-    val Violet = Color(0xFF8B5CF6)
+    val Blue = Color(0xFF2563EB)
+    val Sky = Color(0xFF38BDF8)
+    val Ice = Color(0xFFEFF6FF)
 }
 
 val LocalSpacing = staticCompositionLocalOf { Spacing }
 
-// 深色：近黑中性底色 + 靛蓝强调，营造现代代码工具的氛围。
+// 深色保留给显式调用；默认界面使用下面的蓝白浅色主题。
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFF818CF8),
-    onPrimary = Color(0xFF1E1B4B),
-    primaryContainer = Color(0xFF3730A3),
-    onPrimaryContainer = Color(0xFFE0E7FF),
-    secondary = Color(0xFFA78BFA),
-    onSecondary = Color(0xFF2E1065),
-    tertiary = Color(0xFF34D399),
-    background = Color(0xFF0E0F13),
-    onBackground = Color(0xFFE4E4E7),
-    surface = Color(0xFF16181D),
-    onSurface = Color(0xFFE4E4E7),
-    surfaceVariant = Color(0xFF23262D),
-    onSurfaceVariant = Color(0xFFA1A1AA),
-    outline = Color(0xFF3F3F46),
-    outlineVariant = Color(0xFF27272A),
+    primary = Color(0xFF60A5FA),
+    onPrimary = Color(0xFF082F49),
+    primaryContainer = Color(0xFF0F3A63),
+    onPrimaryContainer = Color(0xFFDBEAFE),
+    secondary = Color(0xFF7DD3FC),
+    onSecondary = Color(0xFF082F49),
+    tertiary = Color(0xFF22C55E),
+    background = Color(0xFF07111F),
+    onBackground = Color(0xFFEAF2FF),
+    surface = Color(0xFF0D1B2E),
+    onSurface = Color(0xFFEAF2FF),
+    surfaceVariant = Color(0xFF13273F),
+    onSurfaceVariant = Color(0xFFB8C7DA),
+    outline = Color(0xFF44617F),
+    outlineVariant = Color(0xFF223B57),
     error = Color(0xFFF87171),
     onError = Color(0xFF450A0A),
     errorContainer = Color(0xFF7F1D1D),
     onErrorContainer = Color(0xFFFECACA)
 )
 
-// 浅色：柔白底色 + 同源靛蓝，保持品牌一致性同时干净明亮。
+// 浅色：蓝白背景 + 白色面板 + 低饱和边框，整体更简约、现代。
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF4F46E5),
+    primary = Brand.Blue,
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFE0E7FF),
-    onPrimaryContainer = Color(0xFF1E1B4B),
-    secondary = Color(0xFF7C3AED),
+    primaryContainer = Color(0xFFDBEAFE),
+    onPrimaryContainer = Color(0xFF0B3B76),
+    secondary = Color(0xFF0284C7),
     onSecondary = Color(0xFFFFFFFF),
-    tertiary = Color(0xFF059669),
-    background = Color(0xFFFBFBFD),
-    onBackground = Color(0xFF18181B),
+    tertiary = Color(0xFF16A34A),
+    background = Color(0xFFF7FBFF),
+    onBackground = Color(0xFF0F172A),
     surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF18181B),
-    surfaceVariant = Color(0xFFF1F2F5),
-    onSurfaceVariant = Color(0xFF52525B),
-    outline = Color(0xFFD4D4D8),
-    outlineVariant = Color(0xFFE7E7EA),
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFEAF4FF),
+    onSurfaceVariant = Color(0xFF475569),
+    outline = Color(0xFFBBD7F2),
+    outlineVariant = Color(0xFFDCEBFA),
     error = Color(0xFFDC2626),
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFFEE2E2),
@@ -92,8 +92,8 @@ private val LightColorScheme = lightColorScheme(
 // 收紧字重与字距，让标题更利落、正文更易读。
 private val AppTypography = Typography().run {
     copy(
-        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
-        titleLarge = titleLarge.copy(fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp),
+        headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
+        titleLarge = titleLarge.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
         titleMedium = titleMedium.copy(fontWeight = FontWeight.SemiBold),
         bodyLarge = bodyLarge.copy(lineHeight = 24.sp),
         bodyMedium = bodyMedium.copy(lineHeight = 21.sp),
@@ -103,7 +103,7 @@ private val AppTypography = Typography().run {
 
 @Composable
 fun AIEditorTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme

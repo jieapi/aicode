@@ -2,6 +2,8 @@ package com.aicodeeditor.di
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
 import com.aicodeeditor.feature.agent.data.local.dao.ChatSessionDao
 import com.aicodeeditor.feature.settings.data.local.dao.AIProviderDao
@@ -19,8 +21,14 @@ import com.aicodeeditor.feature.agent.domain.tool.file.ReadFileTool
 import com.aicodeeditor.feature.agent.domain.tool.file.WriteFileTool
 import com.aicodeeditor.feature.agent.domain.tool.editor.EditFileTool
 import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
+import com.aicodeeditor.feature.agent.domain.tool.container.RunBackgroundCommandTool
+import com.aicodeeditor.feature.agent.domain.tool.container.SendTerminalInputTool
+import com.aicodeeditor.feature.agent.domain.tool.container.ReadTerminalOutputTool
+import com.aicodeeditor.feature.agent.domain.tool.skill.LoadSkillTool
+import com.aicodeeditor.feature.agent.domain.prompt.SystemPromptProvider
 import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.workflow.StandardAgentWorkflow
+import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
 import dagger.Module
 import dagger.Provides
@@ -33,6 +41,16 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Named
 import javax.inject.Singleton
 
+/**
+ * v5 → v6：为 agent_messages 增加 reasoning 列（保存助手本轮思考过程）。
+ * 走显式迁移而非销毁重建，保留用户既有聊天历史。
+ */
+private val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE agent_messages ADD COLUMN reasoning TEXT")
+    }
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object AgentModule {
@@ -44,7 +62,9 @@ object AgentModule {
             context,
             AgentDatabase::class.java,
             "aicodeeditor_agent_db"
-        ).fallbackToDestructiveMigration().build()
+        ).addMigrations(MIGRATION_5_6)
+            .fallbackToDestructiveMigration()
+            .build()
     }
 
     @Provides
@@ -68,10 +88,12 @@ object AgentModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
+        // 流式 SSE 下读超时是「相邻数据块之间」的等待上限；120s 给慢启动/长思考留足空间，
+        // 真正卡死由上层阶梯重试（RetryPolicy）兜底。
         return OkHttpClient.Builder()
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
             .build()
     }
 
@@ -129,13 +151,21 @@ object AgentModule {
         readFileTool: ReadFileTool,
         writeFileTool: WriteFileTool,
         editFileTool: EditFileTool,
-        executeCommandTool: ExecuteCommandTool
+        executeCommandTool: ExecuteCommandTool,
+        runBackgroundCommandTool: RunBackgroundCommandTool,
+        sendTerminalInputTool: SendTerminalInputTool,
+        readTerminalOutputTool: ReadTerminalOutputTool,
+        loadSkillTool: LoadSkillTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("read_file", readFileTool)
             register("write_file", writeFileTool)
             register("edit_file", editFileTool)
             register("execute_command", executeCommandTool)
+            register("run_background_command", runBackgroundCommandTool)
+            register("send_terminal_input", sendTerminalInputTool)
+            register("read_terminal_output", readTerminalOutputTool)
+            register("load_skill", loadSkillTool)
         }
     }
 
@@ -151,8 +181,17 @@ object AgentModule {
         toolRegistry: ToolRegistry,
         aiProviderRepository: AIProviderRepository,
         @Named("OpenAIProvider") openAIProvider: AIProvider,
-        @Named("AnthropicProvider") anthropicProvider: AIProvider
+        @Named("AnthropicProvider") anthropicProvider: AIProvider,
+        promptProvider: SystemPromptProvider,
+        permissionManager: ToolPermissionManager
     ): AgentWorkflow {
-        return StandardAgentWorkflow(toolRegistry, aiProviderRepository, openAIProvider, anthropicProvider)
+        return StandardAgentWorkflow(
+            toolRegistry,
+            aiProviderRepository,
+            openAIProvider,
+            anthropicProvider,
+            promptProvider,
+            permissionManager
+        )
     }
 }

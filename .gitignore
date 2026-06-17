@@ -16,3 +16,5 @@ local.properties
 # Claude
 .claude/
 
+/termux-app-0.118.0/
+/system-prompts/
