@@ -18,8 +18,12 @@ data class AgentMessageEntity(
     val toolCallId: String? = null,
     // 仅 TOOL 行：工具名，用于 UI 渲染。
     val toolName: String? = null,
-    // 仅 TOOL 行：工具是否执行失败，用于 UI 渲染 ✅/❌。
-    val isError: Boolean = false
+    // 仅 TOOL 行：本次调用传入的参数（argsPreview，JSON 文本），用于 UI 显示「执行的指令」。
+    val toolArgs: String? = null,
+    // 仅 TOOL 行：工具是否执行失败，用于 UI 渲染状态圆点（绿/红）。
+    val isError: Boolean = false,
+    // 仅 ASSISTANT 行：本轮模型的思考过程（reasoning）。仅供 UI 持久化展示，不回放进上下文；无则为 null。
+    val reasoning: String? = null
 ) {
     fun toUIMessage(): AgentUIMessage {
         return AgentUIMessage(
@@ -28,7 +32,9 @@ data class AgentMessageEntity(
             content = content,
             timestamp = timestamp,
             toolName = toolName,
-            isError = isError
+            toolArgs = toolArgs,
+            isError = isError,
+            reasoning = reasoning
         )
     }
 }
