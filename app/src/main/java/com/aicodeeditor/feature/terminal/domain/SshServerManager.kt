@@ -45,11 +45,22 @@ class SshServerManager @Inject constructor(
 
         private const val TAG = "SshServerManager"
 
-        /** 容器内的安装标记；改动安装脚本时升版本号触发重装。 */
-        private const val SETUP_MARKER = "/etc/.aieditor_ssh_setup_v1"
+        /**
+         * 与 assets 里 alpine-rootfs 版本对应的 apk 分支，用于启用 community 仓库装 sshpass。
+         * 固定 3.21：该版本用 apk-tools 2.14（libfetch + 同步 socket），在 proot 下可靠；
+         * 3.24 的 apk-tools 3 自身网络实现与 proot 不兼容，会把下载误报成 "Permission denied"。
+         */
+        private const val ALPINE_BRANCH = "v3.21"
 
-        /** 与 assets 里 alpine-rootfs 版本对应的 apk 分支，用于启用 community 仓库装 sshpass。 */
-        private const val ALPINE_BRANCH = "v3.24"
+        /**
+         * apk 镜像源；用阿里云国内镜像替代官方 dl-cdn，避免国外源过慢。
+         *
+         * 用 http 而非 https：Alpine minirootfs 不含 ca-certificates，容器内 apk 走自己的原生 TLS，
+         * 无 CA 证书库会导致 HTTPS 握手失败，并被 apk 误报成 "Permission denied"（首次安装直接卡死）。
+         * apk 对索引与每个 .apk 都用 /etc/apk/keys 的签名独立校验，故 http 传输仍保证完整性，
+         * 这也是 proot/容器化 Alpine 引导阶段的通行做法。
+         */
+        private const val ALPINE_MIRROR = "http://mirrors.aliyun.com/alpine"
     }
 
     /** 串行化 prepare，避免并发重复安装/启动。 */
@@ -125,30 +136,46 @@ class SshServerManager @Inject constructor(
 
     // ---- 内部实现 ----
 
-    /** 容器内一次性安装与配置（幂等，靠 [SETUP_MARKER] 跳过）。 */
+    /** 容器内一次性安装与配置（幂等，靠校验 dropbear 二进制是否存在跳过）。 */
     private suspend fun ensureSetup() {
         val script = buildString {
             append("set -e\n")
-            // 已装过则直接结束
-            append("if [ -f $SETUP_MARKER ]; then echo SETUP_DONE; exit 0; fi\n")
-            // 启用 community 仓库（sshpass 在 community），并刷新索引
-            append("cat > /etc/apk/repositories <<EOF\n")
-            append("https://dl-cdn.alpinelinux.org/alpine/$ALPINE_BRANCH/main\n")
-            append("https://dl-cdn.alpinelinux.org/alpine/$ALPINE_BRANCH/community\n")
+            // 已装过则直接结束：直接校验 dropbear 二进制是否存在，
+            // 比标记文件更可靠（rootfs 被删/损坏时会自动触发重装）。
+            append("if command -v dropbear >/dev/null 2>&1; then echo SETUP_DONE; exit 0; fi\n")
+            // DNS：用阿里云公共 DNS（国内解析更快/更稳；8.8.8.8 在部分网络被拦）。
+            // 这里再写一次而非只靠安装期写入，是为了让已解压旧 rootfs 的设备在「重试」时也生效。
+            append("mkdir -p /etc /etc/apk\n")
+            append("cat > /etc/resolv.conf <<EOF\n")
+            append("nameserver 223.5.5.5\n")
+            append("nameserver 223.6.6.6\n")
             append("EOF\n")
-            append("apk update\n")
+            // 启用 community 仓库（sshpass 在 community），并刷新索引；用国内 http 镜像（见 ALPINE_MIRROR 注释）
+            append("cat > /etc/apk/repositories <<EOF\n")
+            append("$ALPINE_MIRROR/$ALPINE_BRANCH/main\n")
+            append("$ALPINE_MIRROR/$ALPINE_BRANCH/community\n")
+            append("EOF\n")
+            // apk 默认缓存/临时目录在精简 rootfs 下可能不存在或不可写，写失败会被误报成
+            // "Permission denied"。显式把缓存指向 /tmp 下新建的可写目录，并设 TMPDIR 兜底。
+            append("export TMPDIR=/tmp\n")
+            append("mkdir -p /tmp /var/tmp /run /tmp/apk-cache\n")
+            append("apk --cache-dir /tmp/apk-cache update\n")
             // dropbear 作为 SSH 服务端：在 proot 下比 openssh-sshd 更可靠（不依赖 seccomp 特权分离沙箱）。
-            // openssh-client 提供 ssh 客户端，sshpass 用于自动输入密码。
-            append("apk add --no-cache dropbear openssh-client sshpass\n")
+            // openssh-client 提供 ssh 客户端，sshpass 用于自动输入密码。复用上面的缓存目录，避免二次拉取。
+            append("apk --cache-dir /tmp/apk-cache add dropbear openssh-client sshpass\n")
             append("mkdir -p /etc/dropbear /run /root/.ssh\n")
             append("chmod 700 /root/.ssh\n")
             // 设置 root 密码（busybox/shadow 的 chpasswd 均支持 user:pass 形式）
             append("echo 'root:$password' | chpasswd\n")
-            append("touch $SETUP_MARKER\n")
             append("echo SETUP_DONE\n")
         }
 
-        val output = containerEngine.runCommandSync(script, projectPath = null)
+        // 首次需联网 apk update/add，耗时较长，给足上限超时，避免被默认超时打断。
+        val output = containerEngine.runCommandSync(
+            script,
+            projectPath = null,
+            timeoutMs = LinuxContainerEngine.MAX_TIMEOUT_MS
+        )
         if (!output.contains("SETUP_DONE")) {
             throw IllegalStateException("SSH 环境安装失败（首次需联网）：${output.takeLast(400)}")
         }

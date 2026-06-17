@@ -15,10 +15,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -44,8 +48,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aicodeeditor.core.theme.Spacing
+import com.aicodeeditor.core.ui.rememberImeBottomInset
+import com.aicodeeditor.feature.terminal.domain.TerminalSessionManager
 import com.aicodeeditor.feature.terminal.presentation.TerminalViewModel
-import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalView
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,15 +59,20 @@ fun TerminalScreen(
     viewModel: TerminalViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val prepareState by viewModel.prepareState.collectAsState()
+    val tabs by viewModel.tabs.collectAsState()
+    val activeTabId by viewModel.activeTabId.collectAsState()
+    // revision 变化时强制重组：标签输出/状态在管理器里就地更新（非 data class 替换），靠它驱动刷新。
+    val revision by viewModel.revision.collectAsState()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                title = { Text("终端 · SSH") },
+                title = { Text("终端") },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
+                    containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 navigationIcon = {
@@ -71,10 +81,10 @@ fun TerminalScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.reconnect() }) {
+                    IconButton(onClick = { viewModel.reconnectActive() }) {
                         Icon(
                             Icons.Default.Refresh,
-                            contentDescription = "重连",
+                            contentDescription = "重连当前标签",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -86,46 +96,165 @@ fun TerminalScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .padding(bottom = rememberImeBottomInset())
         ) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                when (val state = uiState) {
-                    is TerminalViewModel.UiState.Connecting -> StatusView(
-                        loading = true,
-                        message = "正在准备 SSH 环境…\n首次运行会在容器内安装 SSH 组件（需联网），请稍候"
+            when (val state = prepareState) {
+                is TerminalViewModel.PrepareState.Loading -> StatusView(
+                    loading = true,
+                    message = "正在准备容器环境…\n首次运行会解压容器，请稍候"
+                )
+
+                is TerminalViewModel.PrepareState.Error -> StatusView(
+                    loading = false,
+                    message = "无法启动终端：\n${state.message}",
+                    actionLabel = "重试",
+                    onAction = { viewModel.prepare() }
+                )
+
+                is TerminalViewModel.PrepareState.Ready -> {
+                    // revision 仅用于触发重组：读一下避免被优化掉。
+                    @Suppress("UNUSED_EXPRESSION") revision
+
+                    TabBar(
+                        tabs = tabs,
+                        activeTabId = activeTabId,
+                        onSelect = { viewModel.activate(it) },
+                        onClose = { viewModel.closeTab(it) },
+                        onNew = { viewModel.newTab() }
                     )
 
-                    is TerminalViewModel.UiState.Error -> StatusView(
-                        loading = false,
-                        message = "无法启动 SSH 终端：\n${state.message}",
-                        actionLabel = "重试",
-                        onAction = { viewModel.connect() }
-                    )
-
-                    is TerminalViewModel.UiState.Disconnected -> StatusView(
-                        loading = false,
-                        message = "SSH 会话已结束",
-                        actionLabel = "重新连接",
-                        onAction = { viewModel.reconnect() }
-                    )
-
-                    is TerminalViewModel.UiState.Ready ->
-                        // session 变化（重连）时用 key 强制重建 TerminalView 并重新挂载会话
-                        key(state.session) {
-                            TerminalSurface(session = state.session, viewModel = viewModel)
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        val active = tabs.firstOrNull { it.id == activeTabId }
+                        if (active == null) {
+                            StatusView(
+                                loading = false,
+                                message = "没有打开的终端标签",
+                                actionLabel = "新建标签",
+                                onAction = { viewModel.newTab() }
+                            )
+                        } else {
+                            // 切换标签时按 id 重建 TerminalView，并把视图回填到该 tab、挂载其会话。
+                            key(active.id) {
+                                TerminalSurface(tab = active, viewModel = viewModel)
+                            }
                         }
+                    }
+
+                    if (activeTabId != null) {
+                        ExtraKeysRow(viewModel)
+                    }
                 }
             }
+        }
+    }
+}
 
-            if (uiState is TerminalViewModel.UiState.Ready) {
-                ExtraKeysRow(viewModel)
+/** 可横滑的标签栏：每个标签显示状态点 + 标题 + 关闭；末尾「+」新建。 */
+@Composable
+private fun TabBar(
+    tabs: List<TerminalSessionManager.TerminalTab>,
+    activeTabId: String?,
+    onSelect: (String) -> Unit,
+    onClose: (String) -> Unit,
+    onNew: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            tabs.forEach { tab ->
+                TabChip(
+                    tab = tab,
+                    selected = tab.id == activeTabId,
+                    onClick = { onSelect(tab.id) },
+                    onClose = { onClose(tab.id) }
+                )
             }
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                    .clickable(onClick = onNew),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "新建标签",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabChip(
+    tab: TerminalSessionManager.TerminalTab,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onClose: () -> Unit
+) {
+    val bg = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+    val fg = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    // 状态点：运行中=绿，已结束=灰；后台标签用主题三级色提示。
+    val running = tab.runState is TerminalSessionManager.RunState.Running
+    val dot = when {
+        !running -> MaterialTheme.colorScheme.outline
+        tab.isBackground -> MaterialTheme.colorScheme.tertiary
+        else -> Color(0xFF22C55E)
+    }
+    Row(
+        modifier = Modifier
+            .height(36.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(dot)
+        )
+        Text(
+            text = tab.title,
+            color = fg,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp
+        )
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "关闭标签",
+                tint = fg,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }
 
 /** Termux TerminalView 的 Compose 包装：渲染与输入全部由该开源组件负责。 */
 @Composable
-private fun TerminalSurface(session: TerminalSession, viewModel: TerminalViewModel) {
+private fun TerminalSurface(tab: TerminalSessionManager.TerminalTab, viewModel: TerminalViewModel) {
     AndroidView(
         modifier = Modifier
             .fillMaxSize()
@@ -133,7 +262,7 @@ private fun TerminalSurface(session: TerminalSession, viewModel: TerminalViewMod
         factory = { ctx ->
             val view = TerminalView(ctx, null)
             val density = ctx.resources.displayMetrics.density
-            view.setTextSize((14f * density).toInt())
+            view.setTextSize((11f * density).toInt())
             view.setTerminalViewClient(
                 AppTerminalViewClient(
                     context = ctx,
@@ -143,10 +272,17 @@ private fun TerminalSurface(session: TerminalSession, viewModel: TerminalViewMod
             )
             view.isFocusable = true
             view.isFocusableInTouchMode = true
-            viewModel.terminalView = view
-            view.attachSession(session)
+            // 把视图回填到该标签：会话 client 的 viewProvider 据此把输出刷到当前挂载的视图。
+            tab.view = view
+            view.attachSession(tab.session)
+            // 切回已有标签时立即把累计的屏幕缓冲渲染出来。
+            view.onScreenUpdated()
             view.requestFocus()
             view
+        },
+        onRelease = { view ->
+            // 视图被回收（切走/重建）时解除引用，避免管理器把输出刷到已废弃的视图。
+            if (tab.view === view) tab.view = null
         }
     )
 }
@@ -186,7 +322,7 @@ private fun StatusView(
 /** 手机软键盘缺失的常用按键：Esc / Tab / Ctrl(预置) / 方向键 / Ctrl-C / Ctrl-D。 */
 @Composable
 private fun ExtraKeysRow(viewModel: TerminalViewModel) {
-    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -196,8 +332,9 @@ private fun ExtraKeysRow(viewModel: TerminalViewModel) {
         ) {
             KeyChip("Esc") { viewModel.write("") }
             KeyChip("Tab") { viewModel.write("\t") }
-            // 预置 Ctrl：下一个字符将作为 Ctrl 组合发送（如按 Ctrl 再按 c）
-            KeyChip("Ctrl") { viewModel.modifiers.ctrl = true }
+            KeyChip("Ctrl", active = viewModel.modifiers.ctrl) {
+                viewModel.modifiers.ctrl = !viewModel.modifiers.ctrl
+            }
             KeyChip("←") { viewModel.write("[D") }
             KeyChip("↑") { viewModel.write("[A") }
             KeyChip("↓") { viewModel.write("[B") }
@@ -211,20 +348,23 @@ private fun ExtraKeysRow(viewModel: TerminalViewModel) {
 }
 
 @Composable
-private fun KeyChip(label: String, onClick: () -> Unit) {
+private fun KeyChip(label: String, active: Boolean = false, onClick: () -> Unit) {
+    val bg = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+    val borderColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val fg = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
     Box(
         modifier = Modifier
             .height(36.dp)
             .widthChip(label)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = fg,
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
             modifier = Modifier.padding(horizontal = 12.dp)

@@ -6,6 +6,9 @@ import android.content.Context
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.InputMethodManager
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.aicodeeditor.core.util.FileLogger
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
@@ -17,12 +20,15 @@ import com.termux.view.TerminalViewClient
  *
  * [TerminalView] 在分发按键/字符时会回调 `readControlKey()` 等读取这些标志，
  * 从而支持手机软键盘上没有的 Ctrl/Alt 组合（如 Ctrl-C）。
+ *
+ * 标志用 Compose 可观察状态承载：额外按键行据此渲染「已按下」高亮，让用户看清当前是否
+ * 预置了 Ctrl/Alt。读写都发生在 UI 线程（按键分发、点击、consume 均在主线程），故安全。
  */
 class TerminalKeyModifiers {
-    @Volatile var ctrl = false
-    @Volatile var alt = false
-    @Volatile var shift = false
-    @Volatile var fn = false
+    var ctrl by mutableStateOf(false)
+    var alt by mutableStateOf(false)
+    var shift by mutableStateOf(false)
+    var fn by mutableStateOf(false)
 
     /** 一次性修饰键：发出一个字符后自动复位（贴近物理键盘按一下即用的直觉）。 */
     fun consume() {
@@ -109,7 +115,10 @@ class AppTerminalViewClient(
     }
 
     override fun shouldBackButtonBeMappedToEscape(): Boolean = false
-    override fun shouldEnforceCharBasedInput(): Boolean = true
+    // 返回 false → 输入框用 InputType.TYPE_NULL（Termux 上游默认）。这样 Gboard 等多数输入法会把
+    // 方向键/退格等作为真正的 KeyEvent 下发，TerminalView 才能映射成光标移动序列；若返回 true 走
+    // 「字符输入」模式（VISIBLE_PASSWORD），方向键会被输入法吞作内部光标移动，永远到不了终端。
+    override fun shouldEnforceCharBasedInput(): Boolean = false
     override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
     override fun isTerminalViewSelected(): Boolean = true
     override fun copyModeChanged(copyMode: Boolean) {}
