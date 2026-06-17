@@ -11,7 +11,7 @@ import com.aicodeeditor.feature.settings.data.local.entity.AIProviderEntity
 
 @Database(
     entities = [AgentMessageEntity::class, ChatSessionEntity::class, AIProviderEntity::class],
-    version = 4,
+    version = 6,
     exportSchema = false
 )
 abstract class AgentDatabase : RoomDatabase() {
