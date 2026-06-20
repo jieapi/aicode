@@ -1,5 +1,6 @@
 package com.aicodeeditor.feature.settings.data.repository
 
+import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.settings.data.local.dao.AIProviderDao
 import com.aicodeeditor.feature.settings.data.local.entity.AIProviderEntity
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
@@ -14,6 +15,10 @@ import javax.inject.Singleton
 class AIProviderRepositoryImpl @Inject constructor(
     private val aiProviderDao: AIProviderDao
 ) : AIProviderRepository {
+
+    private companion object {
+        const val TAG = "AIProviderRepo"
+    }
 
     override fun getAllProviders(): Flow<List<AIProviderConfig>> {
         return aiProviderDao.getAllProviders().map { entities ->
@@ -34,6 +39,7 @@ class AIProviderRepositoryImpl @Inject constructor(
     }
 
     override suspend fun saveProvider(provider: AIProviderConfig) {
+        FileLogger.i(TAG, "保存服务商 id=${provider.id} name=${provider.name} active=${provider.isActive}")
         val entity = provider.toEntity()
         if (provider.isActive) {
             aiProviderDao.deactivateAllProviders()
@@ -42,56 +48,29 @@ class AIProviderRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteProvider(id: String) {
+        FileLogger.i(TAG, "删除服务商 id=$id")
         aiProviderDao.deleteProvider(id)
     }
 
     override suspend fun setActiveProvider(id: String) {
+        FileLogger.i(TAG, "切换启用服务商 id=$id")
         aiProviderDao.deactivateAllProviders()
         aiProviderDao.activateProvider(id)
     }
 
     override suspend fun setSelectedModel(id: String, model: String) {
+        FileLogger.i(TAG, "切换模型 provider=$id model=$model")
         aiProviderDao.setSelectedModel(id, model)
     }
 
     override suspend fun updateModels(id: String, models: List<String>) {
+        FileLogger.d(TAG, "更新模型列表 provider=$id 共 ${models.size} 个")
         aiProviderDao.setModels(id, models.joinToString("\n"))
     }
 
     override suspend fun initializeDefaultProvidersIfEmpty() {
-        val currentActive = aiProviderDao.getActiveProviderSync()
-        if (currentActive == null) {
-            // Check if any providers exist
-            val allProvidersFlow = aiProviderDao.getAllProviders()
-            // We only insert defaults if there's no active provider to ensure the user has something to start with
-
-            val defaultOpenAI = AIProviderEntity(
-                id = "default_openai",
-                name = "OpenAI",
-                type = ProviderType.OPENAI.name,
-                apiKey = "", // User needs to configure this
-                baseUrl = "https://api.openai.com/",
-                defaultModel = "gpt-4o",
-                isActive = true,
-                models = listOf("gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo").joinToString("\n"),
-                selectedModel = "gpt-4o"
-            )
-
-            val defaultAnthropic = AIProviderEntity(
-                id = "default_anthropic",
-                name = "Anthropic",
-                type = ProviderType.ANTHROPIC.name,
-                apiKey = "",
-                baseUrl = "https://api.anthropic.com/",
-                defaultModel = "claude-3-5-sonnet-20241022",
-                isActive = false,
-                models = listOf("claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229").joinToString("\n"),
-                selectedModel = "claude-3-5-sonnet-20241022"
-            )
-
-            aiProviderDao.insertProvider(defaultOpenAI)
-            aiProviderDao.insertProvider(defaultAnthropic)
-        }
+        // 不再预置任何内置服务商或内置模型：服务商与模型完全由用户在设置页自行添加/拉取。
+        // 保留该方法以兼容接口与 ViewModel 调用，当前为空实现。
     }
 
     private fun AIProviderEntity.toDomainModel(): AIProviderConfig {
