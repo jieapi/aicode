@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import javax.inject.Inject
@@ -74,7 +75,7 @@ class ExecuteCommandTool @Inject constructor(
         args: Map<String, JsonElement>,
         argsPreview: String
     ): PendingToolPermission {
-        val command = args["command"]?.toString()?.removeSurrounding("\"") ?: "未知命令"
+        val command = args["command"]?.jsonPrimitive?.contentOrNull ?: "未知命令"
         val timeoutSeconds = resolveTimeoutMs(args) / 1000L
         return PendingToolPermission(
             id = callId,
@@ -87,7 +88,7 @@ class ExecuteCommandTool @Inject constructor(
     }
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
-        val command = args["command"]?.toString()?.removeSurrounding("\"")
+        val command = args["command"]?.jsonPrimitive?.contentOrNull
             ?: return ToolResult.Error("缺少必需参数: command")
 
         return try {
@@ -110,7 +111,7 @@ class ExecuteCommandTool @Inject constructor(
      * 保证喂回模型的内容一致且不会撑爆上下文。
      */
     override fun executeStream(args: Map<String, JsonElement>): Flow<ToolStreamEvent> = flow {
-        val command = args["command"]?.toString()?.removeSurrounding("\"")
+        val command = args["command"]?.jsonPrimitive?.contentOrNull
         if (command == null) {
             emit(ToolStreamEvent.Completed(ToolResult.Error("缺少必需参数: command")))
             return@flow

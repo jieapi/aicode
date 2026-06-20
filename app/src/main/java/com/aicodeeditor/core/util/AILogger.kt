@@ -4,7 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.google.gson.GsonBuilder
 import java.io.File
-import java.text.SimpleDateFormat
+
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -33,7 +33,7 @@ object AILogger {
     private val ioExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "ai-logger").apply { isDaemon = true }
     }
-    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+    private val timestampFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(java.time.ZoneId.systemDefault())
     // 与 Retrofit 的 GsonConverter 行为对齐（默认字段名、忽略 null），额外开启缩进便于阅读，
     // 关掉 HTML 转义避免把 prompt 里的 < > & 转成实体、影响可读性。
     private val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
@@ -108,7 +108,7 @@ object AILogger {
     private fun counter(sessionId: String?): AtomicInteger =
         counters.getOrPut(sessionId ?: "unknown") { AtomicInteger(0) }
 
-    private fun now(): String = timestampFormat.format(Date())
+    private fun now(): String = timestampFormat.format(java.time.Instant.now())
 
     private fun stringify(body: Any?): String = when (body) {
         null -> "null"

@@ -9,6 +9,8 @@ import com.aicodeeditor.feature.agent.data.local.dao.ChatSessionDao
 import com.aicodeeditor.feature.agent.data.local.entity.AgentMessageEntity
 import com.aicodeeditor.feature.agent.data.local.entity.ChatSessionEntity
 import com.aicodeeditor.feature.agent.data.CodeChangeTracker
+import com.aicodeeditor.feature.agent.domain.container.ContainerInitState
+import com.aicodeeditor.feature.agent.domain.container.LinuxContainerEngine
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
 import com.aicodeeditor.feature.agent.domain.model.AgentContext
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
@@ -21,10 +23,14 @@ import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.workflow.AgentEvent
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
+import com.aicodeeditor.feature.agent.domain.tool.question.AskUserQuestionManager
+import com.aicodeeditor.feature.agent.domain.tool.question.UserQuestionAnswer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -126,11 +132,16 @@ class AIAgentViewModel @Inject constructor(
     private val agentMessageDao: AgentMessageDao,
     private val chatSessionDao: ChatSessionDao,
     private val aiProviderRepository: AIProviderRepository,
-    private val toolPermissionManager: ToolPermissionManager
+    private val toolPermissionManager: ToolPermissionManager,
+    private val askUserQuestionManager: AskUserQuestionManager,
+    private val containerEngine: LinuxContainerEngine
 ) : ViewModel() {
 
     private val _agentState = MutableStateFlow<AgentUIState>(AgentUIState.Idle)
     val agentState: StateFlow<AgentUIState> = _agentState.asStateFlow()
+
+    /** 容器初始化实时进度（解压/部署/装包），AI 页底部气泡展示。 */
+    val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
@@ -184,6 +195,8 @@ class AIAgentViewModel @Inject constructor(
     val streamingReasoning: StateFlow<String?> = _streamingReasoning.asStateFlow()
 
     val pendingToolPermission = toolPermissionManager.pendingRequest
+
+    val pendingUserQuestion = askUserQuestionManager.pendingQuestion
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -425,6 +438,10 @@ class AIAgentViewModel @Inject constructor(
         toolPermissionManager.resolve(id, choice)
     }
 
+    fun resolveUserQuestion(id: String, answer: UserQuestionAnswer) {
+        askUserQuestionManager.resolve(id, answer)
+    }
+
     /**
      * 主动打断正在运行的 agent：取消协程（会一并取消挂起的网络请求与容器命令进程），
      * 并把「执行中」的工具占位行收尾为「已停止」，避免悬挂的 spinner 与孤儿记录。
@@ -626,54 +643,57 @@ class AIAgentViewModel @Inject constructor(
 
     fun applyChanges(changes: List<CodeChange>) = viewModelScope.launch {
         try {
-            for (change in changes) {
-                when (change.type) {
-                    com.aicodeeditor.feature.agent.domain.model.ChangeType.CREATE -> {
-                        val file = File(change.filePath)
-                        file.parentFile?.mkdirs()
-                        file.writeText(change.newCode)
-                    }
+            // 文件读写是阻塞 IO，必须切到 Dispatchers.IO，避免 viewModelScope（默认 Main）写盘时卡主线程导致 ANR。
+            withContext(Dispatchers.IO) {
+                for (change in changes) {
+                    when (change.type) {
+                        com.aicodeeditor.feature.agent.domain.model.ChangeType.CREATE -> {
+                            val file = File(change.filePath)
+                            file.parentFile?.mkdirs()
+                            file.writeText(change.newCode)
+                        }
 
-                    com.aicodeeditor.feature.agent.domain.model.ChangeType.REPLACE -> {
-                        val file = File(change.filePath)
-                        val lines = file.readLines().toMutableList()
-                        val start = (change.startLine - 1).coerceIn(0, lines.size)
-                        val end = (change.endLine - 1).coerceIn(0, lines.size - 1)
+                        com.aicodeeditor.feature.agent.domain.model.ChangeType.REPLACE -> {
+                            val file = File(change.filePath)
+                            val lines = file.readLines().toMutableList()
+                            val start = (change.startLine - 1).coerceIn(0, lines.size)
+                            val end = (change.endLine - 1).coerceIn(0, lines.size - 1)
 
-                        if (start <= end && start < lines.size) {
-                            repeat(end - start + 1) {
-                                if (start < lines.size) lines.removeAt(start)
+                            if (start <= end && start < lines.size) {
+                                repeat(end - start + 1) {
+                                    if (start < lines.size) lines.removeAt(start)
+                                }
+                                change.newCode.lines().reversed().forEach { line ->
+                                    lines.add(start, line)
+                                }
+                                file.writeText(lines.joinToString("\n"))
                             }
+                        }
+
+                        com.aicodeeditor.feature.agent.domain.model.ChangeType.INSERT -> {
+                            val file = File(change.filePath)
+                            val lines = file.readLines().toMutableList()
+                            val insertLine = (change.startLine - 1).coerceIn(0, lines.size)
                             change.newCode.lines().reversed().forEach { line ->
-                                lines.add(start, line)
+                                lines.add(insertLine, line)
                             }
                             file.writeText(lines.joinToString("\n"))
                         }
-                    }
 
-                    com.aicodeeditor.feature.agent.domain.model.ChangeType.INSERT -> {
-                        val file = File(change.filePath)
-                        val lines = file.readLines().toMutableList()
-                        val insertLine = (change.startLine - 1).coerceIn(0, lines.size)
-                        change.newCode.lines().reversed().forEach { line ->
-                            lines.add(insertLine, line)
+                        com.aicodeeditor.feature.agent.domain.model.ChangeType.DELETE -> {
+                            val file = File(change.filePath)
+                            val lines = file.readLines().toMutableList()
+                            val start = (change.startLine - 1).coerceIn(0, lines.size)
+                            val end = (change.endLine - 1).coerceIn(0, lines.size - 1)
+
+                            for (i in end downTo start) {
+                                if (i < lines.size) lines.removeAt(i)
+                            }
+                            file.writeText(lines.joinToString("\n"))
                         }
-                        file.writeText(lines.joinToString("\n"))
+
+                        else -> {}
                     }
-
-                    com.aicodeeditor.feature.agent.domain.model.ChangeType.DELETE -> {
-                        val file = File(change.filePath)
-                        val lines = file.readLines().toMutableList()
-                        val start = (change.startLine - 1).coerceIn(0, lines.size)
-                        val end = (change.endLine - 1).coerceIn(0, lines.size - 1)
-
-                        for (i in end downTo start) {
-                            if (i < lines.size) lines.removeAt(i)
-                        }
-                        file.writeText(lines.joinToString("\n"))
-                    }
-
-                    else -> {}
                 }
             }
             _agentState.value = AgentUIState.Applied

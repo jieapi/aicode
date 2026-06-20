@@ -21,14 +21,14 @@ import com.aicodeeditor.feature.agent.domain.tool.file.ReadFileTool
 import com.aicodeeditor.feature.agent.domain.tool.file.WriteFileTool
 import com.aicodeeditor.feature.agent.domain.tool.editor.EditFileTool
 import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
-import com.aicodeeditor.feature.agent.domain.tool.container.RunBackgroundCommandTool
-import com.aicodeeditor.feature.agent.domain.tool.container.SendTerminalInputTool
-import com.aicodeeditor.feature.agent.domain.tool.container.ReadTerminalOutputTool
+import com.aicodeeditor.feature.agent.domain.tool.container.TerminalSessionTool
 import com.aicodeeditor.feature.agent.domain.tool.skill.LoadSkillTool
+import com.aicodeeditor.feature.agent.domain.tool.question.AskUserQuestionTool
 import com.aicodeeditor.feature.agent.domain.prompt.SystemPromptProvider
 import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.workflow.StandardAgentWorkflow
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
+import com.aicodeeditor.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
 import dagger.Module
 import dagger.Provides
@@ -152,20 +152,18 @@ object AgentModule {
         writeFileTool: WriteFileTool,
         editFileTool: EditFileTool,
         executeCommandTool: ExecuteCommandTool,
-        runBackgroundCommandTool: RunBackgroundCommandTool,
-        sendTerminalInputTool: SendTerminalInputTool,
-        readTerminalOutputTool: ReadTerminalOutputTool,
-        loadSkillTool: LoadSkillTool
+        terminalSessionTool: TerminalSessionTool,
+        loadSkillTool: LoadSkillTool,
+        askUserQuestionTool: AskUserQuestionTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("read_file", readFileTool)
             register("write_file", writeFileTool)
             register("edit_file", editFileTool)
             register("execute_command", executeCommandTool)
-            register("run_background_command", runBackgroundCommandTool)
-            register("send_terminal_input", sendTerminalInputTool)
-            register("read_terminal_output", readTerminalOutputTool)
+            register("terminal", terminalSessionTool)
             register("load_skill", loadSkillTool)
+            register("ask_user_question", askUserQuestionTool)
         }
     }
 
@@ -183,7 +181,8 @@ object AgentModule {
         @Named("OpenAIProvider") openAIProvider: AIProvider,
         @Named("AnthropicProvider") anthropicProvider: AIProvider,
         promptProvider: SystemPromptProvider,
-        permissionManager: ToolPermissionManager
+        permissionManager: ToolPermissionManager,
+        policyEngine: ToolPermissionPolicyEngine
     ): AgentWorkflow {
         return StandardAgentWorkflow(
             toolRegistry,
@@ -191,7 +190,8 @@ object AgentModule {
             openAIProvider,
             anthropicProvider,
             promptProvider,
-            permissionManager
+            permissionManager,
+            policyEngine
         )
     }
 }

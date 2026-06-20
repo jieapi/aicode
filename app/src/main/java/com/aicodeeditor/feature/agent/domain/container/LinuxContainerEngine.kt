@@ -8,9 +8,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -61,6 +67,13 @@ data class ProotInvocation(
 class LinuxContainerEngine @Inject constructor(
     private val containerInstaller: ContainerInstaller
 ) {
+    /** 容器初始化的实时进度，供所有入口（终端页/AI/后台终端/MCP）共享同一份状态。 */
+    private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
+    val initProgress: StateFlow<ContainerInitState> = _initProgress.asStateFlow()
+
+    /** 串行化 ensureInstalled，避免多入口并发触发重复解压/配置；后到者等待后看到就绪直接置 Ready。 */
+    private val initMutex = Mutex()
+
     companion object {
         private const val TAG = "LinuxContainerEngine"
 
@@ -72,7 +85,28 @@ class LinuxContainerEngine @Inject constructor(
 
         /** 超时后给进程的优雅退出宽限（毫秒），过后强杀。 */
         private const val TIMEOUT_KILL_GRACE_MS = 200L
+
+        /**
+         * 容器首次初始化时自动安装的基础包清单（Alpine 3.21 的 `python3` 即 3.12.x）。
+         * 包含：python3、git、pip（py3-pip）、nodejs、npm。用 `--no-cache` 避免 apk 缓存撑大 rootfs。
+         * 改清单时同步 +1 [PROVISION_VERSION] 触发重装。
+         */
+        private const val PROVISION_PACKAGES = "python3 git py3-pip nodejs npm"
+
+        /**
+         * 基础包配置版本。改 [PROVISION_PACKAGES] 或配置逻辑时 +1，触发在设备上重新 `apk add`。
+         * 独立于 [ContainerInstaller] 的 rootfs INSTALL_VERSION：rootfs 版本升级会删 rootfs
+         * （连带清掉本标记），故新 rootfs 必然重跑配置；同 rootfs 下改包清单则靠本版本号触发。
+         */
+        private const val PROVISION_VERSION = "py3.12-pip-node-v1"
+
+        /** `apk add` 下载基础包的超时（毫秒）：首次配置需联网拉包，给足时间。 */
+        private const val PROVISION_TIMEOUT_MS = 600_000L
     }
+
+    /** 标记基础包（python3/git）已按 [PROVISION_VERSION] 配置完成，内容为版本号。 */
+    private val provisionMarker: java.io.File
+        get() = java.io.File(containerInstaller.rootfsDir, ".provisioned")
 
     /**
      * 在容器内流式执行命令：每读到一行就 emit 一个 [CommandEvent.Line]，命令结束 emit
@@ -90,9 +124,28 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String? = null,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS
     ): Flow<CommandEvent> = flow {
-        // 懒安装：首次执行命令时解压 rootfs/proot
-        containerInstaller.installRootfsIfNeed()
+        // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git/pip/node/npm）
+        ensureInstalled()
+        emitAll(streamExecNoInstall(command, projectPath, timeoutMs))
+    }.flowOn(Dispatchers.IO)
 
+    /**
+     * 在容器内流式执行命令的「裸」实现：每读到一行就 emit [CommandEvent.Line]，命令结束 emit
+     * [CommandEvent.Exit]。**不触发懒安装**（不调 [ensureInstalled]），假定 rootfs 已就绪。
+     *
+     * 抽出此方法供 [runCommandStream]（先 [ensureInstalled]）与 [provisionIfNeeded]（先
+     * [ContainerInstaller.installRootfsIfNeed]，不能再触发 ensureInstalled 否则递归）共用，
+     * 让 provision 也能逐行拿到 apk 输出以更新进度。
+     *
+     * [timeoutMs] 为命令最长执行时间（毫秒），默认 [DEFAULT_TIMEOUT_MS]，上限 [MAX_TIMEOUT_MS]。
+     * 超时后强制终止子进程并在末尾追加一行超时提示，[CommandEvent.Exit] 退出码记为 null。
+     * 由于 readLine 是阻塞读，单靠协程超时无法打断，这里用独立看门狗 destroy 进程来解除阻塞。
+     */
+    private fun streamExecNoInstall(
+        command: String,
+        projectPath: String?,
+        timeoutMs: Long
+    ): Flow<CommandEvent> = flow {
         val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
         FileLogger.d(TAG, "执行命令(流式) cwd=$projectPath timeout=${effectiveTimeout}ms: $command")
         val process = startContainerProcess(command, projectPath)
@@ -138,10 +191,28 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String? = null,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS
     ): String = withContext(Dispatchers.IO) {
-        try {
-            // 懒安装：首次执行命令时解压 rootfs/proot，避免拖慢 App 启动
-            containerInstaller.installRootfsIfNeed()
+        // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git）
+        ensureInstalled()
+        execCaptured(command, projectPath, timeoutMs).output
+    }
 
+    /** 一次容器内执行的结果：限幅后的完整输出 + 退出码（超时/异常时为 null）。 */
+    private data class ExecResult(val output: String, val exitCode: Int?)
+
+    /**
+     * 在容器内同步执行命令并捕获输出。**假定 rootfs 已安装**（不做懒安装/配置），
+     * 供 [runCommandSync]（先 [ensureInstalled]）与 [provisionIfNeeded]（先 [installRootfsIfNeed]）复用，
+     * 避免配置流程反向触发 [ensureInstalled] 形成递归。
+     *
+     * [timeoutMs] 为命令最长执行时间（毫秒），钳到 [MAX_TIMEOUT_MS]。超时则强杀进程，
+     * 返回已收集的部分输出并在末尾追加超时提示，[ExecResult.exitCode] 记为 null。
+     */
+    private suspend fun execCaptured(
+        command: String,
+        projectPath: String?,
+        timeoutMs: Long
+    ): ExecResult = withContext(Dispatchers.IO) {
+        try {
             val effectiveTimeout = timeoutMs.coerceIn(1L, MAX_TIMEOUT_MS)
             FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath timeout=${effectiveTimeout}ms: $command")
             val process = startContainerProcess(command, projectPath)
@@ -150,6 +221,7 @@ class LinuxContainerEngine @Inject constructor(
             // 限幅累积：超大输出只保留开头+结尾，避免撑爆内存与模型上下文。
             val output = BoundedOutput()
             // 看门狗与读循环并发：超时则 destroy 进程，使阻塞的 readLine 立即返回 null 退出循环。
+            var exitCode: Int? = null
             coroutineScope {
                 val watchdog = launchKillWatchdog(this, process, effectiveTimeout, timedOut, command)
                 val reader = BufferedReader(InputStreamReader(process.inputStream))
@@ -158,7 +230,7 @@ class LinuxContainerEngine @Inject constructor(
                     output.append(line!!)
                     output.append("\n")
                 }
-                process.waitFor()
+                exitCode = process.waitFor()
                 watchdog.cancel()
             }
 
@@ -166,14 +238,63 @@ class LinuxContainerEngine @Inject constructor(
                 FileLogger.w(TAG, "命令超时(${effectiveTimeout}ms)已终止: $command")
                 output.append(timeoutNotice(effectiveTimeout))
                 output.append("\n")
+                ExecResult(output.build(), null)
             } else {
-                FileLogger.v(TAG, "命令完成(输出 ${output.totalChars} 字符): $command")
+                FileLogger.v(TAG, "命令完成(退出码 $exitCode，输出 ${output.totalChars} 字符): $command")
+                ExecResult(output.build(), exitCode)
             }
-
-            output.build()
         } catch (e: Exception) {
             FileLogger.e(TAG, "执行命令异常: $command", e)
-            "Error: ${e.message}"
+            ExecResult("Error: ${e.message}", null)
+        }
+    }
+
+    /**
+     * 首次初始化时配置基础包（python3 / git / pip / node / npm）。幂等：已按 [PROVISION_VERSION] 配置则直接返回。
+     * 失败（断网/超时/退出码非 0）不写标记，下次 [ensureInstalled] 自动重试，且**不抛异常**——
+     * 配置失败不应阻塞用户使用容器（只是暂时没有这些工具）。
+     *
+     * 流式执行：用 [streamExecNoInstall]（不触发懒安装，避免与 [ensureInstalled] 递归）逐行拿到 apk 输出，
+     * 实时更新 [initProgress]，让 UI 能看到「正在安装…」+ 下载进度行。脚本内先幂等覆盖 apk 源为阿里云
+     * 国内镜像（兜底存量已解压旧 rootfs，其镜像源仍是官方 dl-cdn），再 update 索引、装包。
+     */
+    private suspend fun provisionIfNeeded() {
+        val marker = provisionMarker
+        if (marker.exists() && marker.readText().trim() == PROVISION_VERSION) return
+
+        FileLogger.i(TAG, "开始配置容器基础包：$PROVISION_PACKAGES（首次需联网，可能耗时较久）")
+        _initProgress.value = ContainerInitState.InstallingPackages(line = "配置国内镜像源…")
+
+        // 幂等覆盖镜像源 + 刷新索引 + 装包。apk 源用 http（minirootfs 无 ca-certificates，见 ALPINE_MIRROR 注释）。
+        val script = buildString {
+            append("set -e\n")
+            append("mkdir -p /etc/apk\n")
+            append("cat > /etc/apk/repositories <<EOF\n")
+            append("${ContainerInstaller.ALPINE_MIRROR}/${ContainerInstaller.ALPINE_BRANCH}/main\n")
+            append("${ContainerInstaller.ALPINE_MIRROR}/${ContainerInstaller.ALPINE_BRANCH}/community\n")
+            append("EOF\n")
+            append("apk update\n")
+            append("apk add --no-cache $PROVISION_PACKAGES\n")
+        }
+
+        var exitCode: Int? = null
+        // rootfs 此时已由 ensureInstalled→installRootfsIfNeed 解压就绪；streamExecNoInstall 不再触发安装，无递归。
+        streamExecNoInstall(script, projectPath = null, timeoutMs = PROVISION_TIMEOUT_MS).collect { event ->
+            when (event) {
+                is CommandEvent.Line ->
+                    _initProgress.value = ContainerInitState.InstallingPackages(line = event.text)
+                is CommandEvent.Exit -> exitCode = event.code
+            }
+        }
+
+        if (exitCode == 0) {
+            marker.writeText(PROVISION_VERSION)
+            FileLogger.i(TAG, "容器基础包配置完成：$PROVISION_PACKAGES")
+        } else {
+            FileLogger.w(
+                TAG,
+                "容器基础包配置未完成（退出码=$exitCode），将在下次初始化重试"
+            )
         }
     }
 
@@ -224,8 +345,31 @@ class LinuxContainerEngine @Inject constructor(
     /** 容器是否已安装就绪。 */
     fun isContainerInstalled(): Boolean = containerInstaller.isInstalled()
 
-    /** 幂等地确保 rootfs/proot 已安装（首次会解压，耗时）。 */
-    suspend fun ensureInstalled() = containerInstaller.installRootfsIfNeed()
+    /** 基础包是否已按当前 [PROVISION_VERSION] 配置完成。 */
+    private fun isProvisioned(): Boolean {
+        val marker = provisionMarker
+        return marker.exists() && marker.readText().trim() == PROVISION_VERSION
+    }
+
+    /**
+     * 幂等地确保容器可用：先解压 rootfs/proot（首次耗时），再配置基础包 python3/git/pip/node/npm（首次需联网）。
+     * 供所有命令执行入口（[runCommandSync]/[runCommandStream]）在执行前统一调用。
+     *
+     * 用 [initMutex] 串行化：多入口并发时只让第一个真正解压/配置，其余等待后看到就绪直接置 [ContainerInitState.Ready]。
+     * 全程通过 [initProgress] 上报阶段进度，供 UI 实时展示。
+     */
+    suspend fun ensureInstalled() = initMutex.withLock {
+        if (containerInstaller.isInstalled() && isProvisioned()) {
+            _initProgress.value = ContainerInitState.Ready
+            return@withLock
+        }
+        // installRootfsIfNeed 在真正解压/部署时回调更新进度（已安装则快路径不回调）
+        containerInstaller.installRootfsIfNeed { _initProgress.value = it }
+        provisionIfNeeded()
+        _initProgress.value =
+            if (containerInstaller.isInstalled()) ContainerInitState.Ready
+            else ContainerInitState.Failed("容器未安装（缺少 rootfs/proot）")
+    }
 
     /**
      * 以长驻进程方式在容器内执行命令（如 `sshd -D`）。调用前需保证容器已安装。
@@ -320,8 +464,8 @@ class LinuxContainerEngine @Inject constructor(
         // 把 AI 配置目录绑定到容器内 /root/.aicode（读写）：内含 skills/（load_skill 读到的指令常引用
         // skill 目录里的脚本，AI 用 execute_command 执行 `python /root/.aicode/skills/<name>/x.py` 等）与
         // mcp.json（MCP 配置）。宿主物理目录独立于 rootfs，容器升级重装不丢用户数据。
-        // 解释器（python/node 等）是否就绪由 skill / 用户自行保证，本引擎不负责安装。
-        // proot 的 -b 要求源路径存在，故先确保目录已建。
+        // 基础解释器 python3(3.12) 与 git 由 [provisionIfNeeded] 在首次初始化时自动 `apk add`；
+        // node 等其他运行时仍由 skill / 用户自行保证。proot 的 -b 要求源路径存在，故先确保目录已建。
         val aicodeDir = containerInstaller.aicodeDir.apply { mkdirs() }
         argv.add("-b")
         argv.add("${aicodeDir.absolutePath}:/root/.aicode")

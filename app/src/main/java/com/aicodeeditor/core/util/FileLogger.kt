@@ -5,7 +5,7 @@ import android.util.Log
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.text.SimpleDateFormat
+
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -42,8 +42,8 @@ object FileLogger {
     private val ioExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "file-logger").apply { isDaemon = true }
     }
-    private val fileNameFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+    private val fileNameFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(java.time.ZoneId.systemDefault())
+    private val timestampFormat = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS").withZone(java.time.ZoneId.systemDefault())
 
     @Volatile
     private var logDir: File? = null
@@ -115,7 +115,7 @@ object FileLogger {
 
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
         val dir = logDir ?: return // 未初始化则只走 logcat，不落盘
-        val now = Date()
+        val now = java.time.Instant.now()
         val line = buildString {
             append(timestampFormat.format(now))
             append(" ").append(level)

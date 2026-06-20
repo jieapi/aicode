@@ -13,10 +13,11 @@
 命令与终端工具：
 
 - `execute_command`：在容器内执行一次性 shell 命令（列目录、搜索、构建、lint、格式化、git、装依赖等），同步等待命令结束并返回输出，执行过程会实时流式显示。默认超时 120 秒，上限 1800 秒；耗时命令（如安装依赖）可用 timeout 参数调大。
-- `run_background_command`：把长驻命令（如 `npm run dev`、各类服务进程）开在一个常驻后台终端标签里，立即返回该标签 id，不阻塞等待。用于不会自己结束的进程。
-- `read_terminal_output`：按标签 id 读取某终端当前的全部输出（含后台命令的实时日志）；不传 id 则列出所有终端标签及其状态。
-- `send_terminal_input`：按标签 id 向某个后台或交互终端发送一行命令/输入（默认自动回车执行）。
-- 选择：一次性、会自行结束的命令用 `execute_command`；需要常驻的服务用 `run_background_command` 启动，再配合 `read_terminal_output` 看日志、`send_terminal_input` 发指令。
+- `terminal`：管理常驻后台终端会话，用 `action` 参数选操作：
+  - `action="start"`：把长驻命令（如 `npm run dev`、各类服务进程）开在一个常驻后台终端标签里，不阻塞等待。返回一个对象：`{tab_id, running, output}`，其中 `output` 是启动后约 5 秒内捕获的初始输出（命令提前退出则更早返回）——借此第一时间看到启动横幅或报错。用于不会自己结束的进程。必填 `command`，可选 `title`。
+  - `action="send"`：按 `tab_id` 向某个后台或交互终端发送一行命令/输入（默认自动回车执行）。必填 `tab_id`、`input`，可选 `submit`。
+  - `action="read"`：按 `tab_id` 读取某终端当前的全部输出（含后台命令的实时日志）；省略 `tab_id` 则列出所有终端标签及其状态。
+- 选择：一次性、会自行结束的命令用 `execute_command`；需要常驻的服务用 `terminal(action="start")` 启动，再配合 `terminal(action="read")` 看日志、`terminal(action="send")` 发指令。
 
 路径约定（重要）：
 
@@ -24,3 +25,11 @@
 - 项目文件用 `/workspace/...`（如 `/workspace/src/Main.kt`）或相对路径（如 `src/Main.kt`，相对 `/workspace`）。
 - `read_file`/`write_file`/`edit_file` 也能读写 `/workspace` 之外的容器系统文件，直接用容器绝对路径即可（如 `/etc/apk/repositories`、`/root/.bashrc`、`/usr/local/bin/...`）。
 - `execute_command` 默认在 `/workspace` 内执行（等价于先 `cd /workspace`）。
+
+用户交互工具：
+
+- `ask_user_question`：向用户提出结构化的选择题，暂停执行等待用户做出选择后继续。每次可问 1-4 个问题，每个问题 2-4 个预设选项（UI 自动追加「其他」自由输入选项），支持单选或多选。
+  - 使用场景：需要用户决策时调用——选择库/框架/方案、确认是否安装某个环境、在多个可行选项间抉择、选择实现策略等。
+  - 只在用户的回答真正会改变你接下来要做什么时才调用；如果有显而易见的默认值或者你能从代码/项目配置中推断出答案，就直接选合理默认、告诉用户你的选择并继续，不要事事都问。
+  - 如果你有推荐选项，放在选项列表第一位并在 label 末尾加「（推荐）」。
+  - 返回的结果是用户对每个问题的回答文本（选中的选项标签及可能的自定义输入），直接作为后续行动的依据。

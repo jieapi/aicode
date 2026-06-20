@@ -26,8 +26,9 @@ enum class PermissionChoice { REJECT, ONCE, ALWAYS }
  * 一条工具授权规则。
  *
  * @param toolName 适用的工具名，如 `execute_command`、`write_file`。
- * @param pattern 匹配模式。对 shell 命令是「命令前缀」（程序名 token，如 `git`，按 token 前缀匹配，
- *   故 `git` 命中 `git status`/`git push`）；对非 shell 工具是通配 `*`（整工具匹配）。
+ * @param pattern 匹配模式。对 shell 命令是「命令前缀」，按 token 前缀匹配：子命令分发器记
+ *   `git pull`（仅命中 `git pull ...`，不命中 `git clone`），普通程序记 `cat`/`ls`（命中其所有调用）；
+ *   对非 shell 工具是通配 `*`（整工具匹配）。
  * @param decision 判定方向，默认 [PermissionDecision.ALLOW]。
  */
 @Serializable

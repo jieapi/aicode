@@ -11,6 +11,7 @@ import com.aicodeeditor.feature.agent.domain.permission.PermissionRule
 import com.aicodeeditor.feature.agent.domain.permission.PermissionRulesRepository
 import com.aicodeeditor.feature.settings.data.remote.ModelApiService
 import com.aicodeeditor.feature.settings.data.remote.ModelTestResult
+import com.aicodeeditor.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.LogSettingsRepository
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
@@ -36,6 +37,7 @@ class SettingsViewModel @Inject constructor(
     private val repository: AIProviderRepository,
     private val modelApiService: ModelApiService,
     private val logSettingsRepository: LogSettingsRepository,
+    private val keepaliveSettingsRepository: KeepaliveSettingsRepository,
     private val mcpConfigRepository: McpConfigRepository,
     private val mcpManager: McpManager,
     private val permissionRulesRepository: PermissionRulesRepository
@@ -50,6 +52,10 @@ class SettingsViewModel @Inject constructor(
     /** 当前日志最低记录等级（供设置页选择）。 */
     private val _logLevel = MutableStateFlow(LogLevel.VERBOSE)
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()
+
+    /** 后台保活常驻通知开关（供设置页切换；需用户授权通知权限后才生效）。 */
+    private val _keepaliveEnabled = MutableStateFlow(false)
+    val keepaliveEnabled: StateFlow<Boolean> = _keepaliveEnabled.asStateFlow()
 
     /** 结构化的 MCP server 列表（供设置页可视化编辑）。 */
     private val _mcpServers = MutableStateFlow<List<McpServerConfig>>(emptyList())
@@ -87,10 +93,16 @@ class SettingsViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             repository.initializeDefaultProvidersIfEmpty()
+            // 启动即保证有激活服务商（若库中存在却无激活项），避免主页模型胶囊因 activeProvider=null 消失。
+            repository.ensureActiveProvider()
 
             launch {
                 repository.getAllProviders().collectLatest {
                     _providers.value = it
+                    // 运行期兜底：服务商列表变化后若仍无激活项且有服务商，自动激活首个。
+                    if (_activeProvider.value == null && it.isNotEmpty()) {
+                        repository.ensureActiveProvider()
+                    }
                 }
             }
 
@@ -103,6 +115,12 @@ class SettingsViewModel @Inject constructor(
             launch {
                 logSettingsRepository.levelFlow.collectLatest {
                     _logLevel.value = it
+                }
+            }
+
+            launch {
+                keepaliveSettingsRepository.enabledFlow.collectLatest {
+                    _keepaliveEnabled.value = it
                 }
             }
 
@@ -182,6 +200,17 @@ class SettingsViewModel @Inject constructor(
     fun setLogLevel(level: LogLevel) {
         viewModelScope.launch {
             logSettingsRepository.setLevel(level)
+        }
+    }
+
+    /**
+     * 切换后台保活常驻通知开关。仅持久化标志位——真正的启停 Service 由 AIEditorApp 监听
+     * [KeepaliveSettingsRepository.enabledFlow] 统一完成（同一反应器同时负责冷启动恢复）。
+     * 调用方（设置页）需先确保已授予通知权限，否则开关虽为 true 但通知不会展示。
+     */
+    fun setKeepaliveEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            keepaliveSettingsRepository.setEnabled(enabled)
         }
     }
 
