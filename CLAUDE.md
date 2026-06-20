@@ -4,6 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## General Rules
 - 永远使用中文回复 (Always reply in Chinese).
+- 优先使用已有工具进行文件操作，比如读取、修改文件 (Prioritize using existing tools for file operations, such as reading and modifying files).
 
 ## Build and Run
 
