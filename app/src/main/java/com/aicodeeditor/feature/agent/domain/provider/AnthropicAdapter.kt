@@ -10,6 +10,7 @@ import com.aicodeeditor.feature.agent.domain.model.AgentMessage
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
 import com.google.gson.JsonParser
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import kotlin.coroutines.coroutineContext
@@ -65,8 +66,9 @@ class AnthropicAdapter @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            AILogger.logError(logSessionId, "Anthropic", e)
-            throw e
+            val enriched = e.enrichWithHttpErrorBody()
+            AILogger.logError(logSessionId, "Anthropic", enriched)
+            throw enriched
         }
         AILogger.logResponse(logSessionId, "Anthropic", response)
 
@@ -129,48 +131,62 @@ class AnthropicAdapter @Inject constructor(
 
             body.use { rb ->
                 val reader = rb.charStream().buffered()
+                // 收到服务端 message_stop 事件即 break 正常结束；readLine() 返回 null 则视为
+                // 流被异常截断（网络中断/TCP 重置/readTimeout），必须抛异常让重试/日志接管——
+                // 否则原本会用截断数据「正常完成」，表现为 AI 突然中断且无任何错误日志。
+                // （收到 message_stop 即 break，故走到 readLine()==null 时必然未收到过结束标记。）
                 while (true) {
                     coroutineContext.ensureActive()
-                    val line = reader.readLine() ?: break
+                    val line = reader.readLine()
+                        ?: throw IOException("SSE 流被中断：未收到 message_stop 结束标记（疑似网络断开）")
                     if (!line.startsWith("data:")) continue
                     val data = line.removePrefix("data:").trim()
                     if (data.isEmpty()) continue
                     rawSse.append(line).append('\n')
                     val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
-                    when (obj.get("type")?.asString) {
-                        "content_block_start" -> {
-                            val index = obj.get("index")?.asInt ?: continue
-                            val block = obj.getAsJsonObject("content_block")
-                            if (block?.get("type")?.asString == "tool_use") {
-                                toolBlocks[index] = ToolBlockAcc(
-                                    id = block.get("id")?.asString ?: "",
-                                    name = block.get("name")?.asString ?: ""
-                                )
+                    // 单行 SSE 解析：不同上游/模型的字段类型偶有出入，Gson 的 getAsJsonObject/getAsJsonArray
+                    // 在类型不符时会直接抛 ClassCastException，asString/asInt 对非原始值抛 UnsupportedOperationException。
+                    // 单行异常不应中断整条流——宽松解析，出错仅跳过该行；必须放行 CancellationException。
+                    try {
+                        when (obj.get("type")?.asString) {
+                            "content_block_start" -> {
+                                val index = obj.get("index")?.asInt ?: continue
+                                val block = obj.getAsJsonObject("content_block")
+                                if (block?.get("type")?.asString == "tool_use") {
+                                    toolBlocks[index] = ToolBlockAcc(
+                                        id = block.get("id")?.asString ?: "",
+                                        name = block.get("name")?.asString ?: ""
+                                    )
+                                }
                             }
-                        }
-                        "content_block_delta" -> {
-                            val delta = obj.getAsJsonObject("delta") ?: continue
-                            when (delta.get("type")?.asString) {
-                                "text_delta" -> {
-                                    val t = delta.get("text")?.asString ?: ""
-                                    if (t.isNotEmpty()) {
-                                        textBuilder.append(t)
-                                        onProduced()
-                                        emit(AIStreamChunk.TextDelta(t))
+                            "content_block_delta" -> {
+                                val delta = obj.getAsJsonObject("delta") ?: continue
+                                when (delta.get("type")?.asString) {
+                                    "text_delta" -> {
+                                        val t = delta.get("text")?.asString ?: ""
+                                        if (t.isNotEmpty()) {
+                                            textBuilder.append(t)
+                                            onProduced()
+                                            emit(AIStreamChunk.TextDelta(t))
+                                        }
+                                    }
+                                    "thinking_delta" -> {
+                                        val t = delta.get("thinking")?.asString ?: ""
+                                        if (t.isNotEmpty()) emit(AIStreamChunk.ReasoningDelta(t))
+                                    }
+                                    "input_json_delta" -> {
+                                        val index = obj.get("index")?.asInt
+                                        val partial = delta.get("partial_json")?.asString ?: ""
+                                        if (index != null) toolBlocks[index]?.args?.append(partial)
                                     }
                                 }
-                                "thinking_delta" -> {
-                                    val t = delta.get("thinking")?.asString ?: ""
-                                    if (t.isNotEmpty()) emit(AIStreamChunk.ReasoningDelta(t))
-                                }
-                                "input_json_delta" -> {
-                                    val index = obj.get("index")?.asInt
-                                    val partial = delta.get("partial_json")?.asString ?: ""
-                                    if (index != null) toolBlocks[index]?.args?.append(partial)
-                                }
                             }
+                            "message_stop" -> break
                         }
-                        "message_stop" -> break
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // 该行 SSE 解析失败，跳过；不影响已累积文本与后续行。
                     }
                 }
             }
@@ -185,8 +201,9 @@ class AnthropicAdapter @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            AILogger.logError(logSessionId, "Anthropic", e)
-            throw e
+            val enriched = e.enrichWithHttpErrorBody()
+            AILogger.logError(logSessionId, "Anthropic", enriched)
+            throw enriched
         } finally {
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
             AILogger.logResponseStream(logSessionId, "Anthropic", rawSse.toString())

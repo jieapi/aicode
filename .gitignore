@@ -10,6 +10,11 @@ app/build/
 # Local config
 local.properties
 
+# Signing (release keystore + passwords — never commit)
+*.jks
+*.keystore
+keystore.properties
+
 # Debug / profiling
 *.hprof
 

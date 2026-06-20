@@ -3,6 +3,8 @@ package com.aicodeeditor.feature.terminal.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicodeeditor.core.util.FileLogger
+import com.aicodeeditor.feature.agent.domain.container.ContainerInitState
+import com.aicodeeditor.feature.agent.domain.container.LinuxContainerEngine
 import com.aicodeeditor.feature.terminal.domain.TerminalSessionManager
 import com.aicodeeditor.feature.terminal.presentation.component.TerminalKeyModifiers
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -21,7 +23,8 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class TerminalViewModel @Inject constructor(
-    private val sessionManager: TerminalSessionManager
+    private val sessionManager: TerminalSessionManager,
+    private val containerEngine: LinuxContainerEngine
 ) : ViewModel() {
 
     private companion object { const val TAG = "TerminalViewModel" }
@@ -35,6 +38,9 @@ class TerminalViewModel @Inject constructor(
 
     private val _prepareState = MutableStateFlow<PrepareState>(PrepareState.Loading)
     val prepareState: StateFlow<PrepareState> = _prepareState.asStateFlow()
+
+    /** 容器初始化实时进度（解压/部署/装包），Loading 阶段用它展示细粒度文案。 */
+    val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
 
     val tabs = sessionManager.tabs
     val activeTabId = sessionManager.activeTabId

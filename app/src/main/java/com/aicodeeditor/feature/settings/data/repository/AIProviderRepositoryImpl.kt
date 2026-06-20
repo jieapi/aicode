@@ -7,6 +7,7 @@ import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,6 +72,15 @@ class AIProviderRepositoryImpl @Inject constructor(
     override suspend fun initializeDefaultProvidersIfEmpty() {
         // 不再预置任何内置服务商或内置模型：服务商与模型完全由用户在设置页自行添加/拉取。
         // 保留该方法以兼容接口与 ViewModel 调用，当前为空实现。
+    }
+
+    override suspend fun ensureActiveProvider() {
+        // 已有激活项则无需处理。
+        if (aiProviderDao.getActiveProviderSync() != null) return
+        val first = aiProviderDao.getAllProviders().first().firstOrNull() ?: return
+        FileLogger.i(TAG, "无激活服务商，自动激活首个: ${first.id} (${first.name})")
+        aiProviderDao.deactivateAllProviders()
+        aiProviderDao.activateProvider(first.id)
     }
 
     private fun AIProviderEntity.toDomainModel(): AIProviderConfig {

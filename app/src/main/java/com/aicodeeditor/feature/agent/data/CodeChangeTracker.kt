@@ -20,8 +20,8 @@ class CodeChangeTracker {
 
         when {
             toolCall.name == "write_file" && result is ToolResult.Success -> {
-                val filePath = toolCall.arguments["path"]?.toString()?.removeSurrounding("\"") ?: return emptyList()
-                val content = toolCall.arguments["content"]?.toString()?.removeSurrounding("\"") ?: ""
+                val filePath = toolCall.arguments["path"]?.jsonPrimitive?.contentOrNull ?: return emptyList()
+                val content = toolCall.arguments["content"]?.jsonPrimitive?.contentOrNull ?: ""
                 newChanges.add(
                     CodeChange(
                         filePath = filePath,

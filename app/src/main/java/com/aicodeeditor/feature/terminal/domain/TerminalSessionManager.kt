@@ -1,6 +1,7 @@
 package com.aicodeeditor.feature.terminal.domain
 
 import android.content.Context
+import android.content.Intent
 import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.agent.domain.container.LinuxContainerEngine
 import com.aicodeeditor.feature.terminal.presentation.component.AppTerminalSessionClient
@@ -151,6 +152,8 @@ class TerminalSessionManager @Inject constructor(
         )
         // 后台命令不抢占当前标签焦点：仅当没有活动标签时才设为当前。
         if (_activeTabId.value == null) _activeTabId.value = id
+
+        startKeepaliveService()
         FileLogger.i(TAG, "后台命令标签 $id: $command")
         return id
     }
@@ -221,6 +224,10 @@ class TerminalSessionManager @Inject constructor(
             _activeTabId.value = remaining.lastOrNull()?.id
         }
         bumpRevision()
+
+        if (tab.isBackground && remaining.none { it.isBackground && it.runState is RunState.Running }) {
+            stopKeepaliveService()
+        }
         FileLogger.i(TAG, "关闭终端标签 $id")
     }
 
@@ -290,6 +297,9 @@ class TerminalSessionManager @Inject constructor(
                     target.runState = RunState.Finished(finished.exitStatus)
                     bumpRevision()
                     FileLogger.i(TAG, "终端标签 ${target.id} 会话结束 exit=${finished.exitStatus}")
+                    if (target.isBackground && _tabs.value.none { it.isBackground && it.runState is RunState.Running }) {
+                        stopKeepaliveService()
+                    }
                 }
             }
         )
@@ -308,5 +318,21 @@ class TerminalSessionManager @Inject constructor(
         // 故 session 的 MainThreadHandler 绑定到主 Looper，这里同线程调用 updateSize 是安全的。
         session.updateSize(DEFAULT_COLUMNS, DEFAULT_ROWS)
         return session
+    }
+
+    private fun startKeepaliveService() {
+        val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
+            action = TerminalKeepaliveService.ACTION_START_SESSION
+        }
+        appContext.startService(intent)
+        FileLogger.i(TAG, "后台保活 Service 已启动")
+    }
+
+    private fun stopKeepaliveService() {
+        val intent = Intent(appContext, TerminalKeepaliveService::class.java).apply {
+            action = TerminalKeepaliveService.ACTION_STOP_SESSION
+        }
+        appContext.startService(intent)
+        FileLogger.i(TAG, "后台保活 Service 已停止")
     }
 }

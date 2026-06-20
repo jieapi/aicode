@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.core.ui.rememberImeBottomInset
+import com.aicodeeditor.feature.agent.domain.container.ContainerInitState
 import com.aicodeeditor.feature.terminal.domain.TerminalSessionManager
 import com.aicodeeditor.feature.terminal.presentation.TerminalViewModel
 import com.termux.view.TerminalView
@@ -60,6 +61,7 @@ fun TerminalScreen(
     onNavigateBack: () -> Unit
 ) {
     val prepareState by viewModel.prepareState.collectAsState()
+    val containerInit by viewModel.containerInit.collectAsState()
     val tabs by viewModel.tabs.collectAsState()
     val activeTabId by viewModel.activeTabId.collectAsState()
     // revision 变化时强制重组：标签输出/状态在管理器里就地更新（非 data class 替换），靠它驱动刷新。
@@ -101,7 +103,7 @@ fun TerminalScreen(
             when (val state = prepareState) {
                 is TerminalViewModel.PrepareState.Loading -> StatusView(
                     loading = true,
-                    message = "正在准备容器环境…\n首次运行会解压容器，请稍候"
+                    message = containerInitMessage(containerInit)
                 )
 
                 is TerminalViewModel.PrepareState.Error -> StatusView(
@@ -317,6 +319,20 @@ private fun StatusView(
             Button(onClick = onAction) { Text(actionLabel) }
         }
     }
+}
+
+/** 把容器初始化进度状态映射为 Loading 阶段展示给用户的文案。 */
+private fun containerInitMessage(state: ContainerInitState): String = when (state) {
+    is ContainerInitState.ExtractingRootfs ->
+        "正在解压环境…\n已处理 ${state.processed} 个文件"
+    ContainerInitState.DeployingProot ->
+        "正在部署 proot 运行时…"
+    is ContainerInitState.InstallingPackages ->
+        "正在安装 python3 / git / pip / node / npm…\n${state.line ?: ""}"
+    is ContainerInitState.Failed ->
+        "正在准备容器环境…\n${state.reason}"
+    ContainerInitState.Idle, ContainerInitState.Ready ->
+        "正在准备容器环境…\n首次运行会解压容器，请稍候"
 }
 
 /** 手机软键盘缺失的常用按键：Esc / Tab / Ctrl(预置) / 方向键 / Ctrl-C / Ctrl-D。 */

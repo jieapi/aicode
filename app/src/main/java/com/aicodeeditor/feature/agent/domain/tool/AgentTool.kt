@@ -46,7 +46,8 @@ data class PendingToolPermission(
     val details: String,
     val argsPreview: String,
     /**
-     * 「始终允许」会记忆的模式列表（shell 命令为程序名前缀，如 `git`；非 shell 工具为 `*`）。
+     * 「始终允许」会记忆的模式列表（shell 命令为命令前缀：子命令分发器记 `git pull` 这类带子命令的
+     * 前缀，普通程序记 `cat`/`ls`；非 shell 工具为 `*`）。
      * 为空表示该调用不可记忆（命令不可静态判定），UI 应禁用「始终允许」、只留单次放行。
      * 由 [com.aicodeeditor.feature.agent.domain.permission.ToolPermissionPolicyEngine] 评估后填入。
      */

@@ -25,6 +25,21 @@ class ContainerInstaller @Inject constructor(
     companion object {
         private const val TAG = "ContainerInstaller"
 
+        /**
+         * 与 assets 里 alpine-rootfs 版本对应的 apk 分支，用于拼镜像源地址。
+         * 固定 v3.21：与 [INSTALL_VERSION]（alpine-3.21.3）一致；该版本 apk-tools 2.14 在 proot 下可靠。
+         */
+        const val ALPINE_BRANCH = "v3.21"
+
+        /**
+         * apk 镜像源；用阿里云国内镜像替代官方 dl-cdn，避免国外源过慢/被墙。
+         *
+         * 用 http 而非 https：Alpine minirootfs 不含 ca-certificates，容器内 apk 走自己的原生 TLS，
+         * 无 CA 证书库会导致 HTTPS 握手失败并被 apk 误报成 "Permission denied"（首次安装直接卡死）。
+         * apk 对索引与每个 .apk 都用 /etc/apk/keys 的签名独立校验，故 http 传输仍保证完整性。
+         */
+        const val ALPINE_MIRROR = "http://mirrors.aliyun.com/alpine"
+
         /** assets 内的二进制位置 */
         private const val ASSET_DIR = "container"
         private const val ASSET_PROOT = "$ASSET_DIR/proot"
@@ -89,8 +104,12 @@ class ContainerInstaller @Inject constructor(
 
     /**
      * 若未安装（或版本不匹配）则从 assets 解压安装。幂等，可在每次执行命令前调用。
+     *
+     * [onProgress] 在真正解压/部署的各阶段被回调以更新 [ContainerInitState]；已安装的快路径不会调用。
      */
-    suspend fun installRootfsIfNeed() = withContext(Dispatchers.IO) {
+    suspend fun installRootfsIfNeed(
+        onProgress: (ContainerInitState) -> Unit = {}
+    ) = withContext(Dispatchers.IO) {
         if (isInstalled()) return@withContext
 
         FileLogger.i(TAG, "开始安装容器 rootfs（版本 $INSTALL_VERSION）")
@@ -99,9 +118,11 @@ class ContainerInstaller @Inject constructor(
         if (rootfsDir.exists()) rootfsDir.deleteRecursively()
         rootfsDir.mkdirs()
 
+        onProgress(ContainerInitState.DeployingProot)
         installProot()
-        extractRootfs()
+        extractRootfs(onProgress)
         configureResolvConf()
+        configureApkRepositories()
         prootTmpDir.mkdirs()
 
         installedMarker.writeText(INSTALL_VERSION)
@@ -131,13 +152,16 @@ class ContainerInstaller @Inject constructor(
     }
 
     /** 解压 alpine-minirootfs.tar.gz，正确处理目录/文件/符号链接/硬链接与权限位 */
-    private fun extractRootfs() {
+    private fun extractRootfs(onProgress: (ContainerInitState) -> Unit) {
+        var processed = 0
         context.assets.open(ASSET_ROOTFS).use { rawIn ->
             GZIPInputStream(rawIn).use { gzipIn ->
                 TarArchiveInputStream(gzipIn).use { tarIn ->
                     var entry: TarArchiveEntry? = tarIn.nextEntry
                     while (entry != null) {
                         extractEntry(tarIn, entry)
+                        processed++
+                        onProgress(ContainerInitState.ExtractingRootfs(processed))
                         entry = tarIn.nextEntry
                     }
                 }
@@ -209,5 +233,19 @@ class ContainerInstaller @Inject constructor(
     private fun configureResolvConf() {
         val etc = File(rootfsDir, "etc").apply { mkdirs() }
         File(etc, "resolv.conf").writeText("nameserver 223.5.5.5\nnameserver 223.6.6.6\n")
+    }
+
+    /**
+     * 写入容器内 apk 源为阿里云国内镜像（[ALPINE_MIRROR]），替代 minirootfs 自带的官方 dl-cdn 源，
+     * 否则首次 `apk add` 在国内会极慢或超时。启用 main + community 两个仓库。
+     *
+     * 用 http 的原因见 [ALPINE_MIRROR] 注释。provision 流程会再幂等覆盖一次以兜底存量（已解压旧 rootfs）设备。
+     */
+    private fun configureApkRepositories() {
+        val apkDir = File(rootfsDir, "etc/apk").apply { mkdirs() }
+        File(apkDir, "repositories").writeText(
+            "$ALPINE_MIRROR/$ALPINE_BRANCH/main\n" +
+                "$ALPINE_MIRROR/$ALPINE_BRANCH/community\n"
+        )
     }
 }

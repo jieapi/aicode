@@ -130,6 +130,41 @@ object ShellCommandParser {
     /** 该段默认记忆的命令前缀 = 程序名 token；空段返回 null。 */
     fun programPrefix(tokens: List<String>): String? = effectiveTokens(tokens).firstOrNull()
 
+    /**
+     * 已知的「子命令分发器」程序：其第一个非 flag 参数是子命令（`git pull`/`npm install`/`cargo build`）。
+     * 对这类程序，「始终允许」应连子命令一起记忆，避免仅记 `git` 就把 `git push`/`git reset --hard` 等
+     * 一并放行。非分发器程序仍按程序名整体记忆（`cat`/`ls` 等）。
+     */
+    private val SUBCOMMAND_DISPATCHERS = setOf(
+        "git", "gh",
+        "npm", "npx", "yarn", "pnpm", "pnpx",
+        "cargo", "rustup",
+        "go",
+        "pip", "pip3", "poetry", "uv", "conda",
+        "gradle", "mvn", "sbt",
+        "docker", "kubectl", "helm",
+        "adb", "fastlane",
+        "brew", "apt", "apt-get", "gem", "bundle",
+        "az", "aws", "gcloud", "terraform", "ansible"
+    )
+
+    /**
+     * 「始终允许」可记忆的命令前缀：
+     * - 非分发器程序：仅程序名（`cat`/`ls`），与 [programPrefix] 一致；
+     * - 子命令分发器：程序名 + 紧随其后的第一个非 flag 子命令（`git pull`/`git clone`/`npm install`），
+     *   程序名后紧跟 flag（如 `git --version`）时退化为仅程序名。空段返回 null。
+     *
+     * 匹配仍走 [matches] 的 token 前缀语义：`git pull` 命中 `git pull origin main`，但不命中 `git clone`，
+     * 故不同子命令各自独立记忆、互不串放。
+     */
+    fun rememberablePrefix(tokens: List<String>): String? {
+        val eff = effectiveTokens(tokens)
+        val program = eff.firstOrNull() ?: return null
+        if (program !in SUBCOMMAND_DISPATCHERS) return program
+        val subcommand = eff.getOrNull(1)?.takeIf { !it.startsWith("-") } ?: return program
+        return "$program $subcommand"
+    }
+
     /** token 前缀匹配：规则 [pattern] 的 token 序列是该段有效 token 序列的前缀即命中。 */
     fun matches(pattern: String, segmentTokens: List<String>): Boolean {
         val patternTokens = pattern.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
