@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## General Rules
+- 永远使用中文回复 (Always reply in Chinese).
+
 ## Build and Run
 
 This is an Android application built with Kotlin, Jetpack Compose, and Hilt. It uses Gradle as the build system.
