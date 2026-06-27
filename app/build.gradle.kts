@@ -139,6 +139,9 @@ dependencies {
     // Kotlin 序列化
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 
+    // YAML 解析 (用于 Skill Frontmatter)
+    implementation("org.yaml:snakeyaml:2.2")
+
     // 容器：解压 Alpine rootfs tar.gz（正确处理 symlink/hardlink/权限位）
     implementation("org.apache.commons:commons-compress:1.26.2")
 
