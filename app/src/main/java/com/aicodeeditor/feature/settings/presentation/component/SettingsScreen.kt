@@ -4,7 +4,19 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -17,17 +29,34 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -40,16 +69,14 @@ import com.aicodeeditor.feature.agent.domain.mcp.McpServerConfig
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerStatus
 import com.aicodeeditor.feature.agent.domain.permission.PermissionDecision
 import com.aicodeeditor.feature.agent.domain.permission.PermissionRule
-import com.aicodeeditor.feature.settings.data.remote.ModelTestResult
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
-import com.aicodeeditor.feature.settings.domain.model.ProviderType
-import com.aicodeeditor.feature.settings.presentation.FetchState
 import com.aicodeeditor.feature.settings.presentation.SettingsViewModel
 
 /** 设置页内部二级菜单分区。Menu 为首页菜单，其余为各自的二级页。 */
 private enum class SettingsSection(val title: String) {
     Menu("设置"),
     Providers("AI 服务商"),
+    ProviderEditor("服务商"),
     Mcp("MCP 服务器"),
     Log("日志等级"),
     Permissions("工具授权")
@@ -71,15 +98,34 @@ fun SettingsScreen(
     val projectRules by viewModel.projectRules.collectAsState()
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
-
-    var showProviderDialog by remember { mutableStateOf(false) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
     var showMcpDialog by remember { mutableStateOf(false) }
     var editingMcp by remember { mutableStateOf<McpServerConfig?>(null) }
 
-    // 处于二级页时，系统返回键先回到菜单首页；首页时才交还给上层导航。
+    // 处于二级页时，系统返回键先回到上一层；首页时交还给上层导航。
     BackHandler(enabled = section != SettingsSection.Menu) {
-        section = SettingsSection.Menu
+        when (section) {
+            SettingsSection.ProviderEditor -> section = SettingsSection.Providers
+            else -> section = SettingsSection.Menu
+        }
+    }
+
+    // 服务商编辑为独立全屏页，直接渲染（不嵌套 Scaffold）
+    if (section == SettingsSection.ProviderEditor) {
+        ProviderEditorScreen(
+            viewModel = viewModel,
+            initialProvider = editingProvider,
+            onNavigateBack = { section = SettingsSection.Providers },
+            onSave = { provider ->
+                viewModel.saveProvider(provider)
+                section = SettingsSection.Providers
+            },
+            onDelete = { id ->
+                viewModel.deleteProvider(id)
+                section = SettingsSection.Providers
+            }
+        )
+        return
     }
 
     Scaffold(
@@ -102,7 +148,7 @@ fun SettingsScreen(
                     when (section) {
                         SettingsSection.Providers -> IconButton(onClick = {
                             editingProvider = null
-                            showProviderDialog = true
+                            section = SettingsSection.ProviderEditor
                         }) {
                             Icon(Icons.Default.Add, contentDescription = "添加服务商")
                         }
@@ -139,7 +185,7 @@ fun SettingsScreen(
                     onActivate = { viewModel.setActiveProvider(it) },
                     onEdit = {
                         editingProvider = it
-                        showProviderDialog = true
+                        section = SettingsSection.ProviderEditor
                     }
                 )
                 SettingsSection.Mcp -> McpSection(
@@ -166,24 +212,9 @@ fun SettingsScreen(
                     onPromote = { viewModel.promoteRuleToGlobal(it) },
                     onDeleteGlobal = { viewModel.deleteGlobalRule(it) }
                 )
+                SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
             }
         }
-    }
-
-    if (showProviderDialog) {
-        ProviderEditDialog(
-            viewModel = viewModel,
-            initialProvider = editingProvider,
-            onDismiss = { showProviderDialog = false },
-            onSave = { provider ->
-                viewModel.saveProvider(provider)
-                showProviderDialog = false
-            },
-            onDelete = { id ->
-                viewModel.deleteProvider(id)
-                showProviderDialog = false
-            }
-        )
     }
 
     if (showMcpDialog) {
@@ -302,7 +333,7 @@ private fun MenuRow(
     }
 }
 
-/** 服务商二级页：列表 + 空态提示。新增/编辑由顶栏「+」与点击触发 [ProviderEditDialog]。 */
+/** 服务商二级页：列表 + 空态提示。新增/编辑由顶栏「+」与点击触发 [ProviderEditorScreen]。 */
 @Composable
 private fun ProvidersSection(
     providers: List<AIProviderConfig>,
@@ -348,7 +379,6 @@ private fun LogSection(
 
 /**
  * 「工具授权」二级页：列出当前项目与全局已保存的授权规则，可逐条删除；项目规则可「提升为全局」。
- * 规则由授权弹窗的「始终允许」写入（默认进当前项目）。
  */
 @Composable
 private fun PermissionsSection(
@@ -520,7 +550,6 @@ private fun LogLevelCard(
 
 /**
  * MCP 二级页（可视化）：顶部说明 + 重新连接按钮 + server 列表。
- * 新增/编辑由顶栏「+」与点击行触发 [McpServerEditDialog]，保存即落盘并自动重连。
  */
 @Composable
 private fun McpSection(
@@ -676,332 +705,6 @@ private fun McpStatusLabel(server: McpServerConfig, status: McpServerStatus?) {
     }
 }
 
-/** MCP server 可视化编辑对话框：类型切换（HTTP / stdio）+ 各自字段。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun McpServerEditDialog(
-    initial: McpServerConfig?,
-    onDismiss: () -> Unit,
-    onSave: (McpServerConfig) -> Unit,
-    onDelete: (() -> Unit)?
-) {
-    var name by remember { mutableStateOf(initial?.name ?: "") }
-    var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
-    var isStdio by remember { mutableStateOf(initial?.isStdio ?: false) }
-
-    // HTTP 形态字段
-    var url by remember { mutableStateOf(initial?.url ?: "") }
-    val headers = remember {
-        mutableStateListOf<Pair<String, String>>().apply {
-            addAll(initial?.headers?.toList() ?: emptyList())
-        }
-    }
-
-    // stdio 形态字段
-    var command by remember { mutableStateOf(initial?.command ?: "") }
-    val argsList = remember {
-        mutableStateListOf<String>().apply { addAll(initial?.args ?: emptyList()) }
-    }
-    val envList = remember {
-        mutableStateListOf<Pair<String, String>>().apply {
-            addAll(initial?.env?.toList() ?: emptyList())
-        }
-    }
-
-    val canSave = name.isNotBlank() && if (isStdio) command.isNotBlank() else url.isNotBlank()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "添加 MCP 服务器" else "编辑 MCP 服务器") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 480.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // ── 类型切换 ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-                ) {
-                    FilterChip(
-                        selected = !isStdio,
-                        onClick = { isStdio = false },
-                        label = { Text("远程 HTTP") },
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilterChip(
-                        selected = isStdio,
-                        onClick = { isStdio = true },
-                        label = { Text("本地 stdio") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("启用", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
-
-                if (isStdio) {
-                    McpStdioFields(
-                        command = command,
-                        onCommandChange = { command = it },
-                        args = argsList,
-                        env = envList
-                    )
-                } else {
-                    McpHttpFields(
-                        url = url,
-                        onUrlChange = { url = it },
-                        headers = headers
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = canSave,
-                onClick = {
-                    val config = if (isStdio) {
-                        McpServerConfig(
-                            name = name.trim(),
-                            command = command.trim(),
-                            args = argsList.map { it.trim() }.filter { it.isNotEmpty() },
-                            env = envList
-                                .map { it.first.trim() to it.second }
-                                .filter { it.first.isNotEmpty() }
-                                .toMap(),
-                            enabled = enabled
-                        )
-                    } else {
-                        McpServerConfig(
-                            name = name.trim(),
-                            url = url.trim(),
-                            headers = headers
-                                .map { it.first.trim() to it.second }
-                                .filter { it.first.isNotEmpty() }
-                                .toMap(),
-                            enabled = enabled
-                        )
-                    }
-                    onSave(config)
-                }
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(
-                        onClick = onDelete,
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("删除")
-                    }
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
-                }
-            }
-        }
-    )
-}
-
-/** HTTP 形态字段：URL + 请求头键值对。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun McpHttpFields(
-    url: String,
-    onUrlChange: (String) -> Unit,
-    headers: SnapshotStateList<Pair<String, String>>
-) {
-    OutlinedTextField(
-        value = url,
-        onValueChange = onUrlChange,
-        label = { Text("URL") },
-        placeholder = { Text("https://example.com/mcp") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
-    )
-
-    HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "请求头 Headers（${headers.size}）",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f)
-        )
-        TextButton(onClick = { headers.add("" to "") }) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text("添加")
-        }
-    }
-
-    headers.forEachIndexed { index, (k, v) ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-        ) {
-            OutlinedTextField(
-                value = k,
-                onValueChange = { headers[index] = it to v },
-                label = { Text("键") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = v,
-                onValueChange = { headers[index] = k to it },
-                label = { Text("值") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = { headers.removeAt(index) }, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-/** stdio 形态字段：command + 参数列表 + 环境变量键值对。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun McpStdioFields(
-    command: String,
-    onCommandChange: (String) -> Unit,
-    args: SnapshotStateList<String>,
-    env: SnapshotStateList<Pair<String, String>>
-) {
-    OutlinedTextField(
-        value = command,
-        onValueChange = onCommandChange,
-        label = { Text("命令 command") },
-        placeholder = { Text("npx") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
-    )
-
-    // ── 参数 args ──
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "参数 args（${args.size}）",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f)
-        )
-        TextButton(onClick = { args.add("") }) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text("添加")
-        }
-    }
-
-    args.forEachIndexed { index, value ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-        ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { args[index] = it },
-                label = { Text("参数 ${index + 1}") },
-                placeholder = { Text("-y / @scope/server / --flag") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = { args.removeAt(index) }, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-
-    HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
-
-    // ── 环境变量 env ──
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "环境变量 env（${env.size}）",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f)
-        )
-        TextButton(onClick = { env.add("" to "") }) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text("添加")
-        }
-    }
-
-    env.forEachIndexed { index, (k, v) ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-        ) {
-            OutlinedTextField(
-                value = k,
-                onValueChange = { env[index] = it to v },
-                label = { Text("键") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = v,
-                onValueChange = { env[index] = k to it },
-                label = { Text("值") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = { env.removeAt(index) }, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
 @Composable
 fun ProviderItem(
     provider: AIProviderConfig,
@@ -1061,351 +764,4 @@ fun ProviderItem(
             }
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ProviderEditDialog(
-    viewModel: SettingsViewModel,
-    initialProvider: AIProviderConfig?,
-    onDismiss: () -> Unit,
-    onSave: (AIProviderConfig) -> Unit,
-    onDelete: (String) -> Unit
-) {
-    var name by remember { mutableStateOf(initialProvider?.name ?: "") }
-    var apiKey by remember { mutableStateOf(initialProvider?.apiKey ?: "") }
-    var baseUrl by remember { mutableStateOf(initialProvider?.baseUrl ?: "") }
-    var type by remember { mutableStateOf(initialProvider?.type ?: ProviderType.OPENAI) }
-    val models = remember { mutableStateListOf<String>().apply { addAll(initialProvider?.models ?: emptyList()) } }
-    var selectedModel by remember { mutableStateOf(initialProvider?.effectiveModel ?: "") }
-    var newModel by remember { mutableStateOf("") }
-
-    val fetchState by viewModel.fetchState.collectAsState()
-    val testResults by viewModel.testResults.collectAsState()
-    val testing by viewModel.testing.collectAsState()
-
-    // 进入/离开对话框时清理临时状态。
-    DisposableEffect(Unit) {
-        viewModel.resetFetchState()
-        viewModel.clearTestResults()
-        onDispose {
-            viewModel.resetFetchState()
-            viewModel.clearTestResults()
-        }
-    }
-
-    // 构造当前表单对应的临时配置，供拉取/测试使用。
-    fun currentConfig() = AIProviderConfig(
-        id = initialProvider?.id ?: "temp",
-        name = name,
-        type = type,
-        apiKey = apiKey,
-        baseUrl = baseUrl.ifBlank { defaultBaseUrl(type) },
-        defaultModel = selectedModel.ifBlank { models.firstOrNull() ?: "" },
-        isActive = initialProvider?.isActive ?: false,
-        models = models.toList(),
-        selectedModel = selectedModel
-    )
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (initialProvider == null) "添加服务商" else "编辑服务商") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 480.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-                ) {
-                    FilterChip(
-                        selected = type == ProviderType.OPENAI,
-                        onClick = { type = ProviderType.OPENAI },
-                        label = { Text("OpenAI") }
-                    )
-                    FilterChip(
-                        selected = type == ProviderType.ANTHROPIC,
-                        onClick = { type = ProviderType.ANTHROPIC },
-                        label = { Text("Anthropic") }
-                    )
-                    FilterChip(
-                        selected = type == ProviderType.CUSTOM,
-                        onClick = { type = ProviderType.CUSTOM },
-                        label = { Text("自定义") }
-                    )
-                }
-
-                OutlinedTextField(
-                    value = apiKey,
-                    onValueChange = { apiKey = it },
-                    label = { Text("API Key") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = baseUrl,
-                    onValueChange = { baseUrl = it },
-                    label = { Text("Base URL") },
-                    placeholder = { Text(defaultBaseUrl(type)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = Spacing.xs))
-
-                // ── 模型管理区 ──
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "模型（${models.size}）",
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = { viewModel.fetchModels(currentConfig()) },
-                        enabled = fetchState !is FetchState.Loading
-                    ) {
-                        if (fetchState is FetchState.Loading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                        }
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text("拉取")
-                    }
-                }
-
-                // 拉取结果 / 错误
-                when (val fs = fetchState) {
-                    is FetchState.Error -> Text(
-                        "拉取失败：${fs.message}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    is FetchState.Success -> {
-                        val newOnes = fs.models.filter { it !in models }
-                        if (newOnes.isEmpty()) {
-                            Text(
-                                "已是最新，无新模型",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            Text(
-                                "点击添加（${newOnes.size}）",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            FlowChips(
-                                items = newOnes,
-                                onClick = { m ->
-                                    if (m !in models) models.add(m)
-                                    if (selectedModel.isBlank()) selectedModel = m
-                                }
-                            )
-                        }
-                    }
-                    else -> {}
-                }
-
-                // 已添加模型列表
-                models.forEach { model ->
-                    ModelRow(
-                        model = model,
-                        isSelected = model == selectedModel,
-                        testing = model in testing,
-                        result = testResults[model],
-                        onSelect = { selectedModel = model },
-                        onTest = { viewModel.testModel(currentConfig(), model) },
-                        onRemove = {
-                            models.remove(model)
-                            if (selectedModel == model) selectedModel = models.firstOrNull() ?: ""
-                        }
-                    )
-                }
-
-                // 手动添加
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-                ) {
-                    OutlinedTextField(
-                        value = newModel,
-                        onValueChange = { newModel = it },
-                        label = { Text("手动添加模型") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = {
-                            val m = newModel.trim()
-                            if (m.isNotEmpty() && m !in models) {
-                                models.add(m)
-                                if (selectedModel.isBlank()) selectedModel = m
-                            }
-                            newModel = ""
-                        },
-                        enabled = newModel.isNotBlank()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "添加")
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onSave(
-                        AIProviderConfig(
-                            id = initialProvider?.id ?: System.currentTimeMillis().toString(),
-                            name = name.ifEmpty { "新服务商" },
-                            type = type,
-                            apiKey = apiKey,
-                            baseUrl = baseUrl.ifBlank { defaultBaseUrl(type) },
-                            defaultModel = selectedModel.ifBlank { models.firstOrNull() ?: "" },
-                            isActive = initialProvider?.isActive ?: false,
-                            models = models.toList(),
-                            selectedModel = selectedModel.ifBlank { models.firstOrNull() ?: "" }
-                        )
-                    )
-                }
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                if (initialProvider != null) {
-                    TextButton(
-                        onClick = { onDelete(initialProvider.id) },
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("删除")
-                    }
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
-                }
-            }
-        }
-    )
-}
-
-@Composable
-private fun ModelRow(
-    model: String,
-    isSelected: Boolean,
-    testing: Boolean,
-    result: ModelTestResult?,
-    onSelect: () -> Unit,
-    onTest: () -> Unit,
-    onRemove: () -> Unit
-) {
-    Surface(
-        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(Radius.sm),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onSelect() }
-    ) {
-        Column(modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isSelected) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = "当前选中",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(Spacing.xs))
-                }
-                Text(
-                    model,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                // 测试按钮
-                if (testing) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                } else {
-                    TextButton(onClick = onTest, contentPadding = PaddingValues(horizontal = Spacing.sm)) {
-                        Text("测试", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = "删除",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-            // 测试结果
-            result?.let { r ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        if (r.success) Icons.Default.Check else Icons.Default.ErrorOutline,
-                        contentDescription = null,
-                        tint = if (r.success) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(Spacing.xs))
-                    Text(
-                        r.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (r.success) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 可点击添加的模型胶囊流式布局（简易换行）。 */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun FlowChips(items: List<String>, onClick: (String) -> Unit) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-    ) {
-        items.forEach { item ->
-            AssistChip(
-                onClick = { onClick(item) },
-                label = { Text(item, style = MaterialTheme.typography.labelMedium) },
-                leadingIcon = {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                }
-            )
-        }
-    }
-}
-
-private fun defaultBaseUrl(type: ProviderType): String = when (type) {
-    ProviderType.ANTHROPIC -> "https://api.anthropic.com/"
-    else -> "https://api.openai.com/"
 }
