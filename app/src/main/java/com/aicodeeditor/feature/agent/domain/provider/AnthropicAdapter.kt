@@ -91,7 +91,7 @@ class AnthropicAdapter @Inject constructor(
             }
         }
 
-        return AIResponse(content = contentText, toolCalls = toolCalls)
+        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = response.stop_reason)
     }
 
     override fun completeStream(
@@ -126,6 +126,7 @@ class AnthropicAdapter @Inject constructor(
             val textBuilder = StringBuilder()
             // content block index -> 累积中的 tool_use（仅 tool_use 块建条目，保序）。
             val toolBlocks = LinkedHashMap<Int, ToolBlockAcc>()
+            var stopReason: String? = null
 
             val body = api.streamMessage(url = url, apiKey = apiKey, request = request)
 
@@ -182,6 +183,12 @@ class AnthropicAdapter @Inject constructor(
                                 }
                             }
                             "message_stop" -> break
+                        "message_delta" -> {
+                            val delta = obj.getAsJsonObject("delta")
+                            delta?.get("stop_reason")?.takeIf { !it.isJsonNull }?.asString?.let {
+                                stopReason = it
+                            }
+                        }
                         }
                     } catch (e: CancellationException) {
                         throw e
@@ -196,7 +203,7 @@ class AnthropicAdapter @Inject constructor(
             }
             // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason)))
             }
         } catch (e: CancellationException) {
             throw e

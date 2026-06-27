@@ -7,8 +7,17 @@ import kotlinx.coroutines.flow.Flow
 
 data class AIResponse(
     val content: String,
-    val toolCalls: List<ToolCall> = emptyList()
-)
+    val toolCalls: List<ToolCall> = emptyList(),
+    /**
+     * 模型停止的原因。Anthropic: "end_turn" / "tool_use" / "max_tokens"；
+     * OpenAI: "stop" / "tool_calls" / "length"。
+     * 当值为 "max_tokens" 或 "length" 时表示输出因 token 上限被截断，Agent 循环应自动续写。
+     */
+    val stopReason: String? = null
+) {
+    val isTruncated: Boolean
+        get() = stopReason == "max_tokens" || stopReason == "length"
+}
 
 /**
  * 流式补全过程中向上游推送的分块。
