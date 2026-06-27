@@ -61,7 +61,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
@@ -71,7 +70,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -392,11 +390,7 @@ fun AIChatPanel(
                     isBusy = isBusy,
                     workspaceViewModel = workspaceViewModel,
                     activeProvider = activeProvider,
-                    onSelectModel = { model ->
-                        val vm = settingsViewModel
-                        val provider = activeProvider
-                        if (vm != null && provider != null) vm.selectModel(provider.id, model)
-                    }
+                    onNavigateToSettings = onNavigateToSettings
                 )
             }
         }
@@ -1312,7 +1306,6 @@ private fun toolArgHint(argsJson: String?): String? {
     }.getOrNull()
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatInputBar(
     value: String,
@@ -1322,7 +1315,7 @@ private fun ChatInputBar(
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
     activeProvider: AIProviderConfig?,
-    onSelectModel: (String) -> Unit
+    onNavigateToSettings: () -> Unit
 ) {
     val canSend = value.isNotBlank() && !isBusy
     Surface(
@@ -1378,14 +1371,18 @@ private fun ChatInputBar(
                     .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (workspaceViewModel != null) {
-                    WorkspaceChip(viewModel = workspaceViewModel)
-                    Spacer(Modifier.width(Spacing.sm))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (workspaceViewModel != null) {
+                        WorkspaceChip(viewModel = workspaceViewModel)
+                        Spacer(Modifier.width(Spacing.sm))
+                    }
+                    if (activeProvider != null) {
+                        ModelChip(provider = activeProvider, onClick = onNavigateToSettings)
+                    }
                 }
-                if (activeProvider != null) {
-                    ModelChip(provider = activeProvider, onSelectModel = onSelectModel)
-                }
-                Spacer(Modifier.weight(1f))
                 SendButton(canSend = canSend, isBusy = isBusy, onSend = onSend, onStop = onStop)
             }
         }
@@ -1393,22 +1390,18 @@ private fun ChatInputBar(
 }
 
 /**
- * 输入区下行的模型切换胶囊：显示当前模型名，点击弹出模型列表。
+ * 输入区下行的模型切换胶囊：显示当前模型名，点击导航到设置页。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModelChip(
     provider: AIProviderConfig,
-    onSelectModel: (String) -> Unit
+    onClick: () -> Unit
 ) {
-    var showSheet by remember { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState()
-
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(Radius.pill))
             .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable { showSheet = true }
+            .clickable(onClick = onClick)
             .padding(horizontal = Spacing.md, vertical = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1433,66 +1426,6 @@ private fun ModelChip(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(16.dp)
         )
-    }
-
-    if (showSheet) {
-        ModalBottomSheet(
-            onDismissRequest = { showSheet = false },
-            sheetState = sheetState,
-            containerColor = MaterialTheme.colorScheme.surface
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Spacing.lg)
-                    .padding(bottom = Spacing.xl)
-            ) {
-                Text(
-                    text = "选择模型 · ${provider.name}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(bottom = Spacing.md)
-                )
-                if (provider.models.isEmpty()) {
-                    Text(
-                        "暂无模型，请到设置中拉取或添加",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = Spacing.md)
-                    )
-                } else {
-                    provider.models.forEach { model ->
-                        val selected = model == provider.effectiveModel
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(Radius.sm))
-                                .clickable {
-                                    onSelectModel(model)
-                                    showSheet = false
-                                }
-                                .padding(horizontal = Spacing.md, vertical = Spacing.md),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = model,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (selected) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = "当前",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
