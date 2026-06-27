@@ -163,18 +163,33 @@ class StandardAgentWorkflow @Inject constructor(
             val acc = StringBuilder()
             val reasoningAcc = StringBuilder()
             var finalResponse: AIResponse? = null
-            aiProvider.completeStream(systemPrompt, messages, tools).collect { chunk ->
-                when (chunk) {
-                    is AIStreamChunk.TextDelta -> {
-                        acc.append(chunk.text)
-                        emit(AgentEvent.AssistantDelta(acc.toString()))
+            try {
+                aiProvider.completeStream(systemPrompt, messages, tools).collect { chunk ->
+                    when (chunk) {
+                        is AIStreamChunk.TextDelta -> {
+                            acc.append(chunk.text)
+                            emit(AgentEvent.AssistantDelta(acc.toString()))
+                        }
+                        is AIStreamChunk.ReasoningDelta -> {
+                            reasoningAcc.append(chunk.text)
+                            emit(AgentEvent.ReasoningDelta(reasoningAcc.toString()))
+                        }
+                        is AIStreamChunk.Final -> finalResponse = chunk.response
                     }
-                    is AIStreamChunk.ReasoningDelta -> {
-                        reasoningAcc.append(chunk.text)
-                        emit(AgentEvent.ReasoningDelta(reasoningAcc.toString()))
-                    }
-                    is AIStreamChunk.Final -> finalResponse = chunk.response
                 }
+            } catch (e: Throwable) {
+                val partialText = acc.toString()
+                val partialReasoning = reasoningAcc.toString()
+                if (partialText.isNotEmpty() || partialReasoning.isNotEmpty()) {
+                    messages.add(
+                        AgentMessage.AssistantMessage(
+                            content = partialText,
+                            toolCalls = emptyList()
+                        )
+                    )
+                    emit(AgentEvent.AssistantText(partialText, emptyList(), partialReasoning))
+                }
+                throw e
             }
             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
 
