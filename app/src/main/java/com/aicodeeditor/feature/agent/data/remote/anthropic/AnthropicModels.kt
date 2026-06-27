@@ -4,7 +4,7 @@ data class AnthropicMessageRequest(
     val model: String,
     val messages: List<AnthropicMessage>,
     val system: String? = null,
-    val max_tokens: Int = 4096,
+    val max_tokens: Int = 16384,
     val temperature: Float = 0.7f,
     val tools: List<AnthropicToolDefinition>? = null,
     val stream: Boolean = false

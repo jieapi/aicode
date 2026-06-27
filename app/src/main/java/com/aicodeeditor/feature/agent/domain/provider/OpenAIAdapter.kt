@@ -76,10 +76,11 @@ class OpenAIAdapter @Inject constructor(
         AILogger.logResponse(logSessionId, "OpenAI", response)
 
         val message = response.choices.firstOrNull()?.message
+        val finishReason = response.choices.firstOrNull()?.finish_reason
         val content = message?.content ?: ""
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
 
-        return AIResponse(content = content, toolCalls = toolCalls)
+        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason)
     }
 
     override fun completeStream(
@@ -120,6 +121,7 @@ class OpenAIAdapter @Inject constructor(
             val textBuilder = StringBuilder()
             // tool_call index -> 累积中的工具调用（保序）。
             val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
+            var finishReason: String? = null
 
             val body = api.streamChatCompletion(
                 url = url,
@@ -151,6 +153,10 @@ class OpenAIAdapter @Inject constructor(
                     try {
                         val choice = obj.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject ?: continue
                         val delta = choice.getAsJsonObject("delta") ?: continue
+
+                        choice.get("finish_reason")?.takeIf { !it.isJsonNull }?.asString?.let {
+                            finishReason = it
+                        }
 
                         // 文字增量
                         delta.get("content")?.takeIf { !it.isJsonNull }?.asString?.let { c ->
@@ -189,7 +195,7 @@ class OpenAIAdapter @Inject constructor(
                 .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
             // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
             }
         } catch (e: CancellationException) {
             throw e
