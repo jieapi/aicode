@@ -39,7 +39,7 @@ class StandardAgentWorkflow @Inject constructor(
 
     private companion object {
         const val TAG = "StandardAgentWorkflow"
-        const val MAX_ITERATIONS = 10
+        const val MAX_ITERATIONS = 50
 
         /** 实时输出气泡只保留最近这么多字符（尾部），避免超大输出卡死渲染/重组。 */
         const val LIVE_TAIL_CHARS = 8_000
@@ -89,7 +89,7 @@ class StandardAgentWorkflow @Inject constructor(
                 iterations++
 
                 val aiResponse = aiProvider.complete(systemPrompt, messages, tools)
-                FileLogger.d(TAG, "AI 响应 #$iterations: content=${aiResponse.content.length} 字符, toolCalls=${aiResponse.toolCalls.size}")
+                FileLogger.d(TAG, "AI 响应 #$iterations: content=${aiResponse.content.length} 字符, toolCalls=${aiResponse.toolCalls.size}, stopReason=${aiResponse.stopReason}")
                 messages.add(
                     AgentMessage.AssistantMessage(
                         content = aiResponse.content,
@@ -100,7 +100,14 @@ class StandardAgentWorkflow @Inject constructor(
                     finalContent = aiResponse.content
                 }
 
-                if (aiResponse.toolCalls.isEmpty()) break
+                if (aiResponse.toolCalls.isEmpty()) {
+                    if (aiResponse.isTruncated) {
+                        FileLogger.w(TAG, "模型输出因 max_tokens 截断，自动续写 (第 $iterations 轮)")
+                        messages.add(AgentMessage.UserMessage(content = "你的回复因长度限制被截断了，请从截断处继续。"))
+                        continue
+                    }
+                    break
+                }
 
                 for (toolCall in aiResponse.toolCalls) {
                     val tool = toolRegistry.getTool(toolCall.name)
@@ -206,7 +213,14 @@ class StandardAgentWorkflow @Inject constructor(
                 emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
             }
 
-            if (aiResponse.toolCalls.isEmpty()) break
+            if (aiResponse.toolCalls.isEmpty()) {
+                if (aiResponse.isTruncated) {
+                    FileLogger.w(TAG, "模型输出因 max_tokens 截断，自动续写 (第 $iterations 轮)")
+                    messages.add(AgentMessage.UserMessage(content = "你的回复因长度限制被截断了，请从截断处继续。"))
+                    continue
+                }
+                break
+            }
 
             for (toolCall in aiResponse.toolCalls) {
                 val argsPreview = JsonObject(toolCall.arguments).toString().take(500)
