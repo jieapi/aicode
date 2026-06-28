@@ -12,9 +12,16 @@ This is an Android application built with Kotlin, Jetpack Compose, and Hilt. It 
 
 - **Build the project:** `./gradlew build`
 - **Assemble Debug APK:** `./gradlew assembleDebug`
-- **Assemble Release APK:** `./gradlew assembleRelease`
+- **Assemble Release APK:** `./gradlew assembleRelease` (Outputs to `app/build/outputs/apk/release/app-release.apk`)
+- **Assemble Release AAB:** `./gradlew bundleRelease` (Outputs to `app/build/outputs/bundle/release/app-release.aab`)
 - **Run Unit Tests:** `./gradlew test`
 - **Run Android Tests:** `./gradlew connectedAndroidTest`
+
+### Release Packaging & Signing
+The release signing configuration is automatically handled in `app/build.gradle.kts`:
+- **Keystore File:** `app/aicodeeditor.jks`
+- **Credentials:** Loaded from `app/keystore.properties` (`storePassword`, `keyAlias`, `keyPassword`).
+- **Target ABI:** Only `arm64-v8a` is packaged to keep APK size reasonable while supporting Termux/PRoot rootfs.
 
 *Note: The project locks `targetSdk = 28` intentionally to allow PRoot execution (W^X policy bypass on Android 10+).*
 
