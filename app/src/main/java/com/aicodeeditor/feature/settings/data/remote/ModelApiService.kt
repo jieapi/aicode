@@ -34,7 +34,7 @@ class ModelApiService @Inject constructor(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 拉取服务商可用模型列表（OpenAI 兼容 / Anthropic 均为 GET /v1/models）。 */
+    /** 拉取服务商可用模型列表（OpenAI 兼容 / Anthropic 均为 GET /v1/models，Gemini 为 GET /v1beta/models）。 */
     suspend fun fetchModels(
         baseUrl: String,
         apiKey: String,
@@ -43,8 +43,9 @@ class ModelApiService @Inject constructor(
         runCatching {
             if (apiKey.isBlank()) error("请先填写 API Key")
 
+            val modelsPath = if (type == ProviderType.GEMINI) "v1beta/models" else "v1/models"
             val request = Request.Builder()
-                .url(joinUrl(baseUrl, "v1/models"))
+                .url(joinUrl(baseUrl, modelsPath))
                 .applyAuth(apiKey, type)
                 .get()
                 .build()
@@ -55,10 +56,17 @@ class ModelApiService @Inject constructor(
                     error("HTTP ${response.code}: ${body.take(200)}")
                 }
 
-                val data = json.parseToJsonElement(body).jsonObject["data"]?.jsonArray
-                    ?: error("响应缺少 data 字段")
+                val jsonObj = json.parseToJsonElement(body).jsonObject
+                val data = if (type == ProviderType.GEMINI) {
+                    jsonObj["models"]?.jsonArray
+                } else {
+                    jsonObj["data"]?.jsonArray
+                } ?: error("响应缺少列表字段")
 
-                data.mapNotNull { it.jsonObject["id"]?.jsonPrimitive?.contentOrNull }
+                data.mapNotNull { 
+                        it.jsonObject[if (type == ProviderType.GEMINI) "name" else "id"]?.jsonPrimitive?.contentOrNull 
+                    }
+                    .map { if (type == ProviderType.GEMINI) it.removePrefix("models/") else it }
                     .filter { it.isNotBlank() }
                     .sorted()
             }
@@ -70,6 +78,8 @@ class ModelApiService @Inject constructor(
         baseUrl: String,
         apiKey: String,
         type: ProviderType,
+        apiPath: String,
+        useResponseApi: Boolean,
         model: String
     ): ModelTestResult = withContext(Dispatchers.IO) {
         val start = System.nanoTime()
@@ -77,10 +87,22 @@ class ModelApiService @Inject constructor(
             if (apiKey.isBlank()) error("请先填写 API Key")
 
             val (url, payload) = when (type) {
-                ProviderType.ANTHROPIC -> joinUrl(baseUrl, "v1/messages") to
+                ProviderType.ANTHROPIC -> joinUrl(baseUrl, apiPath) to
                     """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
-                else -> joinUrl(baseUrl, "v1/chat/completions") to
-                    """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+                ProviderType.GEMINI -> {
+                    val path = if (apiPath.endsWith("/")) "$apiPath$model:generateContent" else "$apiPath/$model:generateContent"
+                    joinUrl(baseUrl, path) to
+                        """{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"""
+                }
+                else -> {
+                    if (useResponseApi) {
+                        joinUrl(baseUrl, apiPath) to
+                            """{"model":${model.jsonStr()},"input":[{"role":"user","content":"hi"}]}"""
+                    } else {
+                        joinUrl(baseUrl, apiPath) to
+                            """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+                    }
+                }
             }
 
             val request = Request.Builder()
@@ -109,6 +131,8 @@ class ModelApiService @Inject constructor(
             ProviderType.ANTHROPIC -> this
                 .header("x-api-key", apiKey)
                 .header("anthropic-version", "2023-06-01")
+            ProviderType.GEMINI -> this
+                .header("x-goog-api-key", apiKey)
             else -> this.header("Authorization", "Bearer $apiKey")
         }
 

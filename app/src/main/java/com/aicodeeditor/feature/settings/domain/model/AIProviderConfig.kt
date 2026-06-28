@@ -11,7 +11,10 @@ data class AIProviderConfig(
     /** 该服务商已添加的可用模型列表（拉取或手动添加）。 */
     val models: List<String> = emptyList(),
     /** 当前选中使用的模型；为空时回退到 defaultModel。 */
-    val selectedModel: String = defaultModel
+    val selectedModel: String = defaultModel,
+    val isEnabled: Boolean = true,
+    val apiPath: String = "/chat/completions",
+    val useResponseApi: Boolean = false
 ) {
     /** 实际生效的模型：优先 selectedModel，其次 defaultModel。 */
     val effectiveModel: String
@@ -19,5 +22,5 @@ data class AIProviderConfig(
 }
 
 enum class ProviderType {
-    OPENAI, ANTHROPIC, CUSTOM
+    OPENAI, ANTHROPIC, GEMINI
 }

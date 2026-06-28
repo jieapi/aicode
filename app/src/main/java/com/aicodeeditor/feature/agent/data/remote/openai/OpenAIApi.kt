@@ -22,4 +22,19 @@ interface OpenAIApi {
         @retrofit2.http.Header("Authorization") authorization: String,
         @Body request: ChatCompletionRequest
     ): ResponseBody
+    
+    @POST
+    suspend fun createResponses(
+        @Url url: String,
+        @retrofit2.http.Header("Authorization") authorization: String,
+        @Body request: Any
+    ): com.google.gson.JsonObject
+
+    @Streaming
+    @POST
+    suspend fun streamResponses(
+        @Url url: String,
+        @retrofit2.http.Header("Authorization") authorization: String,
+        @Body request: Any
+    ): ResponseBody
 }

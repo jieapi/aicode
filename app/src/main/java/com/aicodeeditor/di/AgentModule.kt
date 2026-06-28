@@ -130,6 +130,23 @@ object AgentModule {
 
     @Provides
     @Singleton
+    @Named("Gemini")
+    fun provideGeminiRetrofit(client: OkHttpClient): Retrofit {
+        return Retrofit.Builder()
+            .baseUrl("https://generativelanguage.googleapis.com/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun provideGeminiApi(@Named("Gemini") retrofit: Retrofit): com.aicodeeditor.feature.agent.data.remote.gemini.GeminiApi {
+        return retrofit.create(com.aicodeeditor.feature.agent.data.remote.gemini.GeminiApi::class.java)
+    }
+
+    @Provides
+    @Singleton
     @Named("OpenAIProvider")
     fun provideOpenAIProvider(api: OpenAIApi): AIProvider {
         return OpenAIAdapter(api)
@@ -140,6 +157,13 @@ object AgentModule {
     @Named("AnthropicProvider")
     fun provideAnthropicProvider(api: AnthropicApi): AIProvider {
         return AnthropicAdapter(api)
+    }
+
+    @Provides
+    @Singleton
+    @Named("GeminiProvider")
+    fun provideGeminiProvider(api: com.aicodeeditor.feature.agent.data.remote.gemini.GeminiApi): AIProvider {
+        return com.aicodeeditor.feature.agent.domain.provider.GeminiAdapter(api)
     }
 
     @Provides
@@ -155,7 +179,8 @@ object AgentModule {
         manageMcpTool: com.aicodeeditor.feature.agent.domain.tool.mcp.ManageMcpTool,
         manageSkillTool: com.aicodeeditor.feature.agent.domain.tool.skill.ManageSkillTool,
         webSearchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebSearchTool,
-        webFetchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebFetchTool
+        webFetchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebFetchTool,
+        switchModeTool: com.aicodeeditor.feature.agent.domain.tool.mode.SwitchModeTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("read_file", readFileTool)
@@ -169,6 +194,7 @@ object AgentModule {
             register("manage_skill", manageSkillTool)
             register("websearch", webSearchTool)
             register("webfetch", webFetchTool)
+            register("switch_mode", switchModeTool)
         }
     }
 
@@ -185,6 +211,7 @@ object AgentModule {
         aiProviderRepository: AIProviderRepository,
         @Named("OpenAIProvider") openAIProvider: AIProvider,
         @Named("AnthropicProvider") anthropicProvider: AIProvider,
+        @Named("GeminiProvider") geminiProvider: AIProvider,
         promptProvider: SystemPromptProvider,
         permissionManager: ToolPermissionManager,
         policyEngine: ToolPermissionPolicyEngine,
@@ -195,6 +222,7 @@ object AgentModule {
             aiProviderRepository,
             openAIProvider,
             anthropicProvider,
+            geminiProvider,
             promptProvider,
             permissionManager,
             policyEngine,

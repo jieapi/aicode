@@ -34,6 +34,8 @@ sealed class AIStreamChunk {
 interface AIProvider {
     var apiKey: String
     var baseUrl: String
+    var apiPath: String
+    var useResponseApi: Boolean
     var model: String
 
     /**

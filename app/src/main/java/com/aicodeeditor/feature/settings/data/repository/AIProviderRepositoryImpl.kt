@@ -69,6 +69,11 @@ class AIProviderRepositoryImpl @Inject constructor(
         aiProviderDao.setModels(id, models.joinToString("\n"))
     }
 
+    override suspend fun setProviderEnabled(id: String, isEnabled: Boolean) {
+        FileLogger.i(TAG, "设置服务商状态 provider=$id isEnabled=$isEnabled")
+        aiProviderDao.setProviderEnabled(id, isEnabled)
+    }
+
     override suspend fun ensureActiveProvider() {
         // 已有激活项则无需处理。
         if (aiProviderDao.getActiveProviderSync() != null) return
@@ -83,13 +88,16 @@ class AIProviderRepositoryImpl @Inject constructor(
         return AIProviderConfig(
             id = id,
             name = name,
-            type = try { ProviderType.valueOf(type) } catch (e: Exception) { ProviderType.CUSTOM },
+            type = try { ProviderType.valueOf(type) } catch (e: Exception) { ProviderType.OPENAI },
             apiKey = apiKey,
             baseUrl = baseUrl,
             defaultModel = defaultModel,
             isActive = isActive,
             models = modelList,
-            selectedModel = selectedModel.ifBlank { defaultModel }
+            selectedModel = selectedModel.ifBlank { defaultModel },
+            isEnabled = isEnabled,
+            apiPath = apiPath,
+            useResponseApi = useResponseApi
         )
     }
 
@@ -100,10 +108,13 @@ class AIProviderRepositoryImpl @Inject constructor(
             type = type.name,
             apiKey = apiKey,
             baseUrl = baseUrl,
+            apiPath = apiPath,
             defaultModel = defaultModel,
             isActive = isActive,
             models = models.joinToString("\n"),
-            selectedModel = selectedModel.ifBlank { defaultModel }
+            selectedModel = selectedModel,
+            isEnabled = isEnabled,
+            useResponseApi = useResponseApi
         )
     }
 }
