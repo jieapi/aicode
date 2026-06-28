@@ -11,6 +11,7 @@ import javax.inject.Inject
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -142,48 +143,56 @@ class GeminiAdapter @Inject constructor(
                 val body = api.streamGenerateContent(url = url, apiKey = apiKey, request = request)
 
                 body.use { rb ->
-                    val reader = rb.charStream().buffered()
-                    while (true) {
-                        coroutineContext.ensureActive()
-                        val line = reader.readLine()
-                            ?: throw IOException("SSE 流被中断（疑似网络断开）")
-                        if (!line.startsWith("data:")) continue
-                        val data = line.removePrefix("data:").trim()
-                        if (data.isEmpty()) continue
-                        rawSse.append(line).append('\n')
-                        val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
-                        
-                        try {
-                            val chunkCandidates = obj.getAsJsonArray("candidates")
-                            chunkCandidates?.firstOrNull()?.asJsonObject?.let { candidate ->
-                                val reason = candidate.get("finishReason")?.takeIf { !it.isJsonNull }?.asString
-                                if (reason != null && reason != "null") currentFinishReason = reason
+                    val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
+                        runCatching { rb.close() }
+                    }
+                    try {
+                        val reader = rb.charStream().buffered()
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val line = reader.readLine()
+                                ?: throw IOException("SSE 流被中断（疑似网络断开）")
+                            if (!line.startsWith("data:")) continue
+                            val data = line.removePrefix("data:").trim()
+                            if (data.isEmpty()) continue
+                            rawSse.append(line).append('\n')
+                            val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                            
+                            try {
+                                val chunkCandidates = obj.getAsJsonArray("candidates")
+                                chunkCandidates?.firstOrNull()?.asJsonObject?.let { candidate ->
+                                    val reason = candidate.get("finishReason")?.takeIf { !it.isJsonNull }?.asString
+                                    if (reason != null && reason != "null") currentFinishReason = reason
 
-                                val content = candidate.getAsJsonObject("content")
-                                content?.getAsJsonArray("parts")?.forEach { partEl ->
-                                    val part = partEl.asJsonObject
-                                    if (part.has("text")) {
-                                        val text = part.get("text")?.asString ?: ""
-                                        if (text.isNotEmpty()) {
-                                            textBuilder.append(text)
-                                            onProduced()
-                                            emit(AIStreamChunk.TextDelta(text))
+                                    val content = candidate.getAsJsonObject("content")
+                                    content?.getAsJsonArray("parts")?.forEach { partEl ->
+                                        val part = partEl.asJsonObject
+                                        if (part.has("text")) {
+                                            val text = part.get("text")?.asString ?: ""
+                                            if (text.isNotEmpty()) {
+                                                textBuilder.append(text)
+                                                onProduced()
+                                                emit(AIStreamChunk.TextDelta(text))
+                                            }
+                                        }
+                                        if (part.has("functionCall")) {
+                                            val fnCall = part.getAsJsonObject("functionCall")
+                                            val name = fnCall.get("name")?.asString ?: ""
+                                            val argsStr = fnCall.getAsJsonObject("args")?.toString() ?: "{}"
+                                            val argsJson = parseArgs(argsStr)
+                                            toolCalls.add(ToolCall(id = name, name = name, arguments = argsJson))
                                         }
                                     }
-                                    if (part.has("functionCall")) {
-                                        val fnCall = part.getAsJsonObject("functionCall")
-                                        val name = fnCall.get("name")?.asString ?: ""
-                                        val argsStr = fnCall.getAsJsonObject("args")?.toString() ?: "{}"
-                                        val argsJson = parseArgs(argsStr)
-                                        toolCalls.add(ToolCall(id = name, name = name, arguments = argsJson))
-                                    }
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                coroutineContext.ensureActive()
+                                // ignore
                             }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            // ignore
                         }
+                    } finally {
+                        closeHandle?.dispose()
                     }
                 }
 
@@ -193,6 +202,7 @@ class GeminiAdapter @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            coroutineContext.ensureActive()
             val enriched = e.enrichWithHttpErrorBody()
             AILogger.logError(logSessionId, "Gemini", enriched)
             throw enriched
