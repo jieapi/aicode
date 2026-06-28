@@ -36,10 +36,7 @@ class EditFileTool @Inject constructor(
 ) : AgentTool() {
     override val name = "edit_file"
     override val description =
-        "通过精确字符串匹配修改已有文件：把文件中的 old_string 替换为 new_string。这是修改文件的首选方式。" +
-            "支持一次性修改多处：在 edits 数组里给出多个 {old_string,new_string} 编辑，按顺序依次应用，" +
-            "任一处匹配失败则整批回滚、不写盘。每个 old_string 必须与文件内容逐字匹配（含缩进与换行）且默认唯一；" +
-            "new_string 传空串即为删除该段。整文件重写请用 write_file，而非本工具。"
+        "通过精确的字符串匹配替换修改已存在的文件内容。作为局部修改文件的首选工具。支持通过 edits 数组一次性应用多处修改，任一处匹配失败将整批回滚。整文件重写请用 write_file。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema。 */
@@ -193,25 +190,17 @@ class EditFileTool @Inject constructor(
     }
 
     /**
-     * 解析编辑列表：优先读 edits 数组；为兼容仍以扁平 old_string/new_string 形式调用的情况，
-     * 缺少 edits 时退回单编辑。返回 null 表示两种形式都没有提供。
+     * 解析编辑列表：读取 edits 数组。
      */
     private fun parseEdits(args: Map<String, JsonElement>): List<Edit>? {
-        (args["edits"] as? JsonArray)?.let { arr ->
-            if (arr.isEmpty()) return null
-            return arr.mapNotNull { el ->
-                val obj = el as? JsonObject ?: return@mapNotNull null
-                val old = obj["old_string"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                val new = obj["new_string"]?.jsonPrimitive?.contentOrNull ?: ""
-                val all = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
-                Edit(old, new, all)
-            }.takeIf { it.isNotEmpty() }
-        }
-
-        // 扁平兜底：edits 缺失但给了顶层 old_string/new_string。
-        val old = args["old_string"]?.jsonPrimitive?.contentOrNull ?: return null
-        val new = args["new_string"]?.jsonPrimitive?.contentOrNull ?: ""
-        val all = args["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
-        return listOf(Edit(old, new, all))
+        val arr = args["edits"] as? JsonArray ?: return null
+        if (arr.isEmpty()) return null
+        return arr.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val old = obj["old_string"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val new = obj["new_string"]?.jsonPrimitive?.contentOrNull ?: ""
+            val all = obj["replace_all"]?.jsonPrimitive?.booleanOrNull ?: false
+            Edit(old, new, all)
+        }.takeIf { it.isNotEmpty() }
     }
 }

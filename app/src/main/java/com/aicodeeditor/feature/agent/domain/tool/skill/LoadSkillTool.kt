@@ -28,7 +28,7 @@ class LoadSkillTool @Inject constructor(
 
     override val name = "load_skill"
     override val description =
-        "加载一个技能(skill)的完整指令。当系统提示中列出的某个技能适用于当前任务时调用，传入技能名即可拿到其详细操作说明；技能目录在容器内位于 /root/.aicode/skills/<name>/。"
+        "加载指定技能（Skill）的完整指令内容。当系统提示清单中的技能适用于当前任务时，调用此工具获取其详细操作说明。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "skill_name" to ToolParameter(
