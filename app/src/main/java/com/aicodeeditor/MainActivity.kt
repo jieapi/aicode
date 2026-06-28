@@ -161,7 +161,11 @@ fun AppNavigation() {
     ) {
         NavHost(
             navController = navController,
-            startDestination = "chat"
+            startDestination = "chat",
+            enterTransition = { EnterTransition.None },
+            exitTransition = { ExitTransition.None },
+            popEnterTransition = { EnterTransition.None },
+            popExitTransition = { ExitTransition.None }
         ) {
             composable("chat") {
                 AIChatPanel(

@@ -103,6 +103,7 @@ import com.aicodeeditor.feature.agent.domain.model.CodeChange
 import com.aicodeeditor.feature.agent.domain.model.ChangeType
 import com.aicodeeditor.feature.agent.domain.permission.PermissionChoice
 import com.aicodeeditor.feature.agent.domain.tool.PendingToolPermission
+import com.aicodeeditor.feature.agent.domain.tool.question.UserQuestionAnswer
 import com.aicodeeditor.feature.agent.presentation.AgentUIMessage
 import com.aicodeeditor.feature.agent.presentation.AgentUIState
 import com.aicodeeditor.feature.agent.presentation.AIAgentViewModel
@@ -164,6 +165,7 @@ fun AIChatPanel(
     val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
+    val pendingQuestion by viewModel.pendingUserQuestion.collectAsStateWithLifecycle()
     val activeProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
     val providers = (settingsViewModel?.providers?.collectAsStateWithLifecycle()?.value ?: emptyList()).filter { it.isEnabled }
     val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
@@ -231,6 +233,7 @@ fun AIChatPanel(
         streamingText,
         streamingReasoning,
         pendingPermission,
+        pendingQuestion,
         isBusy
     ) {
         // 尚未就绪（切换/冷启动加载中）时不滚动，避免对旧会话或空列表误操作。
@@ -239,7 +242,7 @@ fun AIChatPanel(
         // 判定需与渲染逻辑一致。
         val hasReasoning = streamingReasoning?.isNotEmpty() == true
         val hasStreamingText = streamingText?.hasVisibleContent() == true
-        val hasTrailing = hasReasoning || hasStreamingText || (isBusy && runningTool == null && pendingPermission == null)
+        val hasTrailing = hasReasoning || hasStreamingText || (isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null)
         val target = messages.size - 1 + (if (hasTrailing) 1 else 0)
         if (target < 0) {
             // 空会话也算已定位，后续首条消息走跟随逻辑。
@@ -329,7 +332,7 @@ fun AIChatPanel(
                         }
                         if (showStreaming) {
                             item(key = "__streaming__") { StreamingBubble(text = streaming!!) }
-                        } else if (!showReasoning && isBusy && runningTool == null && pendingPermission == null) {
+                        } else if (!showReasoning && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null) {
                             item(key = "__thinking__") { ThinkingBubble() }
                         }
                     }
@@ -361,6 +364,20 @@ fun AIChatPanel(
                     ToolPermissionPanel(
                         request = request,
                         onChoice = { choice -> viewModel.resolveToolPermission(request.id, choice) }
+                    )
+                }
+            }
+
+            AnimatedVisibility(
+                visible = pendingQuestion != null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                pendingQuestion?.let { question ->
+                    AskUserQuestionPanel(
+                        question = question,
+                        onConfirm = { answer -> viewModel.resolveUserQuestion(question.id, answer) },
+                        onSkip = { viewModel.resolveUserQuestion(question.id, UserQuestionAnswer(emptyList())) }
                     )
                 }
             }
