@@ -92,7 +92,6 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            repository.initializeDefaultProvidersIfEmpty()
             // 启动即保证有激活服务商（若库中存在却无激活项），避免主页模型胶囊因 activeProvider=null 消失。
             repository.ensureActiveProvider()
 

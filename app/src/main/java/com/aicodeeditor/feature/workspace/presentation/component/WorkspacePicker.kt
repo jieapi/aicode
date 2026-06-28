@@ -55,12 +55,14 @@ import com.aicodeeditor.feature.workspace.presentation.WorkspaceViewModel
 @Composable
 fun WorkspaceChip(
     viewModel: WorkspaceViewModel,
+    hasRunningSessions: () -> Boolean = { false },
     modifier: Modifier = Modifier
 ) {
     val workspaces by viewModel.workspaces.collectAsState()
     val current by viewModel.current.collectAsState()
 
     var showSheet by remember { mutableStateOf(false) }
+    var pendingWorkspaceSelect by remember { mutableStateOf<Workspace?>(null) }
 
     Row(
         modifier = modifier
@@ -97,12 +99,34 @@ fun WorkspaceChip(
             workspaces = workspaces,
             current = current,
             onSelect = {
-                viewModel.selectWorkspace(it.name)
-                showSheet = false
+                if (hasRunningSessions()) {
+                    pendingWorkspaceSelect = it
+                } else {
+                    viewModel.selectWorkspace(it.name)
+                    showSheet = false
+                }
             },
             onCreate = { viewModel.createWorkspace(it) },
             onDelete = { viewModel.deleteWorkspace(it.name) },
             onDismiss = { showSheet = false }
+        )
+    }
+
+    pendingWorkspaceSelect?.let { ws ->
+        AlertDialog(
+            onDismissRequest = { pendingWorkspaceSelect = null },
+            title = { Text("切换工作区") },
+            text = { Text("当前工作区有正在运行的会话，切换工作区后它们将在后台继续运行。确定要切换吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.selectWorkspace(ws.name)
+                    pendingWorkspaceSelect = null
+                    showSheet = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingWorkspaceSelect = null }) { Text("取消") }
+            }
         )
     }
 }
