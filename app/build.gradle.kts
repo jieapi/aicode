@@ -144,9 +144,11 @@ dependencies {
     // YAML 解析 (用于 Skill Frontmatter)
     implementation("org.yaml:snakeyaml:2.2")
 
-    // 远程同步 (SFTP/FTP)
+    // 远程同步 (SFTP/FTP) 与内置 FTP 服务端
     implementation("com.hierynomus:sshj:0.38.0")
     implementation("commons-net:commons-net:3.10.0")
+    implementation("org.apache.ftpserver:ftpserver-core:1.2.0")
+    implementation("org.slf4j:slf4j-simple:2.0.9")
 
     // 容器：解压 Alpine rootfs tar.gz（正确处理 symlink/hardlink/权限位）
     implementation("org.apache.commons:commons-compress:1.26.2")
@@ -163,6 +165,9 @@ dependencies {
     // Material Icons
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
+    
+    // Lucide Icons
+    implementation("br.com.devsrsouza.compose.icons:feather:1.1.1")
 
     // Markdown Renderer
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.24.0")

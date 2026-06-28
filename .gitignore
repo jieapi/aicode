@@ -20,7 +20,7 @@ keystore.properties
 
 # Claude
 .claude/
-
-/termux-app-0.118.0/
-/system-prompts/
 /.kotlin/
+/.agents/
+/skills-lock.json
+/system-prompts/
