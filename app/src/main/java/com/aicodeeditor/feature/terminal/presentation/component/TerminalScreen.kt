@@ -36,7 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
@@ -60,12 +60,12 @@ fun TerminalScreen(
     viewModel: TerminalViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val prepareState by viewModel.prepareState.collectAsState()
-    val containerInit by viewModel.containerInit.collectAsState()
-    val tabs by viewModel.tabs.collectAsState()
-    val activeTabId by viewModel.activeTabId.collectAsState()
+    val prepareState by viewModel.prepareState.collectAsStateWithLifecycle()
+    val containerInit by viewModel.containerInit.collectAsStateWithLifecycle()
+    val tabs by viewModel.tabs.collectAsStateWithLifecycle()
+    val activeTabId by viewModel.activeTabId.collectAsStateWithLifecycle()
     // revision 变化时强制重组：标签输出/状态在管理器里就地更新（非 data class 替换），靠它驱动刷新。
-    val revision by viewModel.revision.collectAsState()
+    val revision by viewModel.revision.collectAsStateWithLifecycle()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

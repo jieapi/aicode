@@ -5,7 +5,8 @@ plugins {
     id("com.android.application")
     kotlin("android")
     
-    kotlin("plugin.serialization") version "1.9.22"
+    kotlin("plugin.compose")
+    kotlin("plugin.serialization") version "2.0.0"
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
 }
@@ -75,9 +76,7 @@ android {
         compose = true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
-    }
+
 
     packaging {
         resources {

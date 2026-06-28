@@ -1,10 +1,6 @@
 package com.aicodeeditor.core.ui
 
-import android.app.Activity
-import android.content.Context
-import android.content.ContextWrapper
 import android.os.Build
-import android.view.WindowManager
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.WindowInsets
@@ -33,9 +29,14 @@ import androidx.core.view.WindowInsetsCompat
  * 平台的 IME inset 逐帧动画——`WindowInsets.ime` 只在键盘动画结束后一步到位。表现就是「键盘先弹起、
  * 底栏再迟一拍跟上」。
  *
- * 解决：在 API 30+ 上，进入这些界面时把窗口切到 `ADJUST_NOTHING`（让旧版缩放路径让位），改由我们
- * 用 inset 把底栏顶起来；同时挂一个 [WindowInsetsAnimationCompat] 回调，在 onProgress 里读取键盘
- * **当前帧**位置驱动内边距，从而与键盘锁帧同步移动。离开界面时还原原有 softInputMode。
+ * 解决：在 API 30+ 上，Activity.onCreate 把窗口切到 `ADJUST_NOTHING`（让旧版缩放路径让位），改由
+ * 我们用 inset 把底栏顶起来；同时本函数挂一个 [WindowInsetsAnimationCompat] 回调，在 onProgress
+ * 里读取键盘**当前帧**位置驱动内边距，从而与键盘锁帧同步移动。
+ *
+ * **重要**：softInputMode 由 Activity 统一设置一次，本函数 onDispose 不再还原——
+ * 多个页面（Terminal / Chat）同时使用本函数时，NavHost 过渡动画期间两个 composable 共存，
+ * 旧页面 dispose 会把新页面刚设好的回调清掉、把 softInputMode 切回 adjustResize，
+ * 触发窗口重新布局导致白屏。
  *
  * API < 30 没有 IME inset 动画 API，保持 manifest 的 adjustResize 旧行为（窗口缩放，功能正常，
  * 只是没有顺滑动画）。
@@ -57,10 +58,6 @@ fun rememberImeBottomInset(): Dp {
 
     if (Build.VERSION.SDK_INT >= 30) {
         DisposableEffect(view) {
-            val window = view.context.findActivity()?.window
-            val prevMode = window?.attributes?.softInputMode
-            window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
-
             val callback = object : WindowInsetsAnimationCompat.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
                 override fun onPrepare(animation: WindowInsetsAnimationCompat) {
                     if (animation.typeMask and WindowInsetsCompat.Type.ime() != 0) animating = true
@@ -82,10 +79,7 @@ fun rememberImeBottomInset(): Dp {
             }
             ViewCompat.setWindowInsetsAnimationCallback(view, callback)
 
-            onDispose {
-                ViewCompat.setWindowInsetsAnimationCallback(view, null)
-                if (prevMode != null) window.setSoftInputMode(prevMode)
-            }
+            onDispose { }
         }
     }
 
@@ -105,13 +99,4 @@ fun rememberImeBottomInset(): Dp {
         else -> restingPx
     }
     return with(density) { px.toDp() }
-}
-
-private fun Context.findActivity(): Activity? {
-    var ctx: Context? = this
-    while (ctx is ContextWrapper) {
-        if (ctx is Activity) return ctx
-        ctx = ctx.baseContext
-    }
-    return null
 }
