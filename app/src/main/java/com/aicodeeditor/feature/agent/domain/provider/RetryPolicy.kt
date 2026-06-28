@@ -3,9 +3,11 @@ package com.aicodeeditor.feature.agent.domain.provider
 import com.aicodeeditor.core.util.FileLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.SocketTimeoutException
+import kotlin.coroutines.coroutineContext
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -67,6 +69,7 @@ suspend fun <T> retryStaircase(block: suspend () -> T): T {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
+            coroutineContext.ensureActive()
             if (attempt >= MAX_NETWORK_RETRIES || !isRetriableNetworkError(e)) throw e
             val wait = exponentialDelayMillis(attempt)
             FileLogger.w(TAG, "网络请求失败，第 ${attempt + 1}/$MAX_NETWORK_RETRIES 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
@@ -91,6 +94,7 @@ suspend fun streamWithStaircaseRetry(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
+            coroutineContext.ensureActive()
             if (produced || attempt >= MAX_NETWORK_RETRIES || !isRetriableNetworkError(e)) throw e
             val wait = exponentialDelayMillis(attempt)
             FileLogger.w(TAG, "流式请求在首字节前失败，第 ${attempt + 1}/$MAX_NETWORK_RETRIES 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
