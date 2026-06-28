@@ -36,6 +36,13 @@ The application is structured using a feature-based architecture with Domain-Dri
 
 The app uses Room for local database storage, primarily found in `feature/agent/data/local/database/AgentDatabase.kt` and related DAOs (e.g., `ChatSessionDao`, `AgentMessageDao`).
 
+**Database Migrations:**
+We use a custom, lightweight file-based migration system (`MigrationLoader.kt`).
+To update the database schema:
+1. Increment the database version in `AgentDatabase.kt`.
+2. Create a new SQL file in `app/src/main/assets/migrations/` named `{VERSION}_description.sql` (e.g., `8_add_new_table.sql`).
+3. Add the necessary DDL/SQL statements to this file. The system will automatically execute it on startup and record it in the `migration_history` table.
+
 ### AI Agent & Tools
 
 The AI agent interacts with the environment through a tool system (`feature/agent/domain/tool/`). Available tools include file operations (`FileTools.kt`), shell execution (`ExecuteCommandTool.kt`), and asking user questions. Tools are registered and managed via `ToolRegistry`. Permission to execute certain tools (like shell commands) is governed by `ToolPermissionManager` and `ToolPermissionPolicyEngine`.
