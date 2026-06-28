@@ -1,0 +1,1 @@
+ALTER TABLE remote_mounts ADD COLUMN autoConnect INTEGER NOT NULL DEFAULT 1;

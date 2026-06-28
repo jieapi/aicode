@@ -2,10 +2,11 @@ package com.aicodeeditor.feature.workspace.presentation.remote
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
+import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
 import com.aicodeeditor.feature.workspace.domain.model.RemoteProtocol
 import com.aicodeeditor.feature.workspace.domain.remote.RemoteAuth
-import com.aicodeeditor.feature.workspace.domain.model.RemoteServer
-import com.aicodeeditor.feature.workspace.domain.repository.RemoteServerRepository
+import com.aicodeeditor.feature.workspace.domain.repository.RemoteRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,32 +16,64 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 
+import com.aicodeeditor.feature.workspace.domain.model.Workspace
+import com.aicodeeditor.feature.workspace.data.repository.WorkspaceRepository
+import com.aicodeeditor.feature.settings.data.repository.SyncSettingsRepository
+
 @HiltViewModel
 class RemoteServerViewModel @Inject constructor(
-    private val repository: RemoteServerRepository
+    private val repository: RemoteRepository,
+    private val workspaceRepository: WorkspaceRepository,
+    private val syncSettingsRepository: SyncSettingsRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RemoteServerUiState())
     val uiState: StateFlow<RemoteServerUiState> = _uiState.asStateFlow()
 
+    val syncIgnoredPatterns = syncSettingsRepository.ignoredPatterns
+    val syncUseGitIgnore = syncSettingsRepository.useGitIgnore
+    val maxSyncBatchSize = syncSettingsRepository.maxSyncBatchSize
+
     init {
-        loadServers()
+        loadData()
     }
 
-    private fun loadServers() {
+    private fun loadData() {
         viewModelScope.launch {
-            repository.getServers()
-                .catch { e -> _uiState.value = _uiState.value.copy(error = e.message) }
-                .collect { servers ->
-                    _uiState.value = _uiState.value.copy(servers = servers)
+            launch {
+                repository.getConnections()
+                    .catch { e -> _uiState.value = _uiState.value.copy(error = e.message) }
+                    .collect { connections ->
+                        _uiState.value = _uiState.value.copy(connections = connections)
+                    }
+            }
+            launch {
+                repository.getMounts()
+                    .catch { e -> _uiState.value = _uiState.value.copy(error = e.message) }
+                    .collect { mounts ->
+                        val wasEmpty = _uiState.value.mounts.isEmpty()
+                        _uiState.value = _uiState.value.copy(mounts = mounts)
+                        
+                        // Auto-connect mounts on load
+                        if (wasEmpty) {
+                            mounts.filter { it.autoConnect && !it.isActive }.forEach {
+                                connectMount(it.id)
+                            }
+                        }
+                    }
+            }
+            launch {
+                workspaceRepository.workspaces.collect { workspaces ->
+                    _uiState.value = _uiState.value.copy(workspaces = workspaces)
                 }
+            }
         }
     }
 
-    fun connectServer(id: String) {
+    fun connectMount(id: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            val result = repository.connect(id)
+            val result = repository.connectMount(id)
             _uiState.value = _uiState.value.copy(isLoading = false)
             if (result.isFailure) {
                 _uiState.value = _uiState.value.copy(error = "Connection failed: ${result.exceptionOrNull()?.message}")
@@ -48,16 +81,21 @@ class RemoteServerViewModel @Inject constructor(
         }
     }
 
-    fun disconnectServer(id: String) {
+    fun disconnectMount(id: String) {
         viewModelScope.launch {
-            repository.disconnect(id)
-            // 状态通过 Room Flow 自动刷新 (isActive)
+            repository.disconnectMount(id)
         }
     }
 
-    fun deleteServer(id: String) {
+    fun deleteConnection(id: String) {
         viewModelScope.launch {
-            repository.deleteServer(id)
+            repository.deleteConnection(id)
+        }
+    }
+    
+    fun deleteMount(id: String) {
+        viewModelScope.launch {
+            repository.deleteMount(id)
         }
     }
 
@@ -65,35 +103,136 @@ class RemoteServerViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(error = null)
     }
 
-    // 实际项目中可以分离到 AddServerViewModel
-    fun addServer(
+    fun addConnection(
         name: String,
         host: String,
         port: String,
         username: String,
-        password: String, // 简化：目前先只做密码形式的表单
-        remotePath: String,
+        password: String, 
         protocol: RemoteProtocol
     ) {
         viewModelScope.launch {
             val p = port.toIntOrNull() ?: 22
-            val server = RemoteServer(
+            val conn = RemoteConnection(
                 id = UUID.randomUUID().toString(),
                 name = name,
                 protocol = protocol,
                 host = host,
                 port = p,
-                username = username,
-                remotePath = remotePath,
-                localMountPath = "/data/data/com.aicodeeditor/files/workspace/${name.replace(" ", "_")}" // 这里应该通过 Context 获取更严谨
+                username = username
             )
-            repository.addServer(server, RemoteAuth.Password(password))
+            repository.addConnection(conn, RemoteAuth.Password(password))
         }
+    }
+
+    fun updateConnection(
+        id: String,
+        name: String,
+        host: String,
+        port: String,
+        username: String,
+        password: String,
+        protocol: RemoteProtocol
+    ) {
+        viewModelScope.launch {
+            val p = port.toIntOrNull() ?: 22
+            val conn = RemoteConnection(
+                id = id,
+                name = name,
+                protocol = protocol,
+                host = host,
+                port = p,
+                username = username
+            )
+            repository.updateConnection(conn, RemoteAuth.Password(password))
+        }
+    }
+
+    fun addMount(connectionId: String, remotePath: String, localWorkspacePath: String, autoConnect: Boolean) {
+        viewModelScope.launch {
+            val mount = RemoteMount(
+                id = UUID.randomUUID().toString(),
+                connectionId = connectionId,
+                remotePath = remotePath,
+                localMountPath = localWorkspacePath,
+                autoConnect = autoConnect
+            )
+            repository.addMount(mount)
+            if (autoConnect) {
+                connectMount(mount.id)
+            }
+        }
+    }
+
+    fun updateMount(id: String, connectionId: String, remotePath: String, localWorkspacePath: String, autoConnect: Boolean) {
+        viewModelScope.launch {
+            val mount = RemoteMount(
+                id = id,
+                connectionId = connectionId,
+                remotePath = remotePath,
+                localMountPath = localWorkspacePath,
+                autoConnect = autoConnect
+            )
+            repository.updateMount(mount)
+            if (autoConnect) {
+                connectMount(mount.id)
+            } else {
+                disconnectMount(mount.id)
+            }
+        }
+    }
+
+    fun testConnection(
+        host: String,
+        port: String,
+        username: String,
+        password: String,
+        protocol: RemoteProtocol,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val p = port.toIntOrNull() ?: 22
+            val result = repository.testConnection(host, p, username, RemoteAuth.Password(password), protocol)
+            if (result.isSuccess) {
+                onResult(true, "连接成功！")
+            } else {
+                onResult(false, "连接失败: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
+    fun listRemoteDirectories(
+        connectionId: String,
+        path: String,
+        onResult: (Boolean, List<String>, String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = repository.listRemoteDirectories(connectionId, path)
+            if (result.isSuccess) {
+                onResult(true, result.getOrNull() ?: emptyList(), "")
+            } else {
+                onResult(false, emptyList(), result.exceptionOrNull()?.message ?: "未知错误")
+            }
+        }
+    }
+
+    fun setSyncIgnoredPatterns(patterns: String) {
+        syncSettingsRepository.setIgnoredPatterns(patterns)
+    }
+
+    fun setSyncUseGitIgnore(use: Boolean) {
+        syncSettingsRepository.setUseGitIgnore(use)
+    }
+
+    fun setMaxSyncBatchSize(size: Int) {
+        syncSettingsRepository.setMaxSyncBatchSize(size)
     }
 }
 
 data class RemoteServerUiState(
-    val servers: List<RemoteServer> = emptyList(),
+    val connections: List<RemoteConnection> = emptyList(),
+    val mounts: List<RemoteMount> = emptyList(),
+    val workspaces: List<Workspace> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null
 )
