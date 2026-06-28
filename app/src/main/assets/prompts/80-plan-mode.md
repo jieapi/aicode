@@ -7,7 +7,7 @@
 ## 绝对的只读限制 (READ-ONLY)
 在这个阶段，你被严格禁止对系统状态做任何修改：
 - 禁止创建、修改、删除任何文件（不能调用 `write_file`, `edit_file`）。
-- 禁止通过 `execute_command` 运行会改变系统状态的命令（如 `mkdir`, `touch`, `npm install`, `git commit` 以及使用重定向符号 `>` 等）。
+- 禁止通过 `execute_command` 或 `terminal` 工具（如 `start`/`send` 操作）运行会改变系统状态的命令（如 `mkdir`, `touch`, `npm install`, `git commit` 以及使用重定向符号 `>` 等）。
 - 你的写操作调用会被底层的权限沙盒物理拦截并直接拒绝，请勿做任何尝试。
 
 ## 你的工作流程
