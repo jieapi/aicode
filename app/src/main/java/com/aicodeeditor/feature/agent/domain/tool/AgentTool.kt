@@ -62,6 +62,9 @@ abstract class AgentTool {
 
     abstract suspend fun execute(args: Map<String, JsonElement>): ToolResult
 
+    open suspend fun executeWithContext(args: Map<String, JsonElement>, context: com.aicodeeditor.feature.agent.domain.model.AgentContext): ToolResult {
+        return execute(args)
+    }
     open fun buildPermissionRequest(
         callId: String,
         args: Map<String, JsonElement>,
