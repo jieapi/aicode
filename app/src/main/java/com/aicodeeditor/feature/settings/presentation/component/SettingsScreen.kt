@@ -52,7 +52,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,7 +80,8 @@ private enum class SettingsSection(val title: String) {
     Mcp("MCP 服务器"),
     Log("日志等级"),
     Permissions("工具授权"),
-    RemoteServers("远程工作区")
+    RemoteServers("远程工作区"),
+    SyncIgnore("同步排除规则")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -89,15 +90,15 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val providers by viewModel.providers.collectAsState()
-    val activeProvider by viewModel.activeProvider.collectAsState()
-    val logLevel by viewModel.logLevel.collectAsState()
-    val mcpServers by viewModel.mcpServers.collectAsState()
-    val mcpStatuses by viewModel.mcpStatuses.collectAsState()
-    val mcpReloading by viewModel.mcpReloading.collectAsState()
-    val globalRules by viewModel.globalRules.collectAsState()
-    val projectRules by viewModel.projectRules.collectAsState()
-    val keepaliveEnabled by viewModel.keepaliveEnabled.collectAsState()
+    val providers by viewModel.providers.collectAsStateWithLifecycle()
+    val activeProvider by viewModel.activeProvider.collectAsStateWithLifecycle()
+    val logLevel by viewModel.logLevel.collectAsStateWithLifecycle()
+    val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
+    val mcpStatuses by viewModel.mcpStatuses.collectAsStateWithLifecycle()
+    val mcpReloading by viewModel.mcpReloading.collectAsStateWithLifecycle()
+    val globalRules by viewModel.globalRules.collectAsStateWithLifecycle()
+    val projectRules by viewModel.projectRules.collectAsStateWithLifecycle()
+    val keepaliveEnabled by viewModel.keepaliveEnabled.collectAsStateWithLifecycle()
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
@@ -299,6 +300,12 @@ private fun SettingsMenu(
             title = SettingsSection.RemoteServers.title,
             subtitle = "管理 SFTP / FTP 工作区同步",
             onClick = { onOpen(SettingsSection.RemoteServers) }
+        )
+        MenuRow(
+            icon = androidx.compose.material.icons.Icons.Default.Delete, // Using Delete as placeholder for ignore
+            title = SettingsSection.SyncIgnore.title,
+            subtitle = "配置同步时不上传的文件/目录",
+            onClick = { onOpen(SettingsSection.SyncIgnore) }
         )
 
         Card(
