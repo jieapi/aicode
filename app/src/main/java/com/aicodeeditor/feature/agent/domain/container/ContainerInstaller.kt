@@ -4,7 +4,9 @@ import android.content.Context
 import android.system.Os
 import com.aicodeeditor.core.util.FileLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -24,6 +26,26 @@ class ContainerInstaller @Inject constructor(
 ) {
     companion object {
         private const val TAG = "ContainerInstaller"
+        @Volatile private var docsExtractedSession = false
+
+        /** 从 assets 提取文档到 ~/.aicode/docs (内置使用指导) */
+        fun extractDocs(context: Context) {
+            if (docsExtractedSession) return
+            val destDir = File(File(context.filesDir, "aicode"), "docs")
+            destDir.mkdirs()
+            runCatching {
+                val docs = context.assets.list("docs") ?: return
+                for (doc in docs) {
+                    val destFile = File(destDir, doc)
+                    context.assets.open("docs/$doc").use { input ->
+                        destFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+                docsExtractedSession = true
+            }.onFailure {
+                FileLogger.w(TAG, "提取内置文档失败: ${it.message}", it)
+            }
+        }
 
         /**
          * 与 assets 里 alpine-rootfs 版本对应的 apk 分支，用于拼镜像源地址。
@@ -137,6 +159,15 @@ class ContainerInstaller @Inject constructor(
         installedMarker.writeText(INSTALL_VERSION)
         FileLogger.i(TAG, "容器 rootfs 安装完成")
     }
+
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            extractDocs(context)
+        }
+    }
+
+    /** 从 assets 提取文档到 ~/.aicode/docs (内置使用指导) */
+    fun extractDocs() = extractDocs(context)
 
     /** 从 assets 复制 proot 全套（二进制 + loader + 动态依赖库）到私有目录并赋权限 */
     private fun installProot() {

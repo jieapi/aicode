@@ -21,9 +21,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +53,8 @@ import com.aicodeeditor.feature.agent.domain.container.ContainerInitState
 import com.aicodeeditor.feature.terminal.domain.TerminalSessionManager
 import com.aicodeeditor.feature.terminal.presentation.TerminalViewModel
 import com.termux.view.TerminalView
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,16 +81,15 @@ fun TerminalScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.reconnectActive() }) {
                         Icon(
-                            Icons.Default.Refresh,
+                            FeatherIcons.RefreshCw,
                             contentDescription = "重连当前标签",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     }
                 }
             )
@@ -187,9 +188,9 @@ private fun TabBar(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Default.Add,
+                    FeatherIcons.Plus,
                     contentDescription = "新建标签",
-                    tint = MaterialTheme.colorScheme.onSurface,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -245,9 +246,9 @@ private fun TabChip(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                Icons.Default.Close,
+                FeatherIcons.X,
                 contentDescription = "关闭标签",
-                tint = fg,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(14.dp)
             )
         }

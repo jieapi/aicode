@@ -359,6 +359,8 @@ class LinuxContainerEngine @Inject constructor(
      * 全程通过 [initProgress] 上报阶段进度，供 UI 实时展示。
      */
     suspend fun ensureInstalled() = initMutex.withLock {
+        // 每次启动或执行命令前确保提取最新的内置文档
+        containerInstaller.extractDocs()
         if (containerInstaller.isInstalled() && isProvisioned()) {
             _initProgress.value = ContainerInitState.Ready
             return@withLock
