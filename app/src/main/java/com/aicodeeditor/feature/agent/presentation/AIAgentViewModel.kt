@@ -665,8 +665,10 @@ class AIAgentViewModel @Inject constructor(
         val sessionId = _currentSessionId.value ?: return
         val job = sessionJobs[sessionId] ?: return
         if (!job.isActive) return
-        // 取消前先抓住运行中的工具，避免与协程 finally 清空 _runningTools 竞争。
+        // 取消前先抓住运行中的工具和实时流式文本，避免与协程 finally 清空状态竞争。
         val running = _runningTools.value[sessionId]
+        val streamingText = _streamingTexts.value[sessionId]
+        val streamingReasoning = _streamingReasonings.value[sessionId]
         job.cancel()
         viewModelScope.launch {
             if (running != null) {
@@ -684,8 +686,20 @@ class AIAgentViewModel @Inject constructor(
                     isError = true
                 )
                 toolArgsByMsgId.remove(running.messageId)
+            } else if (!streamingText.isNullOrEmpty() || !streamingReasoning.isNullOrEmpty()) {
+                val partial = (streamingText ?: "").trimEnd()
+                val content = if (partial.isNotEmpty()) "$partial\n\n$STOPPED_TOOL_TEXT" else STOPPED_TOOL_TEXT
+                val reasoning = streamingReasoning?.takeIf { it.hasVisibleContent() }
+                persist(
+                    sessionId = sessionId,
+                    role = MessageRole.ASSISTANT,
+                    content = content,
+                    reasoning = reasoning
+                )
             }
             setRunningTool(sessionId, null)
+            setStreamingText(sessionId, null)
+            setStreamingReasoning(sessionId, null)
         }
     }
 
