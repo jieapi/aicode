@@ -12,11 +12,11 @@ interface ChatSessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(session: ChatSessionEntity)
 
-    @Query("SELECT * FROM chat_sessions ORDER BY updatedAt DESC")
-    fun getAllSessions(): Flow<List<ChatSessionEntity>>
+    @Query("SELECT * FROM chat_sessions WHERE workspacePath = :workspacePath ORDER BY updatedAt DESC")
+    fun getAllSessionsByWorkspace(workspacePath: String): Flow<List<ChatSessionEntity>>
 
-    @Query("SELECT * FROM chat_sessions ORDER BY updatedAt DESC")
-    suspend fun getAllSessionsOnce(): List<ChatSessionEntity>
+    @Query("SELECT * FROM chat_sessions WHERE workspacePath = :workspacePath ORDER BY updatedAt DESC")
+    suspend fun getAllSessionsByWorkspaceOnce(workspacePath: String): List<ChatSessionEntity>
 
     @Query("SELECT * FROM chat_sessions WHERE id = :id")
     suspend fun getById(id: String): ChatSessionEntity?
