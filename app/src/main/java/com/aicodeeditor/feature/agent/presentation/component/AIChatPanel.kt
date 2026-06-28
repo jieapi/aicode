@@ -561,10 +561,7 @@ fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
 }
 
 /**
- * 渲染助手文本里的 Markdown：当前聚焦「围栏代码块」（```lang ... ```）——
- * 解析为等宽、带底色、可横向滚动的代码卡片；块外文本按段落渲染，并把行内
- * `code` 着色为等宽高亮片段。没有任何代码块时退化为单段普通文本。
- * 解析按行进行，因此流式途中尚未闭合的代码块也能即时按代码样式呈现。
+ * 使用 multiplatform-markdown-renderer-m3 库渲染 Markdown。
  */
 @Composable
 private fun MarkdownContent(
@@ -573,94 +570,13 @@ private fun MarkdownContent(
     modifier: Modifier = Modifier,
     preParsedBlocks: List<MdBlock>? = null
 ) {
-    val blocks = preParsedBlocks ?: remember(text) { parseMarkdownBlocks(text) }
-    Column(modifier = modifier) {
-        blocks.forEachIndexed { index, block ->
-            if (index > 0) Spacer(Modifier.height(Spacing.sm))
-            when (block) {
-                is MdBlock.Code -> CodeBlock(lang = block.lang, code = block.code)
-                is MdBlock.Text -> Text(
-                    text = renderInlineMarkdown(block.text),
-                    color = color,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    }
-}
-
-/** 围栏代码块卡片：可选语言标签 + 等宽、可横向滚动的代码体。 */
-@Composable
-private fun CodeBlock(lang: String, code: String) {
-    val mono = MaterialTheme.typography.bodySmall.copy(
-        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-    )
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(Radius.sm))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .border(
-                1.dp,
-                MaterialTheme.colorScheme.outlineVariant,
-                RoundedCornerShape(Radius.sm)
-            )
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.material3.LocalContentColor provides color
     ) {
-        if (lang.isNotBlank()) {
-            Text(
-                text = lang,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                ),
-                modifier = Modifier.padding(
-                    start = Spacing.sm,
-                    end = Spacing.sm,
-                    top = Spacing.xs
-                )
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-        ) {
-            Text(
-                text = code,
-                color = MaterialTheme.colorScheme.onSurface,
-                style = mono,
-                softWrap = false,
-                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs)
-            )
-        }
-    }
-}
-
-private val inlineCodeRegex = Regex("`([^`\\n]+)`")
-
-/** 把文本段里的行内 `code` 渲染成等宽高亮片段，其余原样保留。 */
-@Composable
-private fun renderInlineMarkdown(text: String): androidx.compose.ui.text.AnnotatedString {
-    val codeColor = MaterialTheme.colorScheme.primary
-    val codeBg = MaterialTheme.colorScheme.surfaceVariant
-    return remember(text, codeColor, codeBg) {
-        androidx.compose.ui.text.buildAnnotatedString {
-            var last = 0
-            for (m in inlineCodeRegex.findAll(text)) {
-                append(text.substring(last, m.range.first))
-                withStyle(
-                    androidx.compose.ui.text.SpanStyle(
-                        color = codeColor,
-                        background = codeBg,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                    )
-                ) {
-                    append(m.groupValues[1])
-                }
-                last = m.range.last + 1
-            }
-            append(text.substring(last))
-        }
+        com.mikepenz.markdown.m3.Markdown(
+            content = text,
+            modifier = modifier
+        )
     }
 }
 
