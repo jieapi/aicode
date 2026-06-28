@@ -5,7 +5,7 @@ data class ChatCompletionRequest(
     val messages: List<OpenAIChatMessage>,
     val temperature: Float = 0.7f,
     val tools: List<OpenAIToolDefinition>? = null,
-    val tool_choice: String = "auto",
+    val tool_choice: String? = null,
     val stream: Boolean = false
 )
 

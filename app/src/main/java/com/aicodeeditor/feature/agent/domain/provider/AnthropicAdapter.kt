@@ -31,7 +31,9 @@ class AnthropicAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://api.anthropic.com/"
-    override var model = "claude-3-opus-20240229"
+    override var apiPath = "v1/messages"
+    override var useResponseApi = false
+    override var model = "claude-3-5-sonnet-20241022"
     override var logSessionId: String? = null
 
     override suspend fun complete(
@@ -49,7 +51,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, "v1/messages")
+        val url = joinUrl(baseUrl, apiPath)
         val request = AnthropicMessageRequest(
             model = model,
             messages = anthropicMessages,
@@ -108,7 +110,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, "v1/messages")
+        val url = joinUrl(baseUrl, apiPath)
         val request = AnthropicMessageRequest(
             model = model,
             messages = anthropicMessages,

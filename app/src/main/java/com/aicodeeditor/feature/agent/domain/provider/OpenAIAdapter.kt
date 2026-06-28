@@ -30,6 +30,8 @@ class OpenAIAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://api.openai.com/"
+    override var apiPath = "v1/chat/completions"
+    override var useResponseApi = false
     override var model = "gpt-4-turbo"
     override var logSessionId: String? = null
 
@@ -40,7 +42,8 @@ class OpenAIAdapter @Inject constructor(
     ): AIResponse {
         val openAIMessages = buildList {
             if (systemPrompt.isNotBlank()) {
-                add(OpenAIChatMessage(role = "system", content = systemPrompt))
+                val role = if (model.startsWith("o1") || model.startsWith("o3")) "developer" else "system"
+                add(OpenAIChatMessage(role = role, content = systemPrompt))
             }
             addAll(convertToOpenAIMessages(messages))
         }
@@ -55,11 +58,58 @@ class OpenAIAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, "v1/chat/completions")
+        val url = joinUrl(baseUrl, apiPath)
+        if (useResponseApi) {
+            val request = mapOf(
+                "model" to model,
+                "input" to openAIMessages,
+                "tools" to toolDefs
+            )
+            AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
+
+            val response = try {
+                api.createResponses(url = url, authorization = "Bearer $apiKey", request = request)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val enriched = e.enrichWithHttpErrorBody()
+                AILogger.logError(logSessionId, "OpenAI", enriched)
+                throw enriched
+            }
+            AILogger.logResponse(logSessionId, "OpenAI", response)
+
+            val outputs = response.getAsJsonArray("output")
+            var content = ""
+            val toolCalls = mutableListOf<ToolCall>()
+            var finishReason: String? = null
+
+            outputs?.forEach { out ->
+                val msg = out.asJsonObject
+                if (msg.get("role")?.asString == "assistant") {
+                    msg.getAsJsonArray("content")?.forEach { partEl ->
+                        val part = partEl.asJsonObject
+                        when (part.get("type")?.asString) {
+                            "output_text" -> content += part.get("text")?.asString ?: ""
+                            "tool_call" -> {
+                                val id = part.get("id")?.asString ?: ""
+                                val name = part.get("name")?.asString ?: ""
+                                val args = part.get("arguments")?.asString ?: ""
+                                toolCalls.add(ToolCall(id, name, parseArgs(args)))
+                            }
+                        }
+                    }
+                }
+            }
+            // status of output items is completed
+            finishReason = "stop" // simplify for Responses API
+            return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason)
+        }
+
         val request = ChatCompletionRequest(
             model = model,
             messages = openAIMessages,
             tools = toolDefs,
+            tool_choice = if (toolDefs != null) "auto" else null,
             stream = false
         )
         AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
@@ -90,7 +140,8 @@ class OpenAIAdapter @Inject constructor(
     ): Flow<AIStreamChunk> = flow {
         val openAIMessages = buildList {
             if (systemPrompt.isNotBlank()) {
-                add(OpenAIChatMessage(role = "system", content = systemPrompt))
+                val role = if (model.startsWith("o1") || model.startsWith("o3")) "developer" else "system"
+                add(OpenAIChatMessage(role = role, content = systemPrompt))
             }
             addAll(convertToOpenAIMessages(messages))
         }
@@ -104,11 +155,100 @@ class OpenAIAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, "v1/chat/completions")
+        val url = joinUrl(baseUrl, apiPath)
+        
+        if (useResponseApi) {
+            val request = mapOf(
+                "model" to model,
+                "input" to openAIMessages,
+                "tools" to toolDefs,
+                "stream" to true
+            )
+            AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
+            val rawSse = StringBuilder()
+            try {
+                streamWithStaircaseRetry { onProduced ->
+                    val textBuilder = StringBuilder()
+                    val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
+                    var finishReason: String? = null
+
+                    val body = api.streamResponses(
+                        url = url,
+                        authorization = "Bearer $apiKey",
+                        request = request
+                    )
+
+                    body.use { rb ->
+                        val reader = rb.charStream().buffered()
+                        while (true) {
+                            coroutineContext.ensureActive()
+                            val line = reader.readLine()
+                                ?: throw IOException("SSE 流被中断：未收到 [DONE] 结束标记（疑似网络断开）")
+                            if (!line.startsWith("data:")) continue
+                            val data = line.removePrefix("data:").trim()
+                            if (data.isEmpty()) continue
+                            rawSse.append(line).append('\n')
+                            if (data == "[DONE]") break
+                            val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                            try {
+                                val eventType = obj.get("type")?.asString
+                                if (eventType == "response.output_text.delta") {
+                                    val delta = obj.get("delta")?.asString ?: ""
+                                    if (delta.isNotEmpty()) {
+                                        textBuilder.append(delta)
+                                        onProduced()
+                                        emit(AIStreamChunk.TextDelta(delta))
+                                    }
+                                } else if (eventType == "response.completed") {
+                                    val outputs = obj.getAsJsonObject("response")?.getAsJsonArray("output")
+                                    outputs?.forEach { out ->
+                                        val msg = out.asJsonObject
+                                        if (msg.get("role")?.asString == "assistant") {
+                                            msg.getAsJsonArray("content")?.forEach { partEl ->
+                                                val part = partEl.asJsonObject
+                                                if (part.get("type")?.asString == "tool_call") {
+                                                    val id = part.get("id")?.asString ?: ""
+                                                    val name = part.get("name")?.asString ?: ""
+                                                    val args = part.get("arguments")?.asString ?: ""
+                                                    val idx = toolAccs.size
+                                                    val acc = toolAccs.getOrPut(idx) { OpenAIToolAcc() }
+                                                    acc.id = id
+                                                    acc.name = name
+                                                    acc.args.append(args)
+                                                }
+                                            }
+                                        }
+                                    }
+                                    finishReason = "stop"
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                            }
+                        }
+                    }
+
+                    val toolCalls = toolAccs.values
+                        .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
+                        .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
+                    onProduced()
+                    emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val enriched = e.enrichWithHttpErrorBody()
+                AILogger.logError(logSessionId, "OpenAI", enriched)
+                throw enriched
+            }
+            return@flow
+        }
+
         val request = ChatCompletionRequest(
             model = model,
             messages = openAIMessages,
             tools = toolDefs,
+            tool_choice = if (toolDefs != null) "auto" else null,
             stream = true
         )
         AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
