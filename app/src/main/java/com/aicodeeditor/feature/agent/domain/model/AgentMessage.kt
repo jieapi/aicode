@@ -22,6 +22,13 @@ sealed class AgentMessage {
     ) : AgentMessage()
 }
 
+val AgentMessage.id: String
+    get() = when (this) {
+        is AgentMessage.UserMessage -> id
+        is AgentMessage.AssistantMessage -> id
+        is AgentMessage.ToolResultMessage -> id
+    }
+
 data class AgentContext(
     val currentFile: String?,
     val selectedCode: String?,

@@ -1,14 +1,20 @@
 package com.aicodeeditor.feature.agent.domain.workflow
 
 import com.aicodeeditor.core.util.FileLogger
+import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
+import com.aicodeeditor.feature.agent.data.local.entity.AgentMessageEntity
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
+import com.aicodeeditor.feature.agent.domain.model.id
 import com.aicodeeditor.feature.agent.domain.provider.AIProvider
+import com.aicodeeditor.feature.agent.presentation.MessageRole
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class ContextCompactor @Inject constructor() {
+class ContextCompactor @Inject constructor(
+    private val agentMessageDao: AgentMessageDao
+) {
 
     private companion object {
         const val TAG = "ContextCompactor"
@@ -32,6 +38,7 @@ class ContextCompactor @Inject constructor() {
     suspend fun compactIfNeeded(
         messages: List<AgentMessage>,
         aiProvider: AIProvider,
+        sessionId: String? = null,
         onEvent: suspend (AgentEvent) -> Unit = {}
     ): List<AgentMessage> {
         val totalChars = messages.sumOf { 
@@ -108,10 +115,35 @@ class ContextCompactor @Inject constructor() {
         FileLogger.i(TAG, "上下文压缩完成，摘要长度：${summaryResponse.length}")
         onEvent(AgentEvent.ToolCallFinished(callId, "context_compactor", summaryResponse, false))
 
+        val compactedId = UUID.randomUUID().toString()
         val compactedMessage = AgentMessage.AssistantMessage(
+            id = compactedId,
             content = "【系统提示：早期的对话已被压缩，以下是之前的核心状态摘要】\n$summaryResponse",
             toolCalls = emptyList()
         )
+
+        if (sessionId != null) {
+            try {
+                val dbEntities = agentMessageDao.getMessagesBySessionOnce(sessionId)
+                val firstTailId = tail.firstOrNull { it.id.isNotEmpty() }?.id
+                val tailEntity = if (firstTailId != null) dbEntities.find { it.id == firstTailId } else null
+                val cutoffTimestamp = tailEntity?.timestamp ?: System.currentTimeMillis()
+
+                agentMessageDao.deleteMessagesBeforeTimestamp(sessionId, cutoffTimestamp)
+                agentMessageDao.insert(
+                    AgentMessageEntity(
+                        id = compactedId,
+                        sessionId = sessionId,
+                        role = MessageRole.ASSISTANT.name,
+                        content = compactedMessage.content,
+                        timestamp = cutoffTimestamp - 1
+                    )
+                )
+                FileLogger.i(TAG, "已同步清理数据库中会话 $sessionId 的旧消息并保存摘要")
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "更新数据库持久化压缩历史失败", e)
+            }
+        }
 
         val newMessages = mutableListOf<AgentMessage>()
         newMessages.add(compactedMessage)
