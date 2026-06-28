@@ -33,7 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,8 +58,8 @@ fun WorkspaceChip(
     hasRunningSessions: () -> Boolean = { false },
     modifier: Modifier = Modifier
 ) {
-    val workspaces by viewModel.workspaces.collectAsState()
-    val current by viewModel.current.collectAsState()
+    val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
+    val current by viewModel.current.collectAsStateWithLifecycle()
 
     var showSheet by remember { mutableStateOf(false) }
     var pendingWorkspaceSelect by remember { mutableStateOf<Workspace?>(null) }
