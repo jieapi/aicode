@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.os.Build
 import com.aicodeeditor.core.util.AILogger
 import com.aicodeeditor.core.util.FileLogger
+import com.aicodeeditor.feature.agent.domain.container.ContainerInstaller
 import com.aicodeeditor.feature.agent.domain.mcp.McpManager
 import com.aicodeeditor.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.LogSettingsRepository
@@ -43,6 +44,10 @@ class AIEditorApp : Application() {
         AILogger.init(this)
         installCrashHandler()
         createNotificationChannels()
+        // 启动即把最新的内置指南手册提取到私有配置目录
+        appScope.launch {
+            ContainerInstaller.extractDocs(this@AIEditorApp)
+        }
         // 启动即加载持久化等级，并随设置页改动实时生效（唯一同步点）。
         appScope.launch {
             logSettings.levelFlow.collectLatest { FileLogger.setMinLevel(it) }

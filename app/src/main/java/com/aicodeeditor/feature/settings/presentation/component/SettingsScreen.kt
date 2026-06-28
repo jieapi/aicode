@@ -1,5 +1,8 @@
 package com.aicodeeditor.feature.settings.presentation.component
 
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -25,15 +28,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Article
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Article
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -138,19 +141,19 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
         topBar = {
             TopAppBar(
                 title = { Text(section.title) },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 navigationIcon = {
                     IconButton(onClick = {
                         if (section == SettingsSection.Menu) onNavigateBack() else section = SettingsSection.Menu
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                     }
                 },
                 actions = {
@@ -159,13 +162,13 @@ fun SettingsScreen(
                             editingProvider = null
                             section = SettingsSection.ProviderEditor
                         }) {
-                            Icon(Icons.Default.Add, contentDescription = "添加服务商")
+                            Icon(FeatherIcons.Plus, contentDescription = "添加服务商")
                         }
                         SettingsSection.Mcp -> IconButton(onClick = {
                             editingMcp = null
                             showMcpDialog = true
                         }) {
-                            Icon(Icons.Default.Add, contentDescription = "添加 MCP 服务器")
+                            Icon(FeatherIcons.Plus, contentDescription = "添加 MCP 服务器")
                         }
                         else -> {}
                     }
@@ -192,8 +195,7 @@ fun SettingsScreen(
                 )
                 SettingsSection.Providers -> ProvidersSection(
                     providers = providers,
-                    activeProvider = activeProvider,
-                    onActivate = { viewModel.setActiveProvider(it) },
+                    onToggle = { id, enabled -> viewModel.setProviderEnabled(id, enabled) },
                     onEdit = {
                         editingProvider = it
                         section = SettingsSection.ProviderEditor
@@ -267,7 +269,7 @@ private fun SettingsMenu(
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
         MenuRow(
-            icon = Icons.Default.Cloud,
+            icon = FeatherIcons.Cpu,
             title = SettingsSection.Providers.title,
             subtitle = if (providerCount == 0) {
                 "未添加服务商"
@@ -277,25 +279,25 @@ private fun SettingsMenu(
             onClick = { onOpen(SettingsSection.Providers) }
         )
         MenuRow(
-            icon = Icons.Default.Extension,
+            icon = FeatherIcons.Box,
             title = SettingsSection.Mcp.title,
             subtitle = if (mcpCount == 0) "未配置 MCP 服务器" else "$mcpCount 个 · 已连接 $mcpConnected",
             onClick = { onOpen(SettingsSection.Mcp) }
         )
         MenuRow(
-            icon = Icons.Default.Article,
+            icon = FeatherIcons.FileText,
             title = SettingsSection.Log.title,
             subtitle = "当前：${logLevel.name}",
             onClick = { onOpen(SettingsSection.Log) }
         )
         MenuRow(
-            icon = Icons.Default.Lock,
+            icon = FeatherIcons.Lock,
             title = SettingsSection.Permissions.title,
             subtitle = if (permissionRuleCount == 0) "未保存授权规则" else "已保存 $permissionRuleCount 条",
             onClick = { onOpen(SettingsSection.Permissions) }
         )
         MenuRow(
-            icon = Icons.Default.Cloud, // 已经 import 了 Cloud
+            icon = FeatherIcons.Server,
             title = SettingsSection.RemoteServers.title,
             subtitle = "管理 SFTP / FTP 工作区同步",
             onClick = { onOpen(SettingsSection.RemoteServers) }
@@ -304,8 +306,8 @@ private fun SettingsMenu(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(Radius.md),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
         ) {
             Row(
                 modifier = Modifier
@@ -314,9 +316,9 @@ private fun SettingsMenu(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    imageVector = Icons.Default.Refresh,
+                    imageVector = FeatherIcons.RefreshCw,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(Spacing.md))
@@ -324,6 +326,7 @@ private fun SettingsMenu(
                     Text(
                         text = "后台运行保活",
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
@@ -354,8 +357,8 @@ private fun MenuRow(
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
     ) {
         Row(
             modifier = Modifier
@@ -366,7 +369,7 @@ private fun MenuRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(24.dp)
             )
             Spacer(Modifier.width(Spacing.md))
@@ -374,6 +377,7 @@ private fun MenuRow(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
@@ -383,10 +387,9 @@ private fun MenuRow(
                 )
             }
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                imageVector = FeatherIcons.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                tint = androidx.compose.ui.graphics.Color(0xFF424242))
         }
     }
 }
@@ -395,8 +398,7 @@ private fun MenuRow(
 @Composable
 private fun ProvidersSection(
     providers: List<AIProviderConfig>,
-    activeProvider: AIProviderConfig?,
-    onActivate: (String) -> Unit,
+    onToggle: (String, Boolean) -> Unit,
     onEdit: (AIProviderConfig) -> Unit
 ) {
     if (providers.isEmpty()) {
@@ -411,8 +413,7 @@ private fun ProvidersSection(
         items(providers) { provider ->
             ProviderItem(
                 provider = provider,
-                isActive = activeProvider?.id == provider.id,
-                onActivate = { onActivate(provider.id) },
+                onToggle = { onToggle(provider.id, it) },
                 onEdit = { onEdit(provider) }
             )
         }
@@ -513,8 +514,8 @@ private fun RuleRow(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
     ) {
         Row(
             modifier = Modifier
@@ -540,7 +541,7 @@ private fun RuleRow(
                 TextButton(onClick = onPromote) { Text("提升为全局") }
             }
             IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "删除", tint = MaterialTheme.colorScheme.error)
+                Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = androidx.compose.ui.graphics.Color(0xFF424242))
             }
         }
     }
@@ -573,13 +574,14 @@ private fun LogLevelCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
     ) {
         Column(modifier = Modifier.padding(Spacing.lg)) {
             Text(
                 text = "日志等级",
                 style = MaterialTheme.typography.titleMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Text(
@@ -644,7 +646,7 @@ private fun McpSection(
                     Spacer(Modifier.width(Spacing.sm))
                     Text("连接中…")
                 } else {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(FeatherIcons.RefreshCw, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(Spacing.sm))
                     Text("重新连接")
                 }
@@ -687,8 +689,8 @@ private fun McpServerRow(
             .fillMaxWidth()
             .clickable { onEdit() },
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
     ) {
         Column(modifier = Modifier.padding(Spacing.lg)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -696,6 +698,7 @@ private fun McpServerRow(
                     Text(
                         text = server.name,
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -715,10 +718,9 @@ private fun McpServerRow(
                 Switch(checked = server.enabled, onCheckedChange = onToggle)
                 IconButton(onClick = onDelete) {
                     Icon(
-                        Icons.Default.Delete,
+                        FeatherIcons.Trash2,
                         contentDescription = "删除",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
                 }
             }
             McpStatusLabel(server = server, status = status)
@@ -766,21 +768,20 @@ private fun McpStatusLabel(server: McpServerConfig, status: McpServerStatus?) {
 @Composable
 fun ProviderItem(
     provider: AIProviderConfig,
-    isActive: Boolean,
-    onActivate: () -> Unit,
+    onToggle: (Boolean) -> Unit,
     onEdit: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onActivate() },
+            .clickable { onEdit() },
         shape = RoundedCornerShape(Radius.md),
         colors = CardDefaults.cardColors(
-            containerColor = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+            containerColor = androidx.compose.ui.graphics.Color.White
         ),
         border = BorderStroke(
             1.dp,
-            if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            androidx.compose.ui.graphics.Color(0xFFEAEAEA)
         )
     ) {
         Row(
@@ -793,7 +794,8 @@ fun ProviderItem(
                 Text(
                     text = provider.name,
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = if (provider.models.isEmpty()) {
@@ -805,20 +807,16 @@ fun ProviderItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (isActive) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = "已启用",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(end = Spacing.md)
-                )
-            }
+            Switch(
+                checked = provider.isEnabled,
+                onCheckedChange = onToggle,
+                modifier = Modifier.padding(end = Spacing.md)
+            )
             IconButton(onClick = onEdit) {
                 Icon(
-                    Icons.Default.Edit,
+                    FeatherIcons.Edit2,
                     contentDescription = "编辑",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242))
             }
         }
     }

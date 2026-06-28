@@ -68,8 +68,58 @@ data class AgentUIMessage(
     val toolArgs: String? = null,
     val isError: Boolean = false,
     // 仅 ASSISTANT 消息：本轮模型的思考过程，渲染为可折叠「思考过程」气泡；无则为 null。
-    val reasoning: String? = null
+    val reasoning: String? = null,
+    // 预解析后的 Markdown 块（普通文本或代码块），供 UI 层极速渲染。
+    val parsedBlocks: List<MdBlock> = emptyList()
 )
+
+/** Markdown 渲染块：纯文本段或围栏代码块。 */
+sealed interface MdBlock {
+    data class Text(val text: String) : MdBlock
+    data class Code(val lang: String, val code: String) : MdBlock
+}
+
+/**
+ * 按行扫描，把文本切成「文本段」与「围栏代码块」。以 ``` 开头的行进入代码模式，
+ * 直到下一条 ``` 行或文本结束（流式途中未闭合也按代码块收尾）。围栏行本身被丢弃，
+ * 其后的标识符作为语言标签。相邻文本被合并为一段，纯空白段丢弃。
+ */
+fun parseMarkdownBlocks(src: String): List<MdBlock> {
+    val blocks = mutableListOf<MdBlock>()
+    val lines = src.split("\n")
+    val textBuf = StringBuilder()
+
+    fun flushText() {
+        val t = textBuf.toString().trim('\n')
+        if (t.isNotBlank()) blocks.add(MdBlock.Text(t))
+        textBuf.clear()
+    }
+
+    var i = 0
+    while (i < lines.size) {
+        val line = lines[i]
+        if (line.trimStart().startsWith("```")) {
+            flushText()
+            val lang = line.trimStart().removePrefix("```").trim()
+            val code = StringBuilder()
+            i++
+            while (i < lines.size && !lines[i].trimStart().startsWith("```")) {
+                if (code.isNotEmpty()) code.append("\n")
+                code.append(lines[i])
+                i++
+            }
+            if (i < lines.size) i++
+            blocks.add(MdBlock.Code(lang, code.toString()))
+        } else {
+            if (textBuf.isNotEmpty()) textBuf.append("\n")
+            textBuf.append(line)
+            i++
+        }
+    }
+    flushText()
+    if (blocks.isEmpty()) blocks.add(MdBlock.Text(src))
+    return blocks
+}
 
 enum class MessageRole {
     USER, ASSISTANT, TOOL
@@ -84,7 +134,9 @@ enum class MessageRole {
 data class ChatMessagesState(
     val sessionId: String?,
     val messages: List<AgentUIMessage>,
-    val loaded: Boolean
+    val loaded: Boolean,
+    val hasMore: Boolean = false,
+    val isLoadingMore: Boolean = false
 )
 
 /**
@@ -152,6 +204,8 @@ class AIAgentViewModel @Inject constructor(
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
 
     private val _agentStates = MutableStateFlow<Map<String, AgentUIState>>(emptyMap())
+    val agentStates: StateFlow<Map<String, AgentUIState>> = _agentStates.asStateFlow()
+
     val agentState: StateFlow<AgentUIState> = _currentSessionId
         .flatMapLatest { id ->
             if (id == null) flowOf(AgentUIState.Idle)
@@ -163,6 +217,15 @@ class AIAgentViewModel @Inject constructor(
         _agentStates.value = _agentStates.value + (sessionId to state)
     }
 
+    private val _messageLimit = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private val defaultLimit = 30
+
+    fun loadMoreMessages() {
+        val sid = _currentSessionId.value ?: return
+        val currentLimit = _messageLimit.value[sid] ?: defaultLimit
+        _messageLimit.value = _messageLimit.value + (sid to (currentLimit + 30))
+    }
+
     /** 容器初始化实时进度（解压/部署/装包），AI 页底部气泡展示。 */
     val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
 
@@ -172,39 +235,55 @@ class AIAgentViewModel @Inject constructor(
         _currentWorkspace.value = path
     }
 
-    val sessions: StateFlow<List<ChatSession>> = _currentWorkspace
+    val sessions: StateFlow<List<com.aicodeeditor.feature.agent.domain.model.ChatSession>> = _currentWorkspace
         .flatMapLatest { path ->
             chatSessionDao.getAllSessionsByWorkspace(path)
                 .map { list -> list.map { it.toDomain() } }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val currentSessionMode: StateFlow<com.aicodeeditor.feature.agent.domain.model.AgentMode> = kotlinx.coroutines.flow.combine(
+        _currentSessionId, sessions
+    ) { id, list ->
+        list.find { it.id == id }?.mode ?: com.aicodeeditor.feature.agent.domain.model.AgentMode.BUILD
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, com.aicodeeditor.feature.agent.domain.model.AgentMode.BUILD)
+
     /**
      * 当前会话的消息状态：会话切换时自动切换到对应历史，并携带所属会话 id 与 loaded 标志，
      * 使 UI 能区分「切换/冷启动加载中」与「空会话」——避免先闪 Welcome 或上一个会话的消息再突然刷新。
      * 过滤掉「纯工具调用」的空助手行（content 为空、仅用于回放配对，不应显示为气泡）。
      */
-    val messagesState: StateFlow<ChatMessagesState> = _currentSessionId
-        .flatMapLatest { id ->
+    val messagesState: StateFlow<ChatMessagesState> = kotlinx.coroutines.flow.combine(
+        _currentSessionId,
+        _messageLimit
+    ) { id, limitMap -> id to (limitMap[id] ?: defaultLimit) }
+        .flatMapLatest { (id, limit) ->
             if (id == null) flowOf(ChatMessagesState(null, emptyList(), loaded = false))
-            else agentMessageDao.getMessagesBySession(id).map { list ->
-                ChatMessagesState(
-                    sessionId = id,
-                    messages = list.asSequence()
-                        // 丢弃既无可见文字、又无思考过程的纯回放配对助手行（仅携带 toolCalls）；
-                        // 但若带思考过程则保留，以便历史里仍能展开查看本轮思考。
-                        .filterNot {
-                            it.role == MessageRole.ASSISTANT.name &&
-                                !it.content.hasVisibleContent() &&
-                                it.reasoning.isNullOrEmpty()
-                        }
-                        .map { it.toUIMessage() }
-                        .toList(),
-                    loaded = true
-                )
+            else agentMessageDao.getMessagesBySessionPaged(id, limit).map { list ->
+                // 在后台线程执行预解析
+                withContext(Dispatchers.Default) {
+                    ChatMessagesState(
+                        sessionId = id,
+                        messages = list.asSequence()
+                            .filterNot {
+                                it.role == MessageRole.ASSISTANT.name &&
+                                    !it.content.hasVisibleContent() &&
+                                    it.reasoning.isNullOrEmpty()
+                            }
+                            .map { entity -> 
+                                val uiMessage = entity.toUIMessage()
+                                uiMessage.copy(parsedBlocks = parseMarkdownBlocks(uiMessage.content))
+                            }
+                            .toList(),
+                        loaded = true,
+                        hasMore = list.size >= limit,
+                        isLoadingMore = false
+                    )
+                }
             }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, ChatMessagesState(null, emptyList(), loaded = false))
+
 
     private val _changesMap = MutableStateFlow<Map<String, List<CodeChange>>>(emptyMap())
     val changes: StateFlow<List<CodeChange>> = _currentSessionId
@@ -349,13 +428,17 @@ class AIAgentViewModel @Inject constructor(
             if (isFirst) chatSessionDao.updateTitle(sessionId, deriveTitle(request))
             chatSessionDao.touch(sessionId, nextTimestamp())
 
+            val sessionEntity = chatSessionDao.getById(sessionId)
+            val mode = sessionEntity?.toDomain()?.mode ?: com.aicodeeditor.feature.agent.domain.model.AgentMode.BUILD
+
             val context = AgentContext(
                 currentFile = currentFile,
                 selectedCode = selectedCode,
                 projectRoot = projectRoot,
                 language = currentFile?.let { detectLanguage(it) },
                 history = history,
-                sessionId = sessionId
+                sessionId = sessionId,
+                mode = mode
             )
 
             val result = agentWorkflow.execute(
@@ -443,13 +526,17 @@ class AIAgentViewModel @Inject constructor(
             if (isFirst) chatSessionDao.updateTitle(sessionId, deriveTitle(request))
             chatSessionDao.touch(sessionId, nextTimestamp())
 
+            val sessionEntity = chatSessionDao.getById(sessionId)
+            val mode = sessionEntity?.toDomain()?.mode ?: com.aicodeeditor.feature.agent.domain.model.AgentMode.BUILD
+
             val context = AgentContext(
                 currentFile = currentFile,
                 selectedCode = selectedCode,
                 projectRoot = projectRoot,
                 language = currentFile?.let { detectLanguage(it) },
                 history = history,
-                sessionId = sessionId
+                sessionId = sessionId,
+                mode = mode
             )
 
             agentWorkflow.executeEvents(
@@ -616,6 +703,21 @@ class AIAgentViewModel @Inject constructor(
         chatSessionDao.upsert(s)
         _currentSessionId.value = s.id
         // Inherits default state (Idle)
+    }
+
+    fun setCurrentSessionId(id: String) {
+        if (_currentSessionId.value == id) return
+        _currentSessionId.value = id
+        // 切换时如果旧会话正在加载，我们不自动取消，它会在后台继续完成并落库。
+        // UI 会响应 id 变化，渲染新会话的列表。
+    }
+
+    fun setSessionMode(mode: com.aicodeeditor.feature.agent.domain.model.AgentMode) {
+        val sid = _currentSessionId.value ?: return
+        viewModelScope.launch {
+            val s = chatSessionDao.getById(sid) ?: return@launch
+            chatSessionDao.upsert(s.copy(mode = mode.name))
+        }
     }
 
     fun selectSession(id: String) {

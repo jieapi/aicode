@@ -118,8 +118,14 @@ fun AppNavigation() {
     }
 
     // 侧边栏需要的数据。
+    val currentWorkspace by workspaceViewModel.current.collectAsStateWithLifecycle()
+    androidx.compose.runtime.LaunchedEffect(currentWorkspace) {
+        agentViewModel.setWorkspace(currentWorkspace?.path ?: "")
+    }
+
     val sessions by agentViewModel.sessions.collectAsStateWithLifecycle()
     val currentSessionId by agentViewModel.currentSessionId.collectAsStateWithLifecycle()
+    val agentStates by agentViewModel.agentStates.collectAsStateWithLifecycle()
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -128,12 +134,14 @@ fun AppNavigation() {
         drawerContent = {
             ModalDrawerSheet(
                 drawerShape = RectangleShape,
-                drawerContainerColor = MaterialTheme.colorScheme.surface,
+                drawerContainerColor = androidx.compose.ui.graphics.Color.White,
+                drawerTonalElevation = 0.dp,
                 modifier = Modifier.width(300.dp)
             ) {
                 ChatDrawerContent(
                     sessions = sessions,
                     currentSessionId = currentSessionId,
+                    agentStates = agentStates,
                     onSelect = {
                         agentViewModel.selectSession(it.id)
                         scope.launch { drawerState.close() }
@@ -153,11 +161,7 @@ fun AppNavigation() {
     ) {
         NavHost(
             navController = navController,
-            startDestination = "chat",
-            enterTransition = { EnterTransition.None },
-            exitTransition = { ExitTransition.None },
-            popEnterTransition = { EnterTransition.None },
-            popExitTransition = { ExitTransition.None }
+            startDestination = "chat"
         ) {
             composable("chat") {
                 AIChatPanel(
@@ -171,10 +175,6 @@ fun AppNavigation() {
                 )
             }
             composable("settings") {
-                BackHandler {
-                    navController.popBackStack()
-                    scope.launch { drawerState.open() }
-                }
                 val settingsVm: SettingsViewModel = hiltViewModel()
                 SettingsScreen(
                     viewModel = settingsVm,

@@ -45,23 +45,29 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountTree
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material3.DrawerState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -116,6 +122,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.aicodeeditor.feature.agent.presentation.MdBlock
+import com.aicodeeditor.feature.agent.presentation.parseMarkdownBlocks
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 // 差异视图配色：跨明暗主题固定的「新增绿 / 删除红」，带低透明度底色与高对比文字。
 private val DiffAddBg = androidx.compose.ui.graphics.Color(0x3322C55E)
@@ -155,9 +165,11 @@ fun AIChatPanel(
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
     val activeProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
+    val providers = (settingsViewModel?.providers?.collectAsStateWithLifecycle()?.value ?: emptyList()).filter { it.isEnabled }
     val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     // 工作区路径作为 AI 文件/命令操作的根目录；尚未就绪时为空串。
     val projectRoot = currentWorkspace?.path ?: ""
+    val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -257,9 +269,16 @@ fun AIChatPanel(
         }
     }
 
+    val firstVisibleItemIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
+    LaunchedEffect(firstVisibleItemIndex, messagesReady, messagesState.hasMore, messagesState.isLoadingMore) {
+        if (messagesReady && firstVisibleItemIndex <= 3 && messagesState.hasMore && !messagesState.isLoadingMore) {
+            viewModel.loadMoreMessages()
+        }
+    }
+
     // Drawer 已提升到 NavHost 外层（AppNavigation），这里只负责打开/关闭。
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = androidx.compose.ui.graphics.Color.White,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ChatHeader(
@@ -271,7 +290,9 @@ fun AIChatPanel(
                 },
                 onNewChat = { viewModel.newSession() },
                 onNavigateToTerminal = onNavigateToTerminal,
-                onNavigateToGit = onNavigateToGit
+                onNavigateToGit = onNavigateToGit,
+                currentMode = currentMode,
+                onToggleMode = { viewModel.setSessionMode(it) }
             )
         }
     ) { padding ->
@@ -353,7 +374,11 @@ fun AIChatPanel(
                 isBusy = isBusy,
                 workspaceViewModel = workspaceViewModel,
                 activeProvider = activeProvider,
-                onNavigateToSettings = onNavigateToSettings
+                providers = providers,
+                onSelectModel = { p, m -> settingsViewModel?.selectModel(p, m) },
+                onNavigateToSettings = onNavigateToSettings,
+                currentMode = currentMode,
+                onToggleMode = { viewModel.setSessionMode(it) }
             )
         }
     }
@@ -366,63 +391,68 @@ private fun ChatHeader(
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
     onNavigateToTerminal: () -> Unit,
-    onNavigateToGit: () -> Unit
+    onNavigateToGit: () -> Unit,
+    currentMode: com.aicodeeditor.feature.agent.domain.model.AgentMode,
+    onToggleMode: (com.aicodeeditor.feature.agent.domain.model.AgentMode) -> Unit
 ) {
-    val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     Surface(
-        color = MaterialTheme.colorScheme.surface,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        color = androidx.compose.ui.graphics.Color.White
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
-            verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onOpenDrawer) {
-                Icon(
-                    Icons.Default.Menu,
-                    contentDescription = "打开侧边栏",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = currentWorkspace?.name ?: "AI Code Editor",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = modelName?.takeIf { it.isNotBlank() } ?: "未选择模型",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onNewChat) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = "新建会话",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            IconButton(onClick = onNavigateToGit) {
-                Icon(
-                    Icons.Default.AccountTree,
-                    contentDescription = "Git 管理",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            IconButton(onClick = onNavigateToTerminal) {
-                Icon(
-                    Icons.Default.Terminal,
-                    contentDescription = "终端",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onOpenDrawer) {
+                    Icon(
+                        FeatherIcons.Menu,
+                        contentDescription = "打开侧边栏",
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    if (workspaceViewModel != null) {
+                        WorkspaceChip(viewModel = workspaceViewModel)
+                    } else {
+                        Text(
+                            text = "AI Code Editor",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Text(
+                        text = modelName?.takeIf { it.isNotBlank() } ?: "未选择模型",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onNewChat) {
+                    Icon(
+                        FeatherIcons.Plus,
+                        contentDescription = "新建会话",
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                }
+                IconButton(onClick = onNavigateToGit) {
+                    Icon(
+                        FeatherIcons.GitBranch,
+                        contentDescription = "打开版本控制",
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                }
+                IconButton(onClick = onNavigateToTerminal) {
+                    Icon(
+                        FeatherIcons.Terminal,
+                        contentDescription = "打开终端",
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                }
             }
         }
     }
@@ -438,9 +468,9 @@ private fun BrandMark(size: androidx.compose.ui.unit.Dp, iconSize: androidx.comp
         contentAlignment = Alignment.Center
     ) {
         Icon(
-            Icons.Default.AutoAwesome,
+            FeatherIcons.Star,
             contentDescription = null,
-            tint = androidx.compose.ui.graphics.Color.White,
+            tint = androidx.compose.ui.graphics.Color(0xFF424242),
             modifier = Modifier.size(iconSize)
         )
     }
@@ -519,7 +549,8 @@ fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
                             MarkdownContent(
                                 text = message.content.ifEmpty { "…" },
                                 color = textColor,
-                                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp)
+                                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp),
+                                preParsedBlocks = message.parsedBlocks.takeIf { it.isNotEmpty() }
                             )
                         }
                     }
@@ -539,9 +570,10 @@ fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
 private fun MarkdownContent(
     text: String,
     color: androidx.compose.ui.graphics.Color,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    preParsedBlocks: List<MdBlock>? = null
 ) {
-    val blocks = remember(text) { parseMarkdownBlocks(text) }
+    val blocks = preParsedBlocks ?: remember(text) { parseMarkdownBlocks(text) }
     Column(modifier = modifier) {
         blocks.forEachIndexed { index, block ->
             if (index > 0) Spacer(Modifier.height(Spacing.sm))
@@ -604,55 +636,7 @@ private fun CodeBlock(lang: String, code: String) {
     }
 }
 
-/** Markdown 渲染块：纯文本段或围栏代码块。 */
-private sealed interface MdBlock {
-    data class Text(val text: String) : MdBlock
-    data class Code(val lang: String, val code: String) : MdBlock
-}
-
-/**
- * 按行扫描，把文本切成「文本段」与「围栏代码块」。以 ``` 开头的行进入代码模式，
- * 直到下一条 ``` 行或文本结束（流式途中未闭合也按代码块收尾）。围栏行本身被丢弃，
- * 其后的标识符作为语言标签。相邻文本被合并为一段，纯空白段丢弃。
- */
-private fun parseMarkdownBlocks(src: String): List<MdBlock> {
-    val blocks = mutableListOf<MdBlock>()
-    val lines = src.split("\n")
-    val textBuf = StringBuilder()
-
-    fun flushText() {
-        val t = textBuf.toString().trim('\n')
-        if (t.isNotBlank()) blocks.add(MdBlock.Text(t))
-        textBuf.clear()
-    }
-
-    var i = 0
-    while (i < lines.size) {
-        val line = lines[i]
-        if (line.trimStart().startsWith("```")) {
-            flushText()
-            val lang = line.trimStart().removePrefix("```").trim()
-            val code = StringBuilder()
-            i++
-            while (i < lines.size && !lines[i].trimStart().startsWith("```")) {
-                if (code.isNotEmpty()) code.append("\n")
-                code.append(lines[i])
-                i++
-            }
-            // 跳过闭合围栏行（若存在）。
-            if (i < lines.size) i++
-            blocks.add(MdBlock.Code(lang, code.toString()))
-        } else {
-            if (textBuf.isNotEmpty()) textBuf.append("\n")
-            textBuf.append(line)
-            i++
-        }
-    }
-    flushText()
-    // 整段无任何内容时（如纯占位「…」）至少回退一段，避免渲染出空气泡。
-    if (blocks.isEmpty()) blocks.add(MdBlock.Text(src))
-    return blocks
-}
+private val inlineCodeRegex = Regex("`([^`\\n]+)`")
 
 /** 把文本段里的行内 `code` 渲染成等宽高亮片段，其余原样保留。 */
 @Composable
@@ -661,9 +645,8 @@ private fun renderInlineMarkdown(text: String): androidx.compose.ui.text.Annotat
     val codeBg = MaterialTheme.colorScheme.surfaceVariant
     return remember(text, codeColor, codeBg) {
         androidx.compose.ui.text.buildAnnotatedString {
-            val regex = Regex("`([^`\\n]+)`")
             var last = 0
-            for (m in regex.findAll(text)) {
+            for (m in inlineCodeRegex.findAll(text)) {
                 append(text.substring(last, m.range.first))
                 withStyle(
                     androidx.compose.ui.text.SpanStyle(
@@ -757,9 +740,9 @@ private fun ReasoningBubble(text: String, initiallyExpanded: Boolean = true) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        Icons.Default.AutoAwesome,
+                        FeatherIcons.Star,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(Spacing.sm))
@@ -770,9 +753,9 @@ private fun ReasoningBubble(text: String, initiallyExpanded: Boolean = true) {
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
-                        if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
                         contentDescription = if (expanded) "折叠" else "展开",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -930,9 +913,9 @@ private fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null)
                 TypingDots(color = MaterialTheme.colorScheme.onSurfaceVariant, dotSize = 5.dp)
             } else if (expandable) {
                 Icon(
-                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
                     contentDescription = if (expanded) "收起" else "展开",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -1143,9 +1126,9 @@ private fun DiffExpandToggle(expanded: Boolean, hiddenCount: Int, onToggle: () -
         horizontalArrangement = Arrangement.Center
     ) {
         Icon(
-            if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
             contentDescription = if (expanded) "收起" else "展开",
-            tint = MaterialTheme.colorScheme.primary,
+            tint = androidx.compose.ui.graphics.Color(0xFF424242),
             modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(Spacing.xs))
@@ -1285,7 +1268,11 @@ private fun ChatInputBar(
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
     activeProvider: AIProviderConfig?,
-    onNavigateToSettings: () -> Unit
+    providers: List<AIProviderConfig>,
+    onSelectModel: (String, String) -> Unit,
+    onNavigateToSettings: () -> Unit,
+    currentMode: com.aicodeeditor.feature.agent.domain.model.AgentMode,
+    onToggleMode: (com.aicodeeditor.feature.agent.domain.model.AgentMode) -> Unit
 ) {
     val canSend = value.isNotBlank() && !isBusy
     Surface(
@@ -1301,7 +1288,7 @@ private fun ChatInputBar(
                 .padding(bottom = rememberImeBottomInset())
                 .padding(horizontal = Spacing.lg, vertical = Spacing.md)
                 .clip(RoundedCornerShape(Radius.lg))
-                .background(MaterialTheme.colorScheme.surface)
+                .background(androidx.compose.ui.graphics.Color.White)
                 .border(
                     1.dp,
                     MaterialTheme.colorScheme.outlineVariant,
@@ -1322,8 +1309,6 @@ private fun ChatInputBar(
                     )
                 },
                 enabled = !isBusy,
-                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
                     unfocusedContainerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -1345,12 +1330,34 @@ private fun ChatInputBar(
                     modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (workspaceViewModel != null) {
-                        WorkspaceChip(viewModel = workspaceViewModel)
-                        Spacer(Modifier.width(Spacing.sm))
+                    val isPlan = currentMode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isPlan) androidx.compose.ui.graphics.Color(0xFF8B5CF6) else androidx.compose.ui.graphics.Color(0xFF10B981),
+                        modifier = Modifier
+                            .clickable { 
+                                val nextMode = if (isPlan) com.aicodeeditor.feature.agent.domain.model.AgentMode.BUILD else com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN
+                                onToggleMode(nextMode)
+                            }
+                    ) {
+                        Text(
+                            text = if (isPlan) "PLAN" else "BUILD",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = androidx.compose.ui.graphics.Color.White
+                            )
+                        )
                     }
+                    Spacer(Modifier.width(Spacing.sm))
+                    
                     if (activeProvider != null) {
-                        ModelChip(provider = activeProvider, onClick = onNavigateToSettings)
+                        ModelChip(
+                            provider = activeProvider,
+                            providers = providers,
+                            onSelectModel = onSelectModel,
+                            onClick = onNavigateToSettings
+                        )
                     }
                 }
                 SendButton(canSend = canSend, isBusy = isBusy, onSend = onSend, onStop = onStop)
@@ -1365,13 +1372,17 @@ private fun ChatInputBar(
 @Composable
 private fun ModelChip(
     provider: AIProviderConfig,
+    providers: List<AIProviderConfig>,
+    onSelectModel: (String, String) -> Unit,
     onClick: () -> Unit
 ) {
+    var showSheet by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(Radius.pill))
             .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable(onClick = onClick)
+            .clickable(onClick = { showSheet = true })
             .padding(horizontal = Spacing.md, vertical = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1391,11 +1402,145 @@ private fun ModelChip(
             modifier = Modifier.widthIn(max = 140.dp)
         )
         Icon(
-            Icons.Default.ExpandMore,
+            FeatherIcons.MoreHorizontal,
             contentDescription = "切换模型",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = androidx.compose.ui.graphics.Color(0xFF424242),
             modifier = Modifier.size(16.dp)
         )
+    }
+
+    if (showSheet) {
+        ModelSheet(
+            providers = providers,
+            currentProviderId = provider.id,
+            currentModel = provider.effectiveModel,
+            onSelect = { pId, model ->
+                onSelectModel(pId, model)
+                showSheet = false
+            },
+            onManage = {
+                onClick()
+                showSheet = false
+            },
+            onDismiss = { showSheet = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelSheet(
+    providers: List<AIProviderConfig>,
+    currentProviderId: String,
+    currentModel: String,
+    onSelect: (String, String) -> Unit,
+    onManage: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.lg)
+                .padding(bottom = Spacing.xl)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = Spacing.md),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "模型",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onManage) {
+                    Icon(FeatherIcons.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text("管理")
+                }
+            }
+
+            if (providers.all { it.models.isEmpty() }) {
+                Text(
+                    "暂无可用模型，请在「管理」中添加",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = Spacing.md)
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
+                ) {
+                    providers.forEach { p ->
+                        if (p.models.isNotEmpty()) {
+                            item(key = "header_${p.id}") {
+                                Text(
+                                    text = p.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs, start = Spacing.xs)
+                                )
+                            }
+                            items(p.models, key = { "${p.id}_$it" }) { model ->
+                                val selected = p.id == currentProviderId && model == currentModel
+                                ModelRow(
+                                    name = model,
+                                    selected = selected,
+                                    onClick = { onSelect(p.id, model) }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelRow(
+    name: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Radius.sm))
+            .clickable(onClick = onClick)
+            .padding(horizontal = Spacing.md, vertical = Spacing.md),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(14.dp)
+                .clip(RoundedCornerShape(Radius.xs))
+                .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+        )
+        Spacer(Modifier.width(Spacing.md))
+        Text(
+            text = name,
+            style = MaterialTheme.typography.bodyLarge,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (selected) {
+            Icon(
+                FeatherIcons.Check,
+                contentDescription = "当前",
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                modifier = Modifier.size(20.dp)
+            )
+        }
     }
 }
 
@@ -1419,17 +1564,16 @@ private fun SendButton(canSend: Boolean, isBusy: Boolean, onSend: () -> Unit, on
     ) {
         if (isBusy) {
             Icon(
-                Icons.Default.Stop,
+                FeatherIcons.Square,
                 contentDescription = "停止",
-                tint = androidx.compose.ui.graphics.Color.White,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(20.dp)
             )
         } else {
             Icon(
-                Icons.Default.ArrowUpward,
+                FeatherIcons.ArrowUp,
                 contentDescription = "发送",
-                tint = if (canSend) androidx.compose.ui.graphics.Color.White
-                else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -1562,14 +1706,14 @@ private fun StatusBanner(state: AgentUIState) {
                 text = state.message,
                 container = MaterialTheme.colorScheme.errorContainer,
                 content = MaterialTheme.colorScheme.onErrorContainer,
-                icon = Icons.Default.ErrorOutline
+                icon = FeatherIcons.AlertCircle
             )
 
             is AgentUIState.Applied -> InfoBanner(
                 text = "代码变更已应用",
                 container = MaterialTheme.colorScheme.primaryContainer,
                 content = MaterialTheme.colorScheme.onPrimaryContainer,
-                icon = Icons.Default.Check
+                icon = FeatherIcons.Check
             )
 
             else -> {}
@@ -1595,7 +1739,7 @@ private fun InfoBanner(
             modifier = Modifier.padding(Spacing.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, tint = androidx.compose.ui.graphics.Color(0xFF424242), modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(Spacing.sm))
             Text(text, color = content, style = MaterialTheme.typography.bodyMedium)
         }
@@ -1635,7 +1779,7 @@ fun ChangePreviewPanel(
 
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 TextButton(onClick = onReject, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(FeatherIcons.X, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(Spacing.xs))
                     Text("拒绝")
                 }
@@ -1650,9 +1794,9 @@ fun ChangePreviewPanel(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            Icons.Default.Check,
+                            FeatherIcons.Check,
                             contentDescription = null,
-                            tint = androidx.compose.ui.graphics.Color.White,
+                            tint = androidx.compose.ui.graphics.Color(0xFF424242),
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(Spacing.xs))
