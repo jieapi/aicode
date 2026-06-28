@@ -79,7 +79,8 @@ private enum class SettingsSection(val title: String) {
     ProviderEditor("服务商"),
     Mcp("MCP 服务器"),
     Log("日志等级"),
-    Permissions("工具授权")
+    Permissions("工具授权"),
+    RemoteServers("远程工作区")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -96,6 +97,7 @@ fun SettingsScreen(
     val mcpReloading by viewModel.mcpReloading.collectAsState()
     val globalRules by viewModel.globalRules.collectAsState()
     val projectRules by viewModel.projectRules.collectAsState()
+    val keepaliveEnabled by viewModel.keepaliveEnabled.collectAsState()
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
@@ -124,6 +126,13 @@ fun SettingsScreen(
                 viewModel.deleteProvider(id)
                 section = SettingsSection.Providers
             }
+        )
+        return
+    }
+
+    if (section == SettingsSection.RemoteServers) {
+        com.aicodeeditor.feature.workspace.presentation.remote.RemoteServerScreen(
+            onNavigateBack = { section = SettingsSection.Menu }
         )
         return
     }
@@ -177,6 +186,8 @@ fun SettingsScreen(
                     mcpConnected = mcpStatuses.count { it.state == McpServerStatus.State.CONNECTED },
                     logLevel = logLevel,
                     permissionRuleCount = projectRules.size + globalRules.size,
+                    keepaliveEnabled = keepaliveEnabled,
+                    onToggleKeepalive = { viewModel.setKeepaliveEnabled(it) },
                     onOpen = { section = it }
                 )
                 SettingsSection.Providers -> ProvidersSection(
@@ -213,6 +224,7 @@ fun SettingsScreen(
                     onDeleteGlobal = { viewModel.deleteGlobalRule(it) }
                 )
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
+                SettingsSection.RemoteServers -> {} // 已在上方 early return 处理
             }
         }
     }
@@ -244,6 +256,8 @@ private fun SettingsMenu(
     mcpConnected: Int,
     logLevel: LogLevel,
     permissionRuleCount: Int,
+    keepaliveEnabled: Boolean,
+    onToggleKeepalive: (Boolean) -> Unit,
     onOpen: (SettingsSection) -> Unit
 ) {
     Column(
@@ -280,6 +294,50 @@ private fun SettingsMenu(
             subtitle = if (permissionRuleCount == 0) "未保存授权规则" else "已保存 $permissionRuleCount 条",
             onClick = { onOpen(SettingsSection.Permissions) }
         )
+        MenuRow(
+            icon = Icons.Default.Cloud, // 已经 import 了 Cloud
+            title = SettingsSection.RemoteServers.title,
+            subtitle = "管理 SFTP / FTP 工作区同步",
+            onClick = { onOpen(SettingsSection.RemoteServers) }
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(Radius.md),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Spacing.lg),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(Spacing.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "后台运行保活",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "显示前台通知，避免退到后台时系统杀进程",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = keepaliveEnabled,
+                    onCheckedChange = onToggleKeepalive
+                )
+            }
+        }
     }
 }
 

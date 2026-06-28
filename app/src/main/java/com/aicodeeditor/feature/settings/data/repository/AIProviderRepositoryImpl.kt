@@ -69,11 +69,6 @@ class AIProviderRepositoryImpl @Inject constructor(
         aiProviderDao.setModels(id, models.joinToString("\n"))
     }
 
-    override suspend fun initializeDefaultProvidersIfEmpty() {
-        // 不再预置任何内置服务商或内置模型：服务商与模型完全由用户在设置页自行添加/拉取。
-        // 保留该方法以兼容接口与 ViewModel 调用，当前为空实现。
-    }
-
     override suspend fun ensureActiveProvider() {
         // 已有激活项则无需处理。
         if (aiProviderDao.getActiveProviderSync() != null) return
