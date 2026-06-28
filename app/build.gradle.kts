@@ -128,6 +128,9 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    
+    // HTML 解析与清洗 (用于 WebFetchTool)
+    implementation("org.jsoup:jsoup:1.17.2")
 
     // 安全存储
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
@@ -141,6 +144,10 @@ dependencies {
 
     // YAML 解析 (用于 Skill Frontmatter)
     implementation("org.yaml:snakeyaml:2.2")
+
+    // 远程同步 (SFTP/FTP)
+    implementation("com.hierynomus:sshj:0.38.0")
+    implementation("commons-net:commons-net:3.10.0")
 
     // 容器：解压 Alpine rootfs tar.gz（正确处理 symlink/hardlink/权限位）
     implementation("org.apache.commons:commons-compress:1.26.2")
@@ -157,6 +164,9 @@ dependencies {
     // Material Icons
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
+
+    // Markdown Renderer
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.24.0")
 
     // Core Android
     implementation("androidx.core:core:1.13.0")
