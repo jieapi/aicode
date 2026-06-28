@@ -11,8 +11,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -38,6 +38,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerConfig
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 /** MCP server 可视化编辑对话框：类型切换（HTTP / stdio）+ 各自字段。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -74,6 +76,7 @@ fun McpServerEditDialog(
     val canSave = name.isNotBlank() && if (isStdio) command.isNotBlank() else url.isNotBlank()
 
     AlertDialog(
+        containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "添加 MCP 服务器" else "编辑 MCP 服务器") },
         text = {
@@ -216,7 +219,7 @@ private fun McpHttpFields(
             modifier = Modifier.weight(1f)
         )
         TextButton(onClick = { headers.add("" to "") }) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(Spacing.xs))
             Text("添加")
         }
@@ -244,9 +247,9 @@ private fun McpHttpFields(
             )
             IconButton(onClick = { headers.removeAt(index) }, modifier = Modifier.size(32.dp)) {
                 Icon(
-                    Icons.Default.Close,
+                    FeatherIcons.X,
                     contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -283,7 +286,7 @@ private fun McpStdioFields(
             modifier = Modifier.weight(1f)
         )
         TextButton(onClick = { args.add("") }) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(Spacing.xs))
             Text("添加")
         }
@@ -305,9 +308,9 @@ private fun McpStdioFields(
             )
             IconButton(onClick = { args.removeAt(index) }, modifier = Modifier.size(32.dp)) {
                 Icon(
-                    Icons.Default.Close,
+                    FeatherIcons.X,
                     contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -327,7 +330,7 @@ private fun McpStdioFields(
             modifier = Modifier.weight(1f)
         )
         TextButton(onClick = { env.add("" to "") }) {
-            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(Spacing.xs))
             Text("添加")
         }
@@ -355,9 +358,9 @@ private fun McpStdioFields(
             )
             IconButton(onClick = { env.removeAt(index) }, modifier = Modifier.size(32.dp)) {
                 Icon(
-                    Icons.Default.Close,
+                    FeatherIcons.X,
                     contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(16.dp)
                 )
             }

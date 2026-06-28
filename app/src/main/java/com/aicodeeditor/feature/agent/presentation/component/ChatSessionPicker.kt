@@ -1,5 +1,11 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -8,23 +14,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.agent.domain.model.ChatSession
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 /**
  * 单条会话行：选中高亮 + 删除按钮。供侧边栏历史记录列表复用。
@@ -33,6 +43,7 @@ import com.aicodeeditor.feature.agent.domain.model.ChatSession
 fun ChatSessionRow(
     session: ChatSession,
     selected: Boolean,
+    isExecuting: Boolean = false,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -44,13 +55,22 @@ fun ChatSessionRow(
             .padding(horizontal = Spacing.md, vertical = Spacing.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            Icons.Default.ChatBubbleOutline,
-            contentDescription = null,
-            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(Modifier.width(Spacing.md))
+        if (isExecuting) {
+            val transition = rememberInfiniteTransition(label = "tool-status-dot")
+            val alpha by transition.animateFloat(
+                initialValue = 1f,
+                targetValue = 0.25f,
+                animationSpec = infiniteRepeatable(animation = tween(650), repeatMode = RepeatMode.Reverse),
+                label = "tool-status-dot-alpha"
+            )
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF22C55E).copy(alpha = alpha))
+            )
+            Spacer(Modifier.width(Spacing.md))
+        }
         Text(
             text = session.title,
             style = MaterialTheme.typography.bodyLarge,
@@ -61,9 +81,9 @@ fun ChatSessionRow(
         )
         if (selected) {
             Icon(
-                Icons.Default.Check,
+                FeatherIcons.Check,
                 contentDescription = "当前",
-                tint = MaterialTheme.colorScheme.primary,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(20.dp)
             )
         } else {
@@ -75,9 +95,9 @@ fun ChatSessionRow(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Default.Delete,
+                    FeatherIcons.Trash2,
                     contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(18.dp)
                 )
             }

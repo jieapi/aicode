@@ -219,6 +219,12 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun setProviderEnabled(id: String, isEnabled: Boolean) {
+        viewModelScope.launch {
+            repository.setProviderEnabled(id, isEnabled)
+        }
+    }
+
     fun saveProvider(provider: AIProviderConfig) {
         viewModelScope.launch {
             repository.saveProvider(provider)
@@ -249,7 +255,7 @@ class SettingsViewModel @Inject constructor(
     fun testModel(provider: AIProviderConfig, model: String) {
         viewModelScope.launch {
             _testing.update { it + model }
-            val result = modelApiService.testModel(provider.baseUrl, provider.apiKey, provider.type, model)
+            val result = modelApiService.testModel(provider.baseUrl, provider.apiKey, provider.type, provider.apiPath, provider.useResponseApi, model)
             _testResults.update { it + (model to result) }
             _testing.update { it - model }
         }

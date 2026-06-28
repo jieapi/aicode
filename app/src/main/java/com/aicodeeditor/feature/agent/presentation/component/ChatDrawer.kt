@@ -1,5 +1,6 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,8 +20,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -40,6 +41,9 @@ import androidx.compose.ui.unit.dp
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.agent.domain.model.ChatSession
+import com.aicodeeditor.feature.agent.presentation.AgentUIState
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 /**
  * 侧边栏内容：顶部「新建会话」，中部历史记录列表，底部「设置」入口。
@@ -49,6 +53,7 @@ import com.aicodeeditor.feature.agent.domain.model.ChatSession
 fun ChatDrawerContent(
     sessions: List<ChatSession>,
     currentSessionId: String?,
+    agentStates: Map<String, AgentUIState>,
     onSelect: (ChatSession) -> Unit,
     onCreate: () -> Unit,
     onDelete: (ChatSession) -> Unit,
@@ -60,6 +65,7 @@ fun ChatDrawerContent(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.White)
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = Spacing.md, vertical = Spacing.lg)
     ) {
@@ -73,9 +79,9 @@ fun ChatDrawerContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Default.Add,
+                FeatherIcons.Plus,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(Spacing.md))
@@ -110,9 +116,12 @@ fun ChatDrawerContent(
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                 ) {
                     items(sessions, key = { it.id }) { session ->
+                        val state = agentStates[session.id]
+                        val isExecuting = state is AgentUIState.Loading || state is AgentUIState.Streaming
                         ChatSessionRow(
                             session = session,
                             selected = session.id == currentSessionId,
+                            isExecuting = isExecuting,
                             onClick = { onSelect(session) },
                             onDelete = { pendingDelete = session }
                         )
@@ -135,9 +144,9 @@ fun ChatDrawerContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                Icons.Default.Settings,
+                FeatherIcons.Settings,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(Spacing.md))

@@ -19,17 +19,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CallSplit
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.CloudUpload
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CallSplit
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +73,8 @@ import com.aicodeeditor.feature.git.domain.model.GitFileChange
 import com.aicodeeditor.feature.git.domain.model.GitStatus
 import com.aicodeeditor.feature.git.domain.model.GitTab
 import com.aicodeeditor.feature.git.presentation.GitViewModel
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,12 +106,12 @@ fun GitScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                     }
                 },
                 actions = {
                     IconButton(onClick = { viewModel.refresh() }, enabled = !state.busy) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                        Icon(FeatherIcons.RefreshCw, contentDescription = "刷新")
                     }
                 }
             )
@@ -218,10 +220,10 @@ private fun StatusTab(
             modifier = Modifier.fillMaxWidth().padding(Spacing.sm),
             horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
-            ActionButton("全部暂存", Icons.Default.Add, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
-            ActionButton("提交", Icons.Default.Check, enabled = !busy && s?.staged?.isNotEmpty() == true, onClick = onCommit, modifier = Modifier.weight(1f))
-            ActionButton("拉取", Icons.Default.CloudDownload, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
-            ActionButton("推送", Icons.Default.CloudUpload, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
+            ActionButton("全部暂存", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
+            ActionButton("提交", FeatherIcons.Check, enabled = !busy && s?.staged?.isNotEmpty() == true, onClick = onCommit, modifier = Modifier.weight(1f))
+            ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
+            ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
         }
 
         HorizontalDivider()
@@ -233,13 +235,13 @@ private fun StatusTab(
                 if (s!!.staged.isNotEmpty()) {
                     item { SectionHeader("已暂存 (${s.staged.size})") }
                     items(s.staged, key = { "s-${it.path}" }) { f ->
-                        FileRow(f, actionIcon = Icons.Default.Remove, actionDesc = "取消暂存", onAction = { onUnstage(f.path) }, enabled = !busy)
+                        FileRow(f, actionIcon = FeatherIcons.Minus, actionDesc = "取消暂存", onAction = { onUnstage(f.path) }, enabled = !busy)
                     }
                 }
                 if (s.unstaged.isNotEmpty()) {
                     item { SectionHeader("已修改 (${s.unstaged.size})") }
                     items(s.unstaged, key = { "u-${it.path}" }) { f ->
-                        FileRow(f, actionIcon = Icons.Default.Add, actionDesc = "暂存", onAction = { onStage(f.path) }, enabled = !busy)
+                        FileRow(f, actionIcon = FeatherIcons.Plus, actionDesc = "暂存", onAction = { onStage(f.path) }, enabled = !busy)
                     }
                 }
                 if (s.untracked.isNotEmpty()) {
@@ -247,7 +249,7 @@ private fun StatusTab(
                     items(s.untracked, key = { it }) { path ->
                         FileRow(
                             file = GitFileChange(path, "?", staged = false),
-                            actionIcon = Icons.Default.Add,
+                            actionIcon = FeatherIcons.Plus,
                             actionDesc = "暂存",
                             onAction = { onStage(path) },
                             enabled = !busy
@@ -322,11 +324,10 @@ private fun BranchRow(
         // 展开箭头占位（叶子用等宽占位对齐）。
         if (isFolder) {
             Icon(
-                imageVector = if (isOpen) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                imageVector = if (isOpen) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
                 contentDescription = if (isOpen) "折叠" else "展开",
                 modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+                tint = androidx.compose.ui.graphics.Color(0xFF424242))
         } else {
             Spacer(Modifier.size(18.dp))
         }
@@ -339,16 +340,13 @@ private fun BranchRow(
         Spacer(Modifier.width(Spacing.xs))
         Icon(
             imageVector = if (isFolder) {
-                if (isOpen) Icons.Default.FolderOpen else Icons.Default.Folder
+                if (isOpen) FeatherIcons.Folder else FeatherIcons.Folder
             } else {
-                Icons.Default.CallSplit
+                FeatherIcons.GitBranch
             },
             contentDescription = null,
             modifier = Modifier.size(18.dp),
-            tint = if (isCurrent) MaterialTheme.colorScheme.primary
-            else if (isFolder) MaterialTheme.colorScheme.secondary
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            tint = androidx.compose.ui.graphics.Color(0xFF424242))
         Spacer(Modifier.width(Spacing.sm))
         Text(
             text = node.segment,
@@ -444,12 +442,11 @@ private fun LogTab(
                 Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown
-                            else Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            imageVector = if (isExpanded) FeatherIcons.ChevronDown
+                            else FeatherIcons.ChevronRight,
                             contentDescription = if (isExpanded) "折叠" else "展开",
                             modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            tint = androidx.compose.ui.graphics.Color(0xFF424242))
                         Spacer(Modifier.width(Spacing.xs))
                         Text(
                             text = c.shortHash,
@@ -551,12 +548,10 @@ private fun FileNodeRow(node: FileTreeNode, depth: Int) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            imageVector = if (isFolder) Icons.Default.Folder else Icons.Default.InsertDriveFile,
+            imageVector = if (isFolder) FeatherIcons.Folder else FeatherIcons.File,
             contentDescription = null,
             modifier = Modifier.size(16.dp),
-            tint = if (isFolder) MaterialTheme.colorScheme.secondary
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        )
+            tint = androidx.compose.ui.graphics.Color(0xFF424242))
         Spacer(Modifier.width(Spacing.xs))
         Text(
             text = node.segment,
@@ -644,7 +639,7 @@ private fun FileRow(
             overflow = TextOverflow.Ellipsis
         )
         IconButton(onClick = onAction, enabled = enabled) {
-            Icon(actionIcon, contentDescription = actionDesc, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(actionIcon, contentDescription = actionDesc, tint = androidx.compose.ui.graphics.Color(0xFF424242))
         }
     }
 }
