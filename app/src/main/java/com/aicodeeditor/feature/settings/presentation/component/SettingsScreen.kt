@@ -80,8 +80,7 @@ private enum class SettingsSection(val title: String) {
     Mcp("MCP 服务器"),
     Log("日志等级"),
     Permissions("工具授权"),
-    RemoteServers("远程工作区"),
-    SyncIgnore("同步排除规则")
+    RemoteServers("远程工作区")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -300,12 +299,6 @@ private fun SettingsMenu(
             title = SettingsSection.RemoteServers.title,
             subtitle = "管理 SFTP / FTP 工作区同步",
             onClick = { onOpen(SettingsSection.RemoteServers) }
-        )
-        MenuRow(
-            icon = androidx.compose.material.icons.Icons.Default.Delete, // Using Delete as placeholder for ignore
-            title = SettingsSection.SyncIgnore.title,
-            subtitle = "配置同步时不上传的文件/目录",
-            onClick = { onOpen(SettingsSection.SyncIgnore) }
         )
 
         Card(
