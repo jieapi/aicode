@@ -16,7 +16,7 @@ import javax.inject.Singleton
 /**
  * 负责把打进 assets 的 Alpine rootfs 与 PRoot 二进制安装到 App 私有目录。
  *
- * 仅支持 arm64-v8a。targetSdk 锁定 28，数据目录文件才可执行（见 build.gradle.kts）。
+ * 自动根据设备架构（ARM / x86）加载对应资源。targetSdk 锁定 28，数据目录文件才可执行（见 build.gradle.kts）。
  */
 @Singleton
 class ContainerInstaller @Inject constructor(
@@ -40,23 +40,32 @@ class ContainerInstaller @Inject constructor(
          */
         const val ALPINE_MIRROR = "http://mirrors.aliyun.com/alpine"
 
-        /** assets 内的二进制位置 */
-        private const val ASSET_DIR = "container"
-        private const val ASSET_PROOT = "$ASSET_DIR/proot"
+        /** assets 内的架构特定目录 */
+        val ASSET_DIR: String
+            get() {
+                val abis = android.os.Build.SUPPORTED_ABIS
+                return if (abis.any { it.contains("x86") }) {
+                    "container/x86"
+                } else {
+                    "container/arm"
+                }
+            }
+            
+        val ASSET_PROOT: String get() = "$ASSET_DIR/proot"
         // Termux proot 的 loader 分离（靠 PROOT_LOADER 定位），且动态依赖 libtalloc / libandroid-shmem。
-        private const val ASSET_LOADER = "$ASSET_DIR/loader"
-        private const val ASSET_LOADER32 = "$ASSET_DIR/loader32"
-        private const val ASSET_LIBTALLOC = "$ASSET_DIR/libtalloc.so.2"
-        private const val ASSET_LIBSHMEM = "$ASSET_DIR/libandroid-shmem.so"
+        val ASSET_LOADER: String get() = "$ASSET_DIR/loader"
+        val ASSET_LOADER32: String get() = "$ASSET_DIR/loader32"
+        val ASSET_LIBTALLOC: String get() = "$ASSET_DIR/libtalloc.so.2"
+        val ASSET_LIBSHMEM: String get() = "$ASSET_DIR/libandroid-shmem.so"
         // 故意用中性的 .bin 后缀：AGP 的 asset 合并会把 .tar.gz/.tgz 当归档自动解压并改名，
         // 导致运行时 open("...tar.gz") 找不到文件。.bin 让它当普通二进制原样打包。
-        private const val ASSET_ROOTFS = "$ASSET_DIR/alpine-rootfs.bin"
+        val ASSET_ROOTFS: String get() = "$ASSET_DIR/alpine-rootfs.bin"
 
         /**
          * 安装版本。换 rootfs / proot 或改安装逻辑时 +1，触发重新解压。
          * 与 assets 里实际放的 Alpine 版本保持一致以便排查。
          */
-        private const val INSTALL_VERSION = "alpine-3.21.3-v5"
+        private const val INSTALL_VERSION = "alpine-3.21.3-v6"
     }
 
     /** rootfs 解压根目录 */

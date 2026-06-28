@@ -54,9 +54,7 @@ class TerminalSessionTool @Inject constructor(
 
     override val name = "terminal"
     override val description =
-        "管理常驻后台终端会话。用 action 选择操作：start=启动长驻命令并返回 tab_id（不阻塞）；" +
-        "send=按 tab_id 向终端发送一行命令/输入（默认回车执行）；" +
-        "read=按 tab_id 读取终端当前全部输出（省略 tab_id 则列出所有标签及其状态）。"
+        "管理常驻后台终端会话页面。支持启动长驻命令、按标签发送输入、读取终端输出或列出所有标签。对于极其耗时的任务（如构建、安装依赖），推荐用本工具的 'start' 动作挂后台执行，不阻塞后续其他工作，需要结果时再 'read' 即可。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
 
     override val parameters: Map<String, ToolParameter> = mapOf(
