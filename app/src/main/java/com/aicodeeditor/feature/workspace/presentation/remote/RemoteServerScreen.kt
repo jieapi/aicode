@@ -19,6 +19,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -38,7 +39,6 @@ fun RemoteServerScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var showAddConnectionDialog by remember { mutableStateOf(false) }
     var showAddMountDialog by remember { mutableStateOf(false) }
-    var showSyncSettingsDialog by remember { mutableStateOf(false) }
     var connectionToEdit by remember { mutableStateOf<RemoteConnection?>(null) }
     var mountToEdit by remember { mutableStateOf<RemoteMount?>(null) }
 
@@ -57,11 +57,6 @@ fun RemoteServerScreen(
                         IconButton(onClick = onNavigateBack) {
                             Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                         }
-                    },
-                    actions = {
-                        IconButton(onClick = { showSyncSettingsDialog = true }) {
-                            Icon(FeatherIcons.Settings, contentDescription = "同步设置")
-                        }
                     }
                 )
                 TabRow(selectedTabIndex = selectedTab) {
@@ -73,18 +68,23 @@ fun RemoteServerScreen(
                     Tab(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = { Text("工作区挂载") }
+                        text = { Text("工作区") }
                     )
                     Tab(
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 },
                         text = { Text("内置FTP") }
                     )
+                    Tab(
+                        selected = selectedTab == 3,
+                        onClick = { selectedTab = 3 },
+                        text = { Text("同步设置") }
+                    )
                 }
             }
         },
         floatingActionButton = {
-            if (selectedTab != 2) {
+            if (selectedTab == 0 || selectedTab == 1) {
                 FloatingActionButton(onClick = { 
                     if (selectedTab == 0) {
                         connectionToEdit = null
@@ -128,7 +128,7 @@ fun RemoteServerScreen(
             } else if (selectedTab == 1) {
                 if (uiState.mounts.isEmpty()) {
                     Text(
-                        text = "暂无挂载的工作区，请点击添加。",
+                        text = "暂无工作区，请点击添加。",
                         modifier = Modifier.align(Alignment.Center),
                         style = MaterialTheme.typography.bodyLarge
                     )
@@ -158,6 +158,15 @@ fun RemoteServerScreen(
 
             if (selectedTab == 2) {
                 WiFiFtpServerSection(viewModel)
+            } else if (selectedTab == 3) {
+                SyncSettingsSection(
+                    ignoredPatterns = syncIgnoredPatterns,
+                    useGitIgnore = syncUseGitIgnore,
+                    maxSyncBatchSize = maxSyncBatchSize,
+                    onPatternsChange = { viewModel.setSyncIgnoredPatterns(it) },
+                    onUseGitIgnoreChange = { viewModel.setSyncUseGitIgnore(it) },
+                    onMaxSyncBatchSizeChange = { viewModel.setMaxSyncBatchSize(it) }
+                )
             }
 
             if (uiState.isLoading) {
@@ -233,156 +242,169 @@ fun RemoteServerScreen(
         }
     }
 
-    if (showSyncSettingsDialog) {
-        RemoteSyncSettingsDialog(
-            ignoredPatterns = syncIgnoredPatterns,
-            useGitIgnore = syncUseGitIgnore,
-            maxSyncBatchSize = maxSyncBatchSize,
-            onPatternsChange = { viewModel.setSyncIgnoredPatterns(it) },
-            onUseGitIgnoreChange = { viewModel.setSyncUseGitIgnore(it) },
-            onMaxSyncBatchSizeChange = { viewModel.setMaxSyncBatchSize(it) },
-            onDismiss = { showSyncSettingsDialog = false }
-        )
-    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RemoteSyncSettingsDialog(
+fun SyncSettingsSection(
     ignoredPatterns: String,
     useGitIgnore: Boolean,
     maxSyncBatchSize: Int,
     onPatternsChange: (String) -> Unit,
     onUseGitIgnoreChange: (Boolean) -> Unit,
-    onMaxSyncBatchSizeChange: (Int) -> Unit,
-    onDismiss: () -> Unit
+    onMaxSyncBatchSizeChange: (Int) -> Unit
 ) {
-    var patternsText by remember { mutableStateOf(ignoredPatterns) }
-    var maxBatchSizeText by remember { mutableStateOf(maxSyncBatchSize.toString()) }
+    var patternsText by remember(ignoredPatterns) { mutableStateOf(ignoredPatterns) }
+    var maxBatchSizeText by remember(maxSyncBatchSize) { mutableStateOf(maxSyncBatchSize.toString()) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
-    AlertDialog(
-        containerColor = androidx.compose.ui.graphics.Color.White,
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.9f),
-        title = { Text("同步规则设置") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                    .padding(vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "目录/文件忽略列表",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "多个规则请用英文逗号分隔。这些名称的目录及文件将不会被同步到远程服务器（如 node_modules）。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
-                        )
-                        OutlinedTextField(
-                            value = patternsText,
-                            onValueChange = { patternsText = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("忽略规则") }
-                        )
-                        Spacer(modifier = Modifier.padding(8.dp))
-                        Button(
-                            onClick = { onPatternsChange(patternsText) },
-                            modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("保存规则")
-                        }
-                    }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(androidx.compose.foundation.rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        FeatherIcons.FileText,
+                        contentDescription = null,
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(
+                        text = "目录/文件忽略列表",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
-
-                Card(
+                Text(
+                    text = "多个规则请用英文逗号分隔。这些名称的目录及文件将不会被同步到远程服务器（如 node_modules）。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                )
+                OutlinedTextField(
+                    value = patternsText,
+                    onValueChange = { patternsText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    label = { Text("忽略规则") }
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        onPatternsChange(patternsText)
+                        android.widget.Toast.makeText(context, "忽略规则已保存", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.align(Alignment.End)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "遵循 .gitignore 规则",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = "如果项目根目录存在 .gitignore，也会自动读取并忽略其中的文件与目录。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                        Switch(
-                            checked = useGitIgnore,
-                            onCheckedChange = onUseGitIgnoreChange
-                        )
-                    }
+                    Text("保存规则")
                 }
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "单次最大同步队列数量",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "防止突发性大量文件修改同时请求服务端导致断开连接。超过此数量的操作将排队按批次执行（批次间稍作停顿）。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
-                        )
-                        OutlinedTextField(
-                            value = maxBatchSizeText,
-                            onValueChange = { maxBatchSizeText = it.filter { char -> char.isDigit() } },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("最大数量") }
-                        )
-                        Spacer(modifier = Modifier.padding(8.dp))
-                        Button(
-                            onClick = { onMaxSyncBatchSizeChange(maxBatchSizeText.toIntOrNull() ?: 50) },
-                            modifier = Modifier.align(Alignment.End)
-                        ) {
-                            Text("保存数量")
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
             }
         }
-    )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        FeatherIcons.CheckSquare,
+                        contentDescription = null,
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Column {
+                        Text(
+                            text = "遵循 .gitignore 规则",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "如果项目根目录存在 .gitignore，也会自动读取并忽略其中的文件与目录。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                }
+                Switch(
+                    checked = useGitIgnore,
+                    onCheckedChange = {
+                        onUseGitIgnoreChange(it)
+                        android.widget.Toast.makeText(context, if (it) "已开启 .gitignore 过滤" else "已关闭 .gitignore 过滤", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        FeatherIcons.Layers,
+                        contentDescription = null,
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(
+                        text = "单次最大同步队列数量",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Normal,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                Text(
+                    text = "防止突发性大量文件修改同时请求服务端导致断开连接。超过此数量的操作将排队按批次执行（批次间稍作停顿）。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                )
+                OutlinedTextField(
+                    value = maxBatchSizeText,
+                    onValueChange = { maxBatchSizeText = it.filter { char -> char.isDigit() } },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("最大数量") }
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        val size = maxBatchSizeText.toIntOrNull() ?: 50
+                        onMaxSyncBatchSizeChange(size)
+                        android.widget.Toast.makeText(context, "最大队列数量已保存", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("保存数量")
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -393,8 +415,9 @@ fun RemoteConnectionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -409,16 +432,16 @@ fun RemoteConnectionCard(
                         tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text(text = conn.name, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium)
-                        Text(text = "${conn.protocol}://${conn.username}@${conn.host}:${conn.port}", style = MaterialTheme.typography.bodySmall)
+                        Text(text = conn.name, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
+                        Text(text = "${conn.protocol}://${conn.username}@${conn.host}:${conn.port}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Row {
                     IconButton(onClick = { onEdit(conn) }) {
-                        Icon(FeatherIcons.Edit2, contentDescription = "编辑")
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     }
                     IconButton(onClick = { onDelete(conn) }) {
-                        Icon(FeatherIcons.Trash2, contentDescription = "删除")
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     }
                 }
             }
@@ -438,8 +461,9 @@ fun RemoteMountCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -454,7 +478,7 @@ fun RemoteMountCard(
                         tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text(text = "通过: ${mount.connection?.name ?: "未知连接"}", fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium)
+                        Text(text = "通过: ${mount.connection?.name ?: "未知连接"}", fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                         if (mount.autoConnect) {
                             Text(text = "自动连接", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
@@ -462,17 +486,17 @@ fun RemoteMountCard(
                 }
                 Row {
                     IconButton(onClick = { onEdit(mount) }) {
-                        Icon(FeatherIcons.Edit2, contentDescription = "编辑")
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     }
                     IconButton(onClick = { onDelete(mount) }) {
-                        Icon(FeatherIcons.Trash2, contentDescription = "删除")
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            Text(text = "远程路径: ${mount.remotePath}", style = MaterialTheme.typography.bodySmall)
-            Text(text = "本地路径: ${mount.localMountPath}", style = MaterialTheme.typography.bodySmall)
+            Text(text = "远程路径: ${mount.remotePath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(text = "本地路径: ${mount.localMountPath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -520,15 +544,15 @@ fun AddRemoteConnectionDialog(
     AlertDialog(
         containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
-        title = { Text(if (initialConnection != null) "编辑连接通道" else "添加连接通道") },
+        title = { Text(if (initialConnection != null) "编辑连接通道" else "添加连接通道", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("协议:")
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("协议类型:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(modifier = Modifier.width(12.dp))
                     FilterChip(
                         selected = isSftp,
                         onClick = { isSftp = true; port = "22" },
@@ -541,28 +565,27 @@ fun AddRemoteConnectionDialog(
                         label = { Text("FTP") }
                     )
                 }
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("连接名称 (如: 测试服)") }, singleLine = true)
-                OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("主机地址 (IP或域名)") }, singleLine = true)
-                OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("端口") }, singleLine = true)
-                OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名") }, singleLine = true)
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("连接名称 (如: 腾讯云云服务器)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("主机地址 (IP 或域名)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("端口") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
                     label = { Text("密码") },
                     singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
                     visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     trailingIcon = {
-                        val image = if (passwordVisible)
-                            FeatherIcons.Eye
-                        else FeatherIcons.EyeOff
+                        val image = if (passwordVisible) FeatherIcons.Eye else FeatherIcons.EyeOff
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(image, "Toggle password visibility")
+                            Icon(image, "切换密码可见性", tint = androidx.compose.ui.graphics.Color(0xFF424242))
                         }
                     }
                 )
                 
-                Spacer(modifier = Modifier.height(8.dp))
-                Button(
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedButton(
                     onClick = {
                         val protocol = if (isSftp) RemoteProtocol.SFTP else RemoteProtocol.FTP
                         isTesting = true
@@ -575,9 +598,9 @@ fun AddRemoteConnectionDialog(
                     enabled = !isTesting && host.isNotBlank() && username.isNotBlank()
                 ) {
                     if (isTesting) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("测试连接")
+                        Text("测试连通性")
                     }
                 }
             }
@@ -592,7 +615,7 @@ fun AddRemoteConnectionDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )
@@ -621,28 +644,29 @@ fun AddRemoteMountDialog(
     AlertDialog(
         containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
-        title = { Text(if (initialMount != null) "编辑工作区挂载" else "挂载工作区") },
+        title = { Text(if (initialMount != null) "编辑工作区" else "添加工作区", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 ExposedDropdownMenuBox(
                     expanded = connExpanded,
                     onExpandedChange = { connExpanded = !connExpanded }
                 ) {
-                    val selectedName = connections.find { it.id == selectedConnectionId }?.name ?: "选择通道"
+                    val selectedName = connections.find { it.id == selectedConnectionId }?.name ?: "选择远程通道"
                     OutlinedTextField(
                         value = selectedName,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("选择远程通道") },
+                        label = { Text("关联远程连接通道") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = connExpanded) },
-                        modifier = Modifier.menuAnchor()
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
                     ExposedDropdownMenu(
                         expanded = connExpanded,
-                        onDismissRequest = { connExpanded = false }
+                        onDismissRequest = { connExpanded = false },
+                        modifier = Modifier.background(androidx.compose.ui.graphics.Color.White)
                     ) {
                         connections.forEach { conn ->
                             DropdownMenuItem(
@@ -669,7 +693,7 @@ fun AddRemoteMountDialog(
                         onClick = { showBrowser = true },
                         enabled = selectedConnectionId.isNotEmpty()
                     ) {
-                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录")
+                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录", tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     }
                 }
                 
@@ -682,13 +706,14 @@ fun AddRemoteMountDialog(
                         value = selectedWsName,
                         onValueChange = {},
                         readOnly = true,
-                        label = { Text("挂载到本地工作区") },
+                        label = { Text("映射到本地工作区") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = wsExpanded) },
-                        modifier = Modifier.menuAnchor()
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
                     ExposedDropdownMenu(
                         expanded = wsExpanded,
-                        onDismissRequest = { wsExpanded = false }
+                        onDismissRequest = { wsExpanded = false },
+                        modifier = Modifier.background(androidx.compose.ui.graphics.Color.White)
                     ) {
                         workspaces.forEach { ws ->
                             DropdownMenuItem(
@@ -706,8 +731,16 @@ fun AddRemoteMountDialog(
                     Text("暂无本地工作区，请先在侧边栏创建一个。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text("App 启动时自动连接并挂载", modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("应用启动时自动连接", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                        Text("开机自动连接并同步该工作区", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Switch(checked = autoConnect, onCheckedChange = { autoConnect = it })
                 }
             }
@@ -719,12 +752,12 @@ fun AddRemoteMountDialog(
                 },
                 enabled = selectedWorkspacePath.isNotEmpty() && selectedConnectionId.isNotEmpty()
             ) {
-                Text(if (initialMount != null) "保存" else "添加挂载")
+                Text(if (initialMount != null) "保存" else "添加工作区")
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )
