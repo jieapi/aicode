@@ -19,12 +19,14 @@ import javax.inject.Inject
 import com.aicodeeditor.feature.workspace.domain.model.Workspace
 import com.aicodeeditor.feature.workspace.data.repository.WorkspaceRepository
 import com.aicodeeditor.feature.settings.data.repository.SyncSettingsRepository
+import com.aicodeeditor.feature.workspace.domain.remote.ftp.FtpServerManager
 
 @HiltViewModel
 class RemoteServerViewModel @Inject constructor(
     private val repository: RemoteRepository,
     private val workspaceRepository: WorkspaceRepository,
-    private val syncSettingsRepository: SyncSettingsRepository
+    private val syncSettingsRepository: SyncSettingsRepository,
+    val ftpServerManager: FtpServerManager
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RemoteServerUiState())
@@ -252,6 +254,18 @@ class RemoteServerViewModel @Inject constructor(
 
     fun setMaxSyncBatchSize(size: Int) {
         syncSettingsRepository.setMaxSyncBatchSize(size)
+    }
+
+    fun toggleFtpServer() {
+        viewModelScope.launch {
+            ftpServerManager.toggleServer()
+        }
+    }
+
+    fun saveFtpServerConfig(port: Int, username: String, password: String, isAnonymous: Boolean, autoStart: Boolean) {
+        viewModelScope.launch {
+            ftpServerManager.saveConfig(port, username, password, isAnonymous, autoStart)
+        }
     }
 }
 
