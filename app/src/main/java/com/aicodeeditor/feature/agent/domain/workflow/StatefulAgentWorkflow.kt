@@ -30,8 +30,9 @@ import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 
 /**
- * 阶段三重构：基于不可变状态 (Immutable State) 的 Agent 工作流引擎。
- * 彻底消除可变集合，所有状态扭转均通过复制并产生新状态树（StateFlow/Reducer 思路）完成。
+ * 阶段三重构 (完全版)：基于不可变状态 (Immutable State) 与 MVI 架构的 Agent 工作流引擎。
+ * 通过定义明确的 AgentSessionState, AgentAction 与 AgentSideEffect，
+ * 采用 Reducer 来进行状态扭转，将纯函数的业务逻辑与带有副作用的外部环境操作完全解耦。
  */
 class StatefulAgentWorkflow @Inject constructor(
     private val toolRegistry: ToolRegistry,
@@ -52,12 +53,30 @@ class StatefulAgentWorkflow @Inject constructor(
     }
 
     /** 不可变状态树 */
-    data class SessionState(
-        val messages: List<AgentMessage>,
+    data class AgentSessionState(
+        val messages: List<AgentMessage> = emptyList(),
         val iterations: Int = 0,
         val isFinished: Boolean = false,
-        val error: String? = null
+        val error: String? = null,
+        val pendingToolCalls: List<ToolCall> = emptyList(),
+        val executingToolCall: ToolCall? = null
     )
+
+    /** 改变状态的动作 (Action) */
+    sealed interface AgentAction {
+        data class InitRequest(val initialMessages: List<AgentMessage>) : AgentAction
+        data class LlmResponse(val response: AIResponse) : AgentAction
+        data class LlmError(val error: String) : AgentAction
+        data class PermissionEvaluated(val toolCall: ToolCall, val approved: Boolean, val argsPreview: String) : AgentAction
+        data class ToolFinished(val id: String, val toolName: String, val result: String, val isError: Boolean) : AgentAction
+    }
+
+    /** 需要在外部环境中执行的副作用 (SideEffect) */
+    sealed interface AgentSideEffect {
+        object CallLlm : AgentSideEffect
+        data class RequestPermission(val toolCall: ToolCall) : AgentSideEffect
+        data class ExecuteTool(val toolCall: ToolCall, val argsPreview: String) : AgentSideEffect
+    }
 
     private suspend fun getActiveProvider(sessionId: String?): AIProvider {
         val config = aiProviderRepository.getActiveProviderSync()
@@ -73,6 +92,86 @@ class StatefulAgentWorkflow @Inject constructor(
         return provider
     }
 
+    /** 核心 Reducer，接收旧状态与 Action，返回新状态以及触发的副作用列表 (纯函数) */
+    private fun reduce(
+        state: AgentSessionState,
+        action: AgentAction
+    ): Pair<AgentSessionState, List<AgentSideEffect>> {
+        var newState = state
+        val effects = mutableListOf<AgentSideEffect>()
+
+        when (action) {
+            is AgentAction.InitRequest -> {
+                newState = state.copy(messages = action.initialMessages)
+                effects.add(AgentSideEffect.CallLlm)
+            }
+            is AgentAction.LlmResponse -> {
+                val assistantMsg = AgentMessage.AssistantMessage(
+                    content = action.response.content,
+                    toolCalls = action.response.toolCalls
+                )
+                newState = state.copy(
+                    messages = state.messages + assistantMsg,
+                    iterations = state.iterations + 1
+                )
+                
+                if (action.response.toolCalls.isEmpty()) {
+                    if (action.response.isTruncated) {
+                        newState = newState.copy(
+                            messages = newState.messages + AgentMessage.UserMessage(content = "你的回复因长度限制被截断了，请从截断处继续。")
+                        )
+                        effects.add(AgentSideEffect.CallLlm)
+                    } else {
+                        newState = newState.copy(isFinished = true)
+                    }
+                } else {
+                    val pending = action.response.toolCalls.toList()
+                    val nextTool = pending.first()
+                    newState = newState.copy(pendingToolCalls = pending.drop(1), executingToolCall = nextTool)
+                    effects.add(AgentSideEffect.RequestPermission(nextTool))
+                }
+            }
+            is AgentAction.LlmError -> {
+                newState = state.copy(isFinished = true, error = action.error)
+            }
+            is AgentAction.PermissionEvaluated -> {
+                if (action.approved) {
+                    effects.add(AgentSideEffect.ExecuteTool(action.toolCall, action.argsPreview))
+                } else {
+                    val rawResult = ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
+                    return reduce(state, AgentAction.ToolFinished(action.toolCall.id, action.toolCall.name, rawResult, true))
+                }
+            }
+            is AgentAction.ToolFinished -> {
+                val toolResultMsg = AgentMessage.ToolResultMessage(
+                    id = action.id,
+                    toolName = action.toolName,
+                    result = action.result
+                )
+                newState = state.copy(
+                    messages = state.messages + toolResultMsg,
+                    executingToolCall = null
+                )
+                
+                if (newState.pendingToolCalls.isNotEmpty()) {
+                    val nextTool = newState.pendingToolCalls.first()
+                    newState = newState.copy(pendingToolCalls = newState.pendingToolCalls.drop(1), executingToolCall = nextTool)
+                    effects.add(AgentSideEffect.RequestPermission(nextTool))
+                } else {
+                    effects.add(AgentSideEffect.CallLlm)
+                }
+            }
+        }
+        
+        // 限制最大迭代次数
+        if (!newState.isFinished && newState.iterations >= MAX_ITERATIONS && effects.contains(AgentSideEffect.CallLlm)) {
+            newState = newState.copy(isFinished = true, error = "达到最大迭代次数限制 ($MAX_ITERATIONS 次)")
+            effects.clear()
+        }
+        
+        return Pair(newState, effects)
+    }
+
     override suspend fun execute(
         userRequest: String,
         context: AgentContext,
@@ -82,19 +181,43 @@ class StatefulAgentWorkflow @Inject constructor(
         val currentTime = java.time.ZonedDateTime.now().format(formatter)
         val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
 
-        val initialState = SessionState(
-            messages = context.history + AgentMessage.UserMessage(content = enrichedRequest)
-        )
+        var state = AgentSessionState()
+        val actionQueue = ArrayDeque<AgentAction>()
+        actionQueue.addLast(AgentAction.InitRequest(context.history + AgentMessage.UserMessage(content = enrichedRequest)))
+
         val systemPrompt = promptProvider.build(context)
         val aiProvider = getActiveProvider(context.sessionId)
 
-        var state = initialState
-        while (!state.isFinished && state.iterations < MAX_ITERATIONS) {
-            state = stepExecute(state, systemPrompt, aiProvider, tools)
-        }
+        while (!state.isFinished && actionQueue.isNotEmpty()) {
+            val action = actionQueue.removeFirst()
+            val (newState, effects) = reduce(state, action)
+            state = newState
 
-        if (!state.isFinished && state.iterations >= MAX_ITERATIONS) {
-            state = state.copy(error = "达到最大迭代次数限制 ($MAX_ITERATIONS 次)")
+            for (effect in effects) {
+                when (effect) {
+                    is AgentSideEffect.CallLlm -> {
+                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider)
+                        try {
+                            val aiResponse = aiProvider.complete(systemPrompt, compactedMessages, tools)
+                            actionQueue.addLast(AgentAction.LlmResponse(aiResponse))
+                        } catch (e: Exception) {
+                            actionQueue.addLast(AgentAction.LlmError("LLM 调用失败: ${e.message}"))
+                        }
+                    }
+                    is AgentSideEffect.RequestPermission -> {
+                        val tool = toolRegistry.getTool(effect.toolCall.name)
+                        val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
+                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview)
+                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, approved, argsPreview))
+                    }
+                    is AgentSideEffect.ExecuteTool -> {
+                        val tool = toolRegistry.getTool(effect.toolCall.name)
+                        val rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments)
+                        val isError = tool == null || rawResult.startsWith("Error")
+                        actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
+                    }
+                }
+            }
         }
 
         return WorkflowResult(
@@ -106,55 +229,6 @@ class StatefulAgentWorkflow @Inject constructor(
         )
     }
 
-    private suspend fun stepExecute(
-        state: SessionState,
-        systemPrompt: String,
-        aiProvider: AIProvider,
-        tools: List<AgentTool>
-    ): SessionState {
-        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider)
-        val aiResponse = try {
-            aiProvider.complete(systemPrompt, compactedMessages, tools)
-        } catch (e: Exception) {
-            return state.copy(isFinished = true, error = "LLM 调用失败: ${e.message}")
-        }
-
-        val assistantMsg = AgentMessage.AssistantMessage(
-            content = aiResponse.content,
-            toolCalls = aiResponse.toolCalls
-        )
-        
-        var nextMessages = compactedMessages + assistantMsg
-
-        if (aiResponse.toolCalls.isEmpty()) {
-            if (aiResponse.isTruncated) {
-                nextMessages = nextMessages + AgentMessage.UserMessage(content = "你的回复因长度限制被截断了，请从截断处继续。")
-                return state.copy(messages = nextMessages, iterations = state.iterations + 1)
-            }
-            return state.copy(messages = nextMessages, isFinished = true, iterations = state.iterations + 1)
-        }
-
-        for (toolCall in aiResponse.toolCalls) {
-            val tool = toolRegistry.getTool(toolCall.name)
-            val argsPreview = JsonObject(toolCall.arguments).toString().take(500)
-            val approved = requestPermissionIfNeeded(tool, toolCall.id, toolCall.arguments, argsPreview)
-            
-            val rawResult = if (approved) {
-                runToolSync(tool, toolCall.name, toolCall.arguments)
-            } else {
-                ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
-            }
-            
-            nextMessages = nextMessages + AgentMessage.ToolResultMessage(
-                id = toolCall.id,
-                toolName = toolCall.name,
-                result = rawResult
-            )
-        }
-
-        return state.copy(messages = nextMessages, iterations = state.iterations + 1)
-    }
-
     override fun executeEvents(
         userRequest: String,
         context: AgentContext,
@@ -164,107 +238,86 @@ class StatefulAgentWorkflow @Inject constructor(
         val currentTime = java.time.ZonedDateTime.now().format(formatter)
         val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
 
-        val initialState = SessionState(
-            messages = context.history + AgentMessage.UserMessage(content = enrichedRequest)
-        )
+        var state = AgentSessionState()
+        val actionQueue = ArrayDeque<AgentAction>()
+        actionQueue.addLast(AgentAction.InitRequest(context.history + AgentMessage.UserMessage(content = enrichedRequest)))
+
         val systemPrompt = promptProvider.build(context)
         val aiProvider = getActiveProvider(context.sessionId)
 
-        var state = initialState
-        while (!state.isFinished && state.iterations < MAX_ITERATIONS) {
-            state = stepExecuteEvents(state, systemPrompt, aiProvider, tools)
-        }
-        emit(AgentEvent.Completed)
-    }
+        while (!state.isFinished && actionQueue.isNotEmpty()) {
+            val action = actionQueue.removeFirst()
+            val (newState, effects) = reduce(state, action)
+            state = newState
 
-    private suspend fun FlowCollector<AgentEvent>.stepExecuteEvents(
-        state: SessionState,
-        systemPrompt: String,
-        aiProvider: AIProvider,
-        tools: List<AgentTool>
-    ): SessionState {
-        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider) { emit(it) }
-        
-        val acc = StringBuilder()
-        val reasoningAcc = StringBuilder()
-        var finalResponse: AIResponse? = null
-        
-        try {
-            aiProvider.completeStream(systemPrompt, compactedMessages, tools).collect { chunk ->
-                when (chunk) {
-                    is AIStreamChunk.TextDelta -> {
-                        acc.append(chunk.text)
-                        emit(AgentEvent.AssistantDelta(acc.toString()))
+            for (effect in effects) {
+                when (effect) {
+                    is AgentSideEffect.CallLlm -> {
+                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider) { emit(it) }
+                        
+                        val acc = StringBuilder()
+                        val reasoningAcc = StringBuilder()
+                        var finalResponse: AIResponse? = null
+                        
+                        try {
+                            aiProvider.completeStream(systemPrompt, compactedMessages, tools).collect { chunk ->
+                                when (chunk) {
+                                    is AIStreamChunk.TextDelta -> {
+                                        acc.append(chunk.text)
+                                        emit(AgentEvent.AssistantDelta(acc.toString()))
+                                    }
+                                    is AIStreamChunk.ReasoningDelta -> {
+                                        reasoningAcc.append(chunk.text)
+                                        emit(AgentEvent.ReasoningDelta(reasoningAcc.toString()))
+                                    }
+                                    is AIStreamChunk.Final -> finalResponse = chunk.response
+                                }
+                            }
+                            val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
+                            
+                            if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
+                                emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
+                            }
+                            actionQueue.addLast(AgentAction.LlmResponse(aiResponse))
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Throwable) {
+                            val partial = acc.toString()
+                            if (partial.isNotEmpty()) {
+                                emit(AgentEvent.AssistantText(partial, emptyList(), reasoningAcc.toString()))
+                            }
+                            actionQueue.addLast(AgentAction.LlmError("LLM 调用失败: ${e.message}"))
+                        }
                     }
-                    is AIStreamChunk.ReasoningDelta -> {
-                        reasoningAcc.append(chunk.text)
-                        emit(AgentEvent.ReasoningDelta(reasoningAcc.toString()))
+                    is AgentSideEffect.RequestPermission -> {
+                        val tool = toolRegistry.getTool(effect.toolCall.name)
+                        val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
+                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview)
+                        
+                        if (!approved) {
+                            val rawResult = ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
+                            emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, true, argsPreview))
+                        } else {
+                            emit(AgentEvent.ToolCallStarted(effect.toolCall.id, effect.toolCall.name, argsPreview))
+                        }
+                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, approved, argsPreview))
                     }
-                    is AIStreamChunk.Final -> finalResponse = chunk.response
+                    is AgentSideEffect.ExecuteTool -> {
+                        val tool = toolRegistry.getTool(effect.toolCall.name)
+                        val rawResult = if (tool is StreamingAgentTool) {
+                            runToolStream(tool, effect.toolCall) { emit(it) }
+                        } else {
+                            runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments)
+                        }
+                        val isError = tool == null || rawResult.startsWith("Error")
+                        emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
+                        actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
+                    }
                 }
             }
-        } catch (e: Throwable) {
-            val partial = acc.toString()
-            if (partial.isNotEmpty()) {
-                emit(AgentEvent.AssistantText(partial, emptyList(), reasoningAcc.toString()))
-            }
-            throw e
         }
-
-        val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
-        val assistantMsg = AgentMessage.AssistantMessage(
-            content = aiResponse.content,
-            toolCalls = aiResponse.toolCalls
-        )
         
-        var nextMessages = compactedMessages + assistantMsg
-
-        if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
-            emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
-        }
-
-        if (aiResponse.toolCalls.isEmpty()) {
-            if (aiResponse.isTruncated) {
-                nextMessages = nextMessages + AgentMessage.UserMessage(content = "你的回复因长度限制被截断了，请从截断处继续。")
-                return state.copy(messages = nextMessages, iterations = state.iterations + 1)
-            }
-            return state.copy(messages = nextMessages, isFinished = true, iterations = state.iterations + 1)
-        }
-
-        for (toolCall in aiResponse.toolCalls) {
-            val argsPreview = JsonObject(toolCall.arguments).toString().take(500)
-            val tool = toolRegistry.getTool(toolCall.name)
-            val approved = requestPermissionIfNeeded(tool, toolCall.id, toolCall.arguments, argsPreview)
-            
-            if (!approved) {
-                val rawResult = ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
-                nextMessages = nextMessages + AgentMessage.ToolResultMessage(
-                    id = toolCall.id,
-                    toolName = toolCall.name,
-                    result = rawResult
-                )
-                emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, rawResult, true, argsPreview))
-                continue
-            }
-
-            emit(AgentEvent.ToolCallStarted(toolCall.id, toolCall.name, argsPreview))
-            
-            val rawResult = if (tool is StreamingAgentTool) {
-                runToolStream(tool, toolCall)
-            } else {
-                runToolSync(tool, toolCall.name, toolCall.arguments)
-            }
-            
-            val isError = tool == null || rawResult.startsWith("Error")
-            nextMessages = nextMessages + AgentMessage.ToolResultMessage(
-                id = toolCall.id,
-                toolName = toolCall.name,
-                result = rawResult
-            )
-            emit(AgentEvent.ToolCallFinished(toolCall.id, toolCall.name, rawResult, isError))
-        }
-
-        return state.copy(messages = nextMessages, iterations = state.iterations + 1)
+        emit(AgentEvent.Completed)
     }
 
     private suspend fun runToolSync(tool: AgentTool?, name: String, arguments: Map<String, kotlinx.serialization.json.JsonElement>): String {
@@ -278,7 +331,11 @@ class StatefulAgentWorkflow @Inject constructor(
         }
     }
 
-    private suspend fun FlowCollector<AgentEvent>.runToolStream(tool: StreamingAgentTool, toolCall: ToolCall): String {
+    private suspend fun runToolStream(
+        tool: StreamingAgentTool, 
+        toolCall: ToolCall, 
+        onEvent: suspend (AgentEvent) -> Unit
+    ): String {
         val live = StringBuilder()
         var lastEmitMs = 0L
         var finalResult: ToolResult? = null
@@ -293,7 +350,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         val now = System.currentTimeMillis()
                         if (now - lastEmitMs >= PROGRESS_INTERVAL_MS) {
                             lastEmitMs = now
-                            emit(AgentEvent.ToolCallProgress(toolCall.id, toolCall.name, live.toString()))
+                            onEvent(AgentEvent.ToolCallProgress(toolCall.id, toolCall.name, live.toString()))
                         }
                     }
                     is ToolStreamEvent.Completed -> finalResult = ev.result
@@ -336,7 +393,7 @@ class StatefulAgentWorkflow @Inject constructor(
         }
     }
 
-    private fun extractFinalContent(state: SessionState): String {
+    private fun extractFinalContent(state: AgentSessionState): String {
         for (i in state.messages.indices.reversed()) {
             val msg = state.messages[i]
             if (msg is AgentMessage.AssistantMessage && msg.content.isNotBlank()) {

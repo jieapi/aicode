@@ -42,9 +42,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -56,22 +57,21 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
+
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.rememberDrawerState
+
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -134,34 +134,36 @@ fun AIChatPanel(
     viewModel: AIAgentViewModel,
     onNavigateToSettings: () -> Unit,
     onNavigateToTerminal: () -> Unit = {},
+    onNavigateToGit: () -> Unit = {},
     settingsViewModel: SettingsViewModel? = null,
     workspaceViewModel: WorkspaceViewModel? = null,
+    drawerState: DrawerState,
     currentFile: String? = null,
     selectedCode: String? = null,
     modifier: Modifier = Modifier
 ) {
-    val agentState by viewModel.agentState.collectAsState()
-    val messagesState by viewModel.messagesState.collectAsState()
+    val agentState by viewModel.agentState.collectAsStateWithLifecycle()
+    val messagesState by viewModel.messagesState.collectAsStateWithLifecycle()
     val messages = messagesState.messages
-    val changes by viewModel.changes.collectAsState()
-    val sessions by viewModel.sessions.collectAsState()
-    val currentSessionId by viewModel.currentSessionId.collectAsState()
+    val changes by viewModel.changes.collectAsStateWithLifecycle()
+
+    val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
     // 这批消息确属当前会话且已读完数据库时才算「就绪」；切换会话/冷启动加载期间为 false。
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
-    val runningTool by viewModel.runningTool.collectAsState()
-    val streamingText by viewModel.streamingText.collectAsState()
-    val streamingReasoning by viewModel.streamingReasoning.collectAsState()
-    val pendingPermission by viewModel.pendingToolPermission.collectAsState()
-    val activeProvider = settingsViewModel?.activeProvider?.collectAsState()?.value
-    val currentWorkspace = workspaceViewModel?.current?.collectAsState()?.value
+    val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
+    val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
+    val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
+    val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
+    val activeProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
+    val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     // 工作区路径作为 AI 文件/命令操作的根目录；尚未就绪时为空串。
     val projectRoot = currentWorkspace?.path ?: ""
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
-    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
     val isBusy = agentState is AgentUIState.Loading || agentState is AgentUIState.Streaming
 
@@ -255,144 +257,104 @@ fun AIChatPanel(
         }
     }
 
-    // 侧边栏打开时，系统返回键先收起侧边栏，而非退出页面。
-    BackHandler(enabled = drawerState.isOpen) {
-        scope.launch { drawerState.close() }
-    }
-
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        drawerContent = {
-            ModalDrawerSheet(
-                drawerContainerColor = MaterialTheme.colorScheme.surface,
-                // 侧边栏约占屏幕四分之三宽。
-                modifier = Modifier.fillMaxWidth(0.75f)
-            ) {
-                ChatDrawerContent(
-                    sessions = sessions,
-                    currentSessionId = currentSessionId,
-                    onSelect = {
-                        viewModel.selectSession(it.id)
-                        scope.launch { drawerState.close() }
-                    },
-                    onCreate = {
-                        viewModel.newSession()
-                        scope.launch { drawerState.close() }
-                    },
-                    onDelete = { viewModel.deleteSession(it.id) },
-                    onNavigateToSettings = {
-                        scope.launch { drawerState.close() }
-                        onNavigateToSettings()
-                    }
-                )
-            }
+    // Drawer 已提升到 NavHost 外层（AppNavigation），这里只负责打开/关闭。
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            ChatHeader(
+                workspaceViewModel = workspaceViewModel,
+                modelName = activeProvider?.effectiveModel,
+                onOpenDrawer = {
+                    keyboardController?.hide()
+                    scope.launch { drawerState.open() }
+                },
+                onNewChat = { viewModel.newSession() },
+                onNavigateToTerminal = onNavigateToTerminal,
+                onNavigateToGit = onNavigateToGit
+            )
         }
-    ) {
-        Scaffold(
-            containerColor = MaterialTheme.colorScheme.background,
-            // 状态栏由 ChatHeader、底部由输入栏各自消费 inset，这里清零避免双重内边距。
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            topBar = {
-                ChatHeader(
-                    workspaceViewModel = workspaceViewModel,
-                    modelName = activeProvider?.effectiveModel,
-                    onOpenDrawer = {
-                        // 先收起输入法再展开侧边栏：避免键盘与抽屉同时占屏造成的跳变。
-                        focusManager.clearFocus()
-                        scope.launch { drawerState.open() }
-                    },
-                    onNewChat = { viewModel.newSession() },
-                    onNavigateToTerminal = onNavigateToTerminal
-                )
-            }
-        ) { padding ->
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    if (!messagesReady) {
-                        // 会话/历史尚未就绪：留空，避免先闪 Welcome 或上一个会话的消息再突然刷新。
-                    } else if (messages.isEmpty()) {
-                        WelcomeState(modifier = Modifier.fillMaxSize())
-                    } else {
-                        LazyColumn(
-                            state = listState,
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(
-                                horizontal = Spacing.lg,
-                                vertical = Spacing.md
-                            ),
-                            verticalArrangement = Arrangement.spacedBy(Spacing.md)
-                        ) {
-                            items(messages, key = { it.id }) { message ->
-                                // 命中运行中工具的占位行时，传入实时累积输出叠加渲染。
-                                val live = runningTool?.takeIf { it.messageId == message.id }?.text
-                                AgentMessageItem(message = message, liveOutput = live)
-                            }
-                            // 底部临时气泡：
-                            // 1) 模型正在吐思考 → 可折叠「思考」气泡；
-                            // 2) 模型正在流式吐字 → 实时文字气泡（可与思考气泡同时存在）；
-                            // 3) 二者皆无但仍在等待模型返回（无工具流式输出）→「思考中」占位气泡，
-                            //    避免发送后聊天区一片空白、像没反应。
-                            val reasoning = streamingReasoning
-                            val streaming = streamingText
-                            val showReasoning = reasoning != null && reasoning.isNotEmpty()
-                            val showStreaming = streaming != null && streaming.hasVisibleContent()
-                            if (showReasoning) {
-                                item(key = "__reasoning__") { ReasoningBubble(text = reasoning!!) }
-                            }
-                            if (showStreaming) {
-                                item(key = "__streaming__") { StreamingBubble(text = streaming!!) }
-                            } else if (!showReasoning && isBusy && runningTool == null && pendingPermission == null) {
-                                item(key = "__thinking__") { ThinkingBubble() }
-                            }
+    ) { padding ->
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                if (!messagesReady) {
+                    // 会话/历史尚未就绪：留空
+                } else if (messages.isEmpty()) {
+                    WelcomeState(modifier = Modifier.fillMaxSize())
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            horizontal = Spacing.lg,
+                            vertical = Spacing.md
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        items(messages, key = { it.id }) { message ->
+                            val live = runningTool?.takeIf { it.messageId == message.id }?.text
+                            AgentMessageItem(message = message, liveOutput = live)
+                        }
+                        val reasoning = streamingReasoning
+                        val streaming = streamingText
+                        val showReasoning = reasoning != null && reasoning.isNotEmpty()
+                        val showStreaming = streaming != null && streaming.hasVisibleContent()
+                        if (showReasoning) {
+                            item(key = "__reasoning__") { ReasoningBubble(text = reasoning!!) }
+                        }
+                        if (showStreaming) {
+                            item(key = "__streaming__") { StreamingBubble(text = streaming!!) }
+                        } else if (!showReasoning && isBusy && runningTool == null && pendingPermission == null) {
+                            item(key = "__thinking__") { ThinkingBubble() }
                         }
                     }
                 }
+            }
 
-                // 代码变更预览
-                AnimatedVisibility(
-                    visible = changes.isNotEmpty(),
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    ChangePreviewPanel(
-                        changes = changes,
-                        onApply = { viewModel.applyChanges(changes) },
-                        onReject = { viewModel.rejectChanges() }
-                    )
-                }
-
-                // 状态提示（错误 / 已应用）
-                StatusBanner(state = agentState)
-
-                AnimatedVisibility(
-                    visible = pendingPermission != null,
-                    enter = fadeIn(),
-                    exit = fadeOut()
-                ) {
-                    pendingPermission?.let { request ->
-                        ToolPermissionPanel(
-                            request = request,
-                            onChoice = { choice -> viewModel.resolveToolPermission(request.id, choice) }
-                        )
-                    }
-                }
-
-                // 输入栏（两行容器：上行输入，下行工作区/模型切换 + 发送）
-                ChatInputBar(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    onSend = sendMessage,
-                    onStop = { viewModel.stopAgent() },
-                    isBusy = isBusy,
-                    workspaceViewModel = workspaceViewModel,
-                    activeProvider = activeProvider,
-                    onNavigateToSettings = onNavigateToSettings
+            // 代码变更预览
+            AnimatedVisibility(
+                visible = changes.isNotEmpty(),
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                ChangePreviewPanel(
+                    changes = changes,
+                    onApply = { viewModel.applyChanges(changes) },
+                    onReject = { viewModel.rejectChanges() }
                 )
             }
+
+            // 状态提示（错误 / 已应用）
+            StatusBanner(state = agentState)
+
+            AnimatedVisibility(
+                visible = pendingPermission != null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                pendingPermission?.let { request ->
+                    ToolPermissionPanel(
+                        request = request,
+                        onChoice = { choice -> viewModel.resolveToolPermission(request.id, choice) }
+                    )
+                }
+            }
+
+            // 输入栏
+            ChatInputBar(
+                value = inputText,
+                onValueChange = { inputText = it },
+                onSend = sendMessage,
+                onStop = { viewModel.stopAgent() },
+                isBusy = isBusy,
+                workspaceViewModel = workspaceViewModel,
+                activeProvider = activeProvider,
+                onNavigateToSettings = onNavigateToSettings
+            )
         }
     }
 }
@@ -403,9 +365,10 @@ private fun ChatHeader(
     modelName: String?,
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
-    onNavigateToTerminal: () -> Unit
+    onNavigateToTerminal: () -> Unit,
+    onNavigateToGit: () -> Unit
 ) {
-    val currentWorkspace = workspaceViewModel?.current?.collectAsState()?.value
+    val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     Surface(
         color = MaterialTheme.colorScheme.surface,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -444,6 +407,13 @@ private fun ChatHeader(
                 Icon(
                     Icons.Default.Add,
                     contentDescription = "新建会话",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onNavigateToGit) {
+                Icon(
+                    Icons.Default.AccountTree,
+                    contentDescription = "Git 管理",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

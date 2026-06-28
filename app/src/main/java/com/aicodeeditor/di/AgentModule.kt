@@ -54,6 +54,7 @@ object AgentModule {
             AgentDatabase::class.java,
             "aicodeeditor_agent_db"
         ).addMigrations(*MigrationLoader.loadMigrations(context))
+            .fallbackToDestructiveMigration()
             .build()
     }
 
@@ -77,8 +78,8 @@ object AgentModule {
 
     @Provides
     @Singleton
-    fun provideRemoteServerDao(database: AgentDatabase): com.aicodeeditor.feature.workspace.data.local.dao.RemoteServerDao {
-        return database.remoteServerDao()
+    fun provideRemoteConnectionDao(database: AgentDatabase): com.aicodeeditor.feature.workspace.data.local.dao.RemoteConnectionDao {
+        return database.remoteConnectionDao()
     }
 
     @Provides
