@@ -3,6 +3,7 @@ package com.aicodeeditor.feature.agent.domain.workflow
 import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.agent.domain.model.AgentContext
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
+import com.aicodeeditor.feature.agent.domain.model.AgentMode
 import com.aicodeeditor.feature.agent.domain.model.WorkflowResult
 import com.aicodeeditor.feature.agent.domain.model.WorkflowStatus
 import com.aicodeeditor.feature.agent.domain.permission.PermissionChoice
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import javax.inject.Inject
 
 /**
@@ -68,9 +70,21 @@ class StatefulAgentWorkflow @Inject constructor(
         data class InitRequest(val initialMessages: List<AgentMessage>) : AgentAction
         data class LlmResponse(val response: AIResponse) : AgentAction
         data class LlmError(val error: String) : AgentAction
-        data class PermissionEvaluated(val toolCall: ToolCall, val approved: Boolean, val argsPreview: String) : AgentAction
+        data class PermissionEvaluated(
+            val toolCall: ToolCall,
+            val approved: Boolean,
+            val argsPreview: String,
+            val denyReason: String = "用户拒绝执行该工具",
+            val errorCode: String = "USER_REJECTED"
+        ) : AgentAction
         data class ToolFinished(val id: String, val toolName: String, val result: String, val isError: Boolean) : AgentAction
     }
+
+    private data class PermissionCheckResult(
+        val approved: Boolean,
+        val denyReason: String = "用户拒绝执行该工具",
+        val errorCode: String = "USER_REJECTED"
+    )
 
     /** 需要在外部环境中执行的副作用 (SideEffect) */
     sealed interface AgentSideEffect {
@@ -143,7 +157,7 @@ class StatefulAgentWorkflow @Inject constructor(
                 if (action.approved) {
                     effects.add(AgentSideEffect.ExecuteTool(action.toolCall, action.argsPreview))
                 } else {
-                    val rawResult = ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
+                    val rawResult = ToolResult.Error(action.denyReason, action.errorCode).toString()
                     return reduce(state, AgentAction.ToolFinished(action.toolCall.id, action.toolCall.name, rawResult, true))
                 }
             }
@@ -186,12 +200,13 @@ class StatefulAgentWorkflow @Inject constructor(
         val currentTime = java.time.ZonedDateTime.now().format(formatter)
         val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
 
+        var currentContext = context
         var state = AgentSessionState()
         val actionQueue = ArrayDeque<AgentAction>()
-        actionQueue.addLast(AgentAction.InitRequest(context.history + AgentMessage.UserMessage(content = enrichedRequest)))
+        actionQueue.addLast(AgentAction.InitRequest(currentContext.history + AgentMessage.UserMessage(content = enrichedRequest)))
 
-        val systemPrompt = promptProvider.build(context)
-        val aiProvider = getActiveProvider(context.sessionId)
+        var systemPrompt = promptProvider.build(currentContext)
+        val aiProvider = getActiveProvider(currentContext.sessionId)
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
             val action = actionQueue.removeFirst()
@@ -201,7 +216,10 @@ class StatefulAgentWorkflow @Inject constructor(
             for (effect in effects) {
                 when (effect) {
                     is AgentSideEffect.CallLlm -> {
-                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider)
+                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider, context.sessionId)
+                        if (compactedMessages !== state.messages) {
+                            state = state.copy(messages = compactedMessages)
+                        }
                         try {
                             val aiResponse = aiProvider.complete(systemPrompt, compactedMessages, tools)
                             actionQueue.addLast(AgentAction.LlmResponse(aiResponse))
@@ -212,13 +230,18 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AgentSideEffect.RequestPermission -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, context.mode)
-                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, approved, argsPreview))
+                        val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode)
+                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved, argsPreview, checkResult.denyReason, checkResult.errorCode))
                     }
                     is AgentSideEffect.ExecuteTool -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
-                        val rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, context)
+                        val rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, currentContext)
                         val isError = tool == null || rawResult.startsWith("Error")
+                        val (newCtx, updated) = checkAndUpdateMode(effect.toolCall, isError, currentContext)
+                        if (updated) {
+                            currentContext = newCtx
+                            systemPrompt = promptProvider.build(currentContext)
+                        }
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                     }
                 }
@@ -243,12 +266,13 @@ class StatefulAgentWorkflow @Inject constructor(
         val currentTime = java.time.ZonedDateTime.now().format(formatter)
         val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
 
+        var currentContext = context
         var state = AgentSessionState()
         val actionQueue = ArrayDeque<AgentAction>()
-        actionQueue.addLast(AgentAction.InitRequest(context.history + AgentMessage.UserMessage(content = enrichedRequest)))
+        actionQueue.addLast(AgentAction.InitRequest(currentContext.history + AgentMessage.UserMessage(content = enrichedRequest)))
 
-        val systemPrompt = promptProvider.build(context)
-        val aiProvider = getActiveProvider(context.sessionId)
+        var systemPrompt = promptProvider.build(currentContext)
+        val aiProvider = getActiveProvider(currentContext.sessionId)
 
         while (!state.isFinished && actionQueue.isNotEmpty()) {
             val action = actionQueue.removeFirst()
@@ -258,7 +282,10 @@ class StatefulAgentWorkflow @Inject constructor(
             for (effect in effects) {
                 when (effect) {
                     is AgentSideEffect.CallLlm -> {
-                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider) { emit(it) }
+                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider, context.sessionId) { emit(it) }
+                        if (compactedMessages !== state.messages) {
+                            state = state.copy(messages = compactedMessages)
+                        }
                         
                         val acc = StringBuilder()
                         val reasoningAcc = StringBuilder()
@@ -297,15 +324,15 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AgentSideEffect.RequestPermission -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, context.mode)
+                        val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode)
                         
-                        if (!approved) {
-                            val rawResult = ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
+                        if (!checkResult.approved) {
+                            val rawResult = ToolResult.Error(checkResult.denyReason, checkResult.errorCode).toString()
                             emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, true, argsPreview))
                         } else {
                             emit(AgentEvent.ToolCallStarted(effect.toolCall.id, effect.toolCall.name, argsPreview))
                         }
-                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, approved, argsPreview))
+                        actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, checkResult.approved, argsPreview, checkResult.denyReason, checkResult.errorCode))
                     }
                     is AgentSideEffect.ExecuteTool -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
@@ -313,9 +340,14 @@ class StatefulAgentWorkflow @Inject constructor(
                             runToolStream(tool, effect.toolCall) { emit(it) }
                         } else {
                             // 同步兜底
-                            runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, context)
+                            runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, currentContext)
                         }
                         val isError = tool == null || rawResult.startsWith("Error")
+                        val (newCtx, updated) = checkAndUpdateMode(effect.toolCall, isError, currentContext)
+                        if (updated) {
+                            currentContext = newCtx
+                            systemPrompt = promptProvider.build(currentContext)
+                        }
                         emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                     }
@@ -370,30 +402,51 @@ class StatefulAgentWorkflow @Inject constructor(
         }
     }
 
+    private fun checkAndUpdateMode(toolCall: ToolCall, isError: Boolean, currentContext: AgentContext): Pair<AgentContext, Boolean> {
+        if (toolCall.name == "switch_mode" && !isError) {
+            val targetModeStr = (toolCall.arguments["mode"] as? JsonPrimitive)?.content?.trim()?.uppercase()
+                ?: toolCall.arguments["mode"]?.toString()?.replace("\"", "")?.trim()?.uppercase()
+            if (targetModeStr != null) {
+                runCatching { AgentMode.valueOf(targetModeStr) }.getOrNull()?.let { newMode ->
+                    if (currentContext.mode != newMode) {
+                        return currentContext.copy(mode = newMode) to true
+                    }
+                }
+            }
+        }
+        return currentContext to false
+    }
+
     private suspend fun requestPermissionIfNeeded(
         tool: AgentTool?,
         callId: String,
         arguments: Map<String, kotlinx.serialization.json.JsonElement>,
         argsPreview: String,
         mode: com.aicodeeditor.feature.agent.domain.model.AgentMode
-    ): Boolean {
-        if (tool == null || tool.permissionPolicy == ToolPermissionPolicy.AUTO_APPROVE) return true
+    ): PermissionCheckResult {
+        if (tool == null || tool.permissionPolicy == ToolPermissionPolicy.AUTO_APPROVE) {
+            return PermissionCheckResult(true)
+        }
 
         val eval = policyEngine.evaluate(tool.name, arguments, mode)
         return when (eval.verdict) {
-            ToolPermissionPolicyEngine.Verdict.ALLOW -> true
-            ToolPermissionPolicyEngine.Verdict.DENY -> false
+            ToolPermissionPolicyEngine.Verdict.ALLOW -> PermissionCheckResult(true)
+            ToolPermissionPolicyEngine.Verdict.DENY -> {
+                val reason = eval.denyReason ?: "该工具被项目安全规则策略禁止执行"
+                val code = if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN) "PLAN_MODE_REJECTED" else "SYSTEM_DENIED"
+                PermissionCheckResult(false, reason, code)
+            }
             ToolPermissionPolicyEngine.Verdict.ASK -> {
                 val request = tool.buildPermissionRequest(callId, arguments, argsPreview)
                     .copy(rememberablePatterns = eval.rememberablePatterns)
                 when (permissionManager.awaitApproval(request)) {
-                    PermissionChoice.REJECT -> false
-                    PermissionChoice.ONCE -> true
+                    PermissionChoice.REJECT -> PermissionCheckResult(false, "用户拒绝执行该工具", "USER_REJECTED")
+                    PermissionChoice.ONCE -> PermissionCheckResult(true)
                     PermissionChoice.ALWAYS -> {
                         if (eval.rememberablePatterns.isNotEmpty()) {
                             policyEngine.remember(tool.name, eval.rememberablePatterns, PermissionScope.PROJECT)
                         }
-                        true
+                        PermissionCheckResult(true)
                     }
                 }
             }
