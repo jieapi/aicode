@@ -12,12 +12,23 @@ object SkillParser {
      * 解析一个 skill 目录；无 SKILL.md 或无 name 时视为非法，返回 null。
      */
     fun parse(dir: File): Skill? {
-        val file = File(dir, "SKILL.md")
+        // 优先查找 SKILL.md，如果没有则回退查找 CLAUDE.md（兼容某些只用 CLAUDE.md 的技能）
+        var file = File(dir, "SKILL.md")
+        if (!file.exists()) {
+            file = File(dir, "CLAUDE.md")
+        }
+        if (!file.exists()) {
+            // 兼容大小写情况
+            file = dir.listFiles()?.firstOrNull { 
+                it.name.equals("SKILL.md", ignoreCase = true) || it.name.equals("CLAUDE.md", ignoreCase = true) 
+            } ?: return null
+        }
+        
         val text = try {
             if (!file.isFile || !file.canRead()) return null
             file.readText()
         } catch (e: Exception) {
-            FileLogger.w(TAG, "读取 SKILL.md 失败: ${file.absolutePath}", e)
+            FileLogger.w(TAG, "读取 Skill 文件失败: ${file.absolutePath}", e)
             return null
         }
 

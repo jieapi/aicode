@@ -19,7 +19,7 @@ class ReadFileTool @Inject constructor(
     private val pathMapper: WorkspacePathMapper
 ) : AgentTool() {
     override val name = "read_file"
-    override val description = "读取文件内容。路径既可用 /workspace/...（项目文件），也可用容器绝对路径（如 /etc/apk/repositories、/root/...）读取容器系统文件。单次最多返回 2000 行 / 200KB，超出会截断；结果中的 truncated/note 会提示用 start_line 继续分段读取。"
+    override val description = "读取指定路径的文件内容。支持工作区文件或容器绝对路径的系统文件。单次读取受文件大小限制，超大文件可通过 start_line 分段读取。"
     override val parameters = mapOf(
         "path" to ToolParameter("path", ParameterType.STRING, "文件路径：/workspace/... 为项目文件；其它绝对路径（如 /etc/...、/root/...）为容器系统文件。", required = true),
         "start_line" to ToolParameter("start_line", ParameterType.INTEGER, "开始行号（从 1 计）。", required = false),
@@ -123,7 +123,7 @@ class WriteFileTool @Inject constructor(
     private val pathMapper: WorkspacePathMapper
 ) : AgentTool() {
     override val name = "write_file"
-    override val description = "写入整个文件内容（不存在则创建，存在则覆盖）。可用 overwrite=false 实现「仅新建、不覆盖」。局部修改请用 edit_file。路径既可用 /workspace/...（项目文件，写入会同步到宿主机），也可用容器绝对路径（如 /root/...、/usr/local/bin/...）写容器系统文件。"
+    override val description = "向指定路径写入完整文件内容。若文件存在则根据 overwrite 决定是否覆盖。支持写入工作区文件或容器系统文件。局部修改推荐使用 edit_file。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
     override val parameters = mapOf(
         "path" to ToolParameter("path", ParameterType.STRING, "文件路径：/workspace/... 为项目文件；其它绝对路径（如 /etc/...、/root/...）为容器系统文件。", required = true),

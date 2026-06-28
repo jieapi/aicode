@@ -26,7 +26,6 @@ import com.aicodeeditor.feature.agent.domain.tool.skill.LoadSkillTool
 import com.aicodeeditor.feature.agent.domain.tool.question.AskUserQuestionTool
 import com.aicodeeditor.feature.agent.domain.prompt.SystemPromptProvider
 import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
-import com.aicodeeditor.feature.agent.domain.workflow.StandardAgentWorkflow
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
 import com.aicodeeditor.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
@@ -41,15 +40,7 @@ import java.util.concurrent.TimeUnit
 import javax.inject.Named
 import javax.inject.Singleton
 
-/**
- * v5 → v6：为 agent_messages 增加 reasoning 列（保存助手本轮思考过程）。
- * 走显式迁移而非销毁重建，保留用户既有聊天历史。
- */
-private val MIGRATION_5_6 = object : Migration(5, 6) {
-    override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL("ALTER TABLE agent_messages ADD COLUMN reasoning TEXT")
-    }
-}
+import com.aicodeeditor.core.db.MigrationLoader
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -62,8 +53,7 @@ object AgentModule {
             context,
             AgentDatabase::class.java,
             "aicodeeditor_agent_db"
-        ).addMigrations(MIGRATION_5_6)
-            .fallbackToDestructiveMigration()
+        ).addMigrations(*MigrationLoader.loadMigrations(context))
             .build()
     }
 
@@ -83,6 +73,12 @@ object AgentModule {
     @Singleton
     fun provideAIProviderDao(database: AgentDatabase): AIProviderDao {
         return database.aiProviderDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideRemoteServerDao(database: AgentDatabase): com.aicodeeditor.feature.workspace.data.local.dao.RemoteServerDao {
+        return database.remoteServerDao()
     }
 
     @Provides
@@ -154,7 +150,11 @@ object AgentModule {
         executeCommandTool: ExecuteCommandTool,
         terminalSessionTool: TerminalSessionTool,
         loadSkillTool: LoadSkillTool,
-        askUserQuestionTool: AskUserQuestionTool
+        askUserQuestionTool: AskUserQuestionTool,
+        manageMcpTool: com.aicodeeditor.feature.agent.domain.tool.mcp.ManageMcpTool,
+        manageSkillTool: com.aicodeeditor.feature.agent.domain.tool.skill.ManageSkillTool,
+        webSearchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebSearchTool,
+        webFetchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebFetchTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("read_file", readFileTool)
@@ -164,6 +164,10 @@ object AgentModule {
             register("terminal", terminalSessionTool)
             register("load_skill", loadSkillTool)
             register("ask_user_question", askUserQuestionTool)
+            register("manage_mcp", manageMcpTool)
+            register("manage_skill", manageSkillTool)
+            register("websearch", webSearchTool)
+            register("webfetch", webFetchTool)
         }
     }
 
@@ -182,16 +186,18 @@ object AgentModule {
         @Named("AnthropicProvider") anthropicProvider: AIProvider,
         promptProvider: SystemPromptProvider,
         permissionManager: ToolPermissionManager,
-        policyEngine: ToolPermissionPolicyEngine
+        policyEngine: ToolPermissionPolicyEngine,
+        contextCompactor: com.aicodeeditor.feature.agent.domain.workflow.ContextCompactor
     ): AgentWorkflow {
-        return StandardAgentWorkflow(
+        return com.aicodeeditor.feature.agent.domain.workflow.StatefulAgentWorkflow(
             toolRegistry,
             aiProviderRepository,
             openAIProvider,
             anthropicProvider,
             promptProvider,
             permissionManager,
-            policyEngine
+            policyEngine,
+            contextCompactor
         )
     }
 }
