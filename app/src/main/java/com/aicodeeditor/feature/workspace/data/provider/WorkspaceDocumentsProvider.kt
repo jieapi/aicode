@@ -9,6 +9,7 @@ import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
 import com.aicodeeditor.R
+import com.aicodeeditor.feature.agent.domain.container.ContainerInstaller
 import java.io.File
 import java.io.FileNotFoundException
 import java.util.LinkedList
@@ -61,10 +62,13 @@ class WorkspaceDocumentsProvider : DocumentsProvider() {
      * 根下唯一对外可见的子目录名白名单：工作区 `projects` 与 AI 配置 `aicode`（容器内 /root/.aicode，
      * 含 skills/ 与 mcp.json）。两者首次访问即创建，其余 filesDir 内部目录不列出。
      */
-    private fun exposedChildren(): List<File> = listOf(
-        File(baseDir(), "projects").apply { mkdirs() },
-        File(baseDir(), "aicode").apply { mkdirs() },
-    )
+    private fun exposedChildren(): List<File> {
+        ContainerInstaller.extractDocs(ctx())
+        return listOf(
+            File(baseDir(), "projects").apply { mkdirs() },
+            File(baseDir(), "aicode").apply { mkdirs() },
+        )
+    }
 
     /** minSdk 26 上基类无 requireContext()，这里自取非空 context。 */
     private fun ctx() =

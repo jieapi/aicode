@@ -17,12 +17,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.UnfoldMore
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -47,6 +47,8 @@ import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.workspace.domain.model.Workspace
 import com.aicodeeditor.feature.workspace.presentation.WorkspaceViewModel
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 /**
  * 顶栏的工作区选择胶囊：显示当前工作区名，点击弹出选择/新建/删除面板。
@@ -73,9 +75,9 @@ fun WorkspaceChip(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            Icons.Default.Folder,
+            FeatherIcons.Folder,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = androidx.compose.ui.graphics.Color(0xFF424242),
             modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(Spacing.xs))
@@ -87,9 +89,9 @@ fun WorkspaceChip(
             overflow = TextOverflow.Ellipsis
         )
         Icon(
-            Icons.Default.UnfoldMore,
+            FeatherIcons.MoreHorizontal,
             contentDescription = "切换工作区",
-            tint = MaterialTheme.colorScheme.primary,
+            tint = androidx.compose.ui.graphics.Color(0xFF424242),
             modifier = Modifier.size(16.dp)
         )
     }
@@ -167,7 +169,7 @@ private fun WorkspaceSheet(
                     modifier = Modifier.weight(1f)
                 )
                 TextButton(onClick = { showCreateDialog = true }) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(Spacing.xs))
                     Text("新建")
                 }
@@ -245,9 +247,9 @@ private fun WorkspaceRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
-            Icons.Default.Folder,
+            FeatherIcons.Folder,
             contentDescription = null,
-            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = androidx.compose.ui.graphics.Color(0xFF424242),
             modifier = Modifier.size(20.dp)
         )
         Spacer(Modifier.width(Spacing.md))
@@ -261,9 +263,9 @@ private fun WorkspaceRow(
         )
         if (selected) {
             Icon(
-                Icons.Default.Check,
+                FeatherIcons.Check,
                 contentDescription = "当前",
-                tint = MaterialTheme.colorScheme.primary,
+                tint = androidx.compose.ui.graphics.Color(0xFF424242),
                 modifier = Modifier.size(20.dp)
             )
         } else if (canDelete) {
@@ -275,9 +277,9 @@ private fun WorkspaceRow(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    Icons.Default.Delete,
+                    FeatherIcons.Trash2,
                     contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
                     modifier = Modifier.size(18.dp)
                 )
             }
@@ -309,7 +311,7 @@ private fun CreateWorkspaceDialog(
                     placeholder = { Text("例如 my-project") },
                     isError = duplicate,
                     leadingIcon = {
-                        Icon(Icons.Default.CreateNewFolder, contentDescription = null)
+                        Icon(FeatherIcons.FolderPlus, contentDescription = null)
                     }
                 )
                 if (duplicate) {

@@ -13,6 +13,9 @@ import com.aicodeeditor.feature.workspace.domain.remote.sftp.SftpSyncClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -24,16 +27,20 @@ class RemoteRepository @Inject constructor(
     private val syncSettings: com.aicodeeditor.feature.settings.data.repository.SyncSettingsRepository
 ) {
     private val activeEngines = ConcurrentHashMap<String, SyncEngine>()
+    private val activeEngineIds = MutableStateFlow<Set<String>>(emptySet())
 
     fun getConnections(): Flow<List<RemoteConnection>> = dao.getAllConnections().map { list ->
         list.map { it.toDomainModel() }
     }
     
-    fun getMounts(): Flow<List<RemoteMount>> = dao.getAllMounts().map { list ->
+    fun getMounts(): Flow<List<RemoteMount>> = combine(
+        dao.getAllMounts(),
+        activeEngineIds
+    ) { list, activeIds ->
         list.map { mountEntity ->
             val connEntity = dao.getConnectionById(mountEntity.connectionId)
             mountEntity.toDomainModel(connEntity?.toDomainModel()).copy(
-                isActive = activeEngines.containsKey(mountEntity.id)
+                isActive = activeIds.contains(mountEntity.id)
             )
         }
     }
@@ -130,10 +137,11 @@ class RemoteRepository @Inject constructor(
                 useGitIgnore = syncSettings.useGitIgnore.value,
                 maxSyncBatchSize = syncSettings.maxSyncBatchSize.value
             )
-            engine.downloadWorkspace() // 全量同步
+            // 移除默认的全量下载以免覆盖本地修改，交由用户手动点击同步
             engine.startWatching()     // 增量监听
 
             activeEngines[mountId] = engine
+            activeEngineIds.update { it + mountId }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -143,6 +151,27 @@ class RemoteRepository @Inject constructor(
     suspend fun disconnectMount(mountId: String) {
         activeEngines[mountId]?.shutdown()
         activeEngines.remove(mountId)
+        activeEngineIds.update { it - mountId }
+    }
+
+    suspend fun forceUploadMount(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val engine = activeEngines[mountId] ?: return@withContext Result.failure(Exception("请先连接该挂载点"))
+            engine.uploadWorkspace()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun forceDownloadMount(mountId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val engine = activeEngines[mountId] ?: return@withContext Result.failure(Exception("请先连接该挂载点"))
+            engine.downloadWorkspace()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     suspend fun testConnection(
