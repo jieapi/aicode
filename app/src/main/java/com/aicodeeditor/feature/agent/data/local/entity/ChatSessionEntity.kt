@@ -2,6 +2,7 @@ package com.aicodeeditor.feature.agent.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.aicodeeditor.feature.agent.domain.model.AgentMode
 import com.aicodeeditor.feature.agent.domain.model.ChatSession
 
 @Entity(tableName = "chat_sessions")
@@ -10,14 +11,16 @@ data class ChatSessionEntity(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
-    val workspacePath: String = ""
+    val workspacePath: String = "",
+    val mode: String = AgentMode.BUILD.name
 ) {
     fun toDomain(): ChatSession = ChatSession(
         id = id,
         title = title,
         createdAt = createdAt,
         updatedAt = updatedAt,
-        workspacePath = workspacePath
+        workspacePath = workspacePath,
+        mode = runCatching { AgentMode.valueOf(mode) }.getOrDefault(AgentMode.BUILD)
     )
 
     companion object {
@@ -26,7 +29,8 @@ data class ChatSessionEntity(
             title = session.title,
             createdAt = session.createdAt,
             updatedAt = session.updatedAt,
-            workspacePath = session.workspacePath
+            workspacePath = session.workspacePath,
+            mode = session.mode.name
         )
     }
 }
