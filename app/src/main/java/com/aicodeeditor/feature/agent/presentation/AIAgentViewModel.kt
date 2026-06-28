@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -123,6 +124,14 @@ fun CharSequence.hasVisibleContent(): Boolean = any { ch ->
  */
 data class RunningToolOutput(val messageId: String, val text: String, val toolName: String = "", val toolArgs: String = "")
 
+data class QueuedRequest(
+    val id: String,
+    val request: String,
+    val currentFile: String?,
+    val selectedCode: String?,
+    val projectRoot: String
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AIAgentViewModel @Inject constructor(
@@ -137,17 +146,37 @@ class AIAgentViewModel @Inject constructor(
     private val containerEngine: LinuxContainerEngine
 ) : ViewModel() {
 
-    private val _agentState = MutableStateFlow<AgentUIState>(AgentUIState.Idle)
-    val agentState: StateFlow<AgentUIState> = _agentState.asStateFlow()
-
-    /** 容器初始化实时进度（解压/部署/装包），AI 页底部气泡展示。 */
-    val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
+    private val sessionJobs = mutableMapOf<String, Job>()
 
     private val _currentSessionId = MutableStateFlow<String?>(null)
     val currentSessionId: StateFlow<String?> = _currentSessionId.asStateFlow()
 
-    val sessions: StateFlow<List<ChatSession>> = chatSessionDao.getAllSessions()
-        .map { list -> list.map { it.toDomain() } }
+    private val _agentStates = MutableStateFlow<Map<String, AgentUIState>>(emptyMap())
+    val agentState: StateFlow<AgentUIState> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(AgentUIState.Idle)
+            else _agentStates.map { it[id] ?: AgentUIState.Idle }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, AgentUIState.Idle)
+
+    private fun setAgentState(sessionId: String, state: AgentUIState) {
+        _agentStates.value = _agentStates.value + (sessionId to state)
+    }
+
+    /** 容器初始化实时进度（解压/部署/装包），AI 页底部气泡展示。 */
+    val containerInit: StateFlow<ContainerInitState> = containerEngine.initProgress
+
+    private val _currentWorkspace = MutableStateFlow<String>("")
+    fun setWorkspace(path: String) {
+        if (_currentWorkspace.value == path) return
+        _currentWorkspace.value = path
+    }
+
+    val sessions: StateFlow<List<ChatSession>> = _currentWorkspace
+        .flatMapLatest { path ->
+            chatSessionDao.getAllSessionsByWorkspace(path)
+                .map { list -> list.map { it.toDomain() } }
+        }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
@@ -177,26 +206,65 @@ class AIAgentViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, ChatMessagesState(null, emptyList(), loaded = false))
 
-    private val _changes = MutableStateFlow<List<CodeChange>>(emptyList())
-    val changes: StateFlow<List<CodeChange>> = _changes.asStateFlow()
+    private val _changesMap = MutableStateFlow<Map<String, List<CodeChange>>>(emptyMap())
+    val changes: StateFlow<List<CodeChange>> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else _changesMap.map { it[id] ?: emptyList() }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    // 运行中工具的实时输出（内存态，不落库）。null 表示当前没有流式工具在跑。
-    private val _runningTool = MutableStateFlow<RunningToolOutput?>(null)
-    val runningTool: StateFlow<RunningToolOutput?> = _runningTool.asStateFlow()
+    private fun setChanges(sessionId: String, changes: List<CodeChange>) {
+        _changesMap.value = if (changes.isEmpty()) _changesMap.value - sessionId else _changesMap.value + (sessionId to changes)
+    }
 
-    // 模型当前正在流式吐出的文字（内存态，不落库）。null 表示当前没有在流式输出文字；
-    // 本轮文字结束后随最终消息落库而清空，由持久化气泡接管显示。
-    private val _streamingText = MutableStateFlow<String?>(null)
-    val streamingText: StateFlow<String?> = _streamingText.asStateFlow()
+    private val _runningTools = MutableStateFlow<Map<String, RunningToolOutput?>>(emptyMap())
+    val runningTool: StateFlow<RunningToolOutput?> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(null)
+            else _runningTools.map { it[id] }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    // 模型当前正在流式吐出的思考过程（内存态，不落库）。null 表示当前没有思考输出；
-    // 本轮拿到正式回复或工具调用后清空，不进入持久化历史。
-    private val _streamingReasoning = MutableStateFlow<String?>(null)
-    val streamingReasoning: StateFlow<String?> = _streamingReasoning.asStateFlow()
+    private fun setRunningTool(sessionId: String, tool: RunningToolOutput?) {
+        _runningTools.value = if (tool == null) _runningTools.value - sessionId else _runningTools.value + (sessionId to tool)
+    }
+
+    private val _streamingTexts = MutableStateFlow<Map<String, String?>>(emptyMap())
+    val streamingText: StateFlow<String?> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(null)
+            else _streamingTexts.map { it[id] }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun setStreamingText(sessionId: String, text: String?) {
+        _streamingTexts.value = if (text == null) _streamingTexts.value - sessionId else _streamingTexts.value + (sessionId to text)
+    }
+
+    private val _streamingReasonings = MutableStateFlow<Map<String, String?>>(emptyMap())
+    val streamingReasoning: StateFlow<String?> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(null)
+            else _streamingReasonings.map { it[id] }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun setStreamingReasoning(sessionId: String, text: String?) {
+        _streamingReasonings.value = if (text == null) _streamingReasonings.value - sessionId else _streamingReasonings.value + (sessionId to text)
+    }
 
     val pendingToolPermission = toolPermissionManager.pendingRequest
 
     val pendingUserQuestion = askUserQuestionManager.pendingQuestion
+
+    private val _queuedRequests = MutableStateFlow<Map<String, List<QueuedRequest>>>(emptyMap())
+    val queuedRequests: StateFlow<List<QueuedRequest>> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(emptyList())
+            else _queuedRequests.map { it[id] ?: emptyList() }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -204,11 +272,16 @@ class AIAgentViewModel @Inject constructor(
     // ToolCallFinished / 用户停止会用同 id REPLACE 整行，需在此把参数带到后续落库。
     private val toolArgsByMsgId = mutableMapOf<String, String>()
 
-    /** 当前运行中的 agent 协程；用于「停止/打断」。空闲时为 null 或已完成。 */
-    private var agentJob: Job? = null
-
     /** 是否有正在运行、可被打断的 agent 任务。 */
-    val isRunning: Boolean get() = agentJob?.isActive == true
+    val isRunning: Boolean get() {
+        val sid = _currentSessionId.value ?: return false
+        return sessionJobs[sid]?.isActive == true
+    }
+
+    fun hasRunningSessionsInCurrentWorkspace(): Boolean {
+        // sessions.value already contains the current workspace's sessions
+        return sessions.value.any { sessionJobs[it.id]?.isActive == true }
+    }
 
     // 单调递增时间戳：保证同毫秒内多次落库的顺序稳定（assistant 永远在其 tool 结果之前）。
     private var lastTimestamp = 0L
@@ -244,13 +317,15 @@ class AIAgentViewModel @Inject constructor(
                 if (n > 0) FileLogger.i(TAG, "冷启动收尾 $n 条残留「执行中」工具行为已中断")
             }.onFailure { FileLogger.e(TAG, "回收残留执行中工具行失败", it) }
 
-            val existing = chatSessionDao.getAllSessionsOnce()
-            _currentSessionId.value = if (existing.isNotEmpty()) {
-                existing.first().id // ORDER BY updatedAt DESC：最近一条
-            } else {
-                val s = newSessionEntity()
-                chatSessionDao.upsert(s)
-                s.id
+            _currentWorkspace.collectLatest { path ->
+                val existing = chatSessionDao.getAllSessionsByWorkspaceOnce(path)
+                _currentSessionId.value = if (existing.isNotEmpty()) {
+                    existing.first().id // ORDER BY updatedAt DESC：最近一条
+                } else {
+                    val s = newSessionEntity(path)
+                    chatSessionDao.upsert(s)
+                    s.id
+                }
             }
         }
     }
@@ -259,12 +334,14 @@ class AIAgentViewModel @Inject constructor(
         request: String,
         currentFile: String? = null,
         selectedCode: String? = null,
-        projectRoot: String = ""
+        projectRoot: String = "",
+        targetSessionId: String? = null
     ): Job = viewModelScope.launch {
-        _agentState.value = AgentUIState.Loading
+        val sessionId = targetSessionId ?: ensureSession()
+        sessionJobs[sessionId] = coroutineContext[Job]!!
+        setAgentState(sessionId, AgentUIState.Loading)
 
         try {
-            val sessionId = ensureSession()
             val history = buildHistory(sessionId)
             val isFirst = history.isEmpty()
 
@@ -289,33 +366,75 @@ class AIAgentViewModel @Inject constructor(
 
             persist(sessionId, MessageRole.ASSISTANT, result.result)
             chatSessionDao.touch(sessionId, nextTimestamp())
-            _changes.value = result.changes
+            setChanges(sessionId, result.changes)
 
-            _agentState.value = AgentUIState.Result(result.status)
+            setAgentState(sessionId, AgentUIState.Result(result.status))
 
             if (result.status != WorkflowStatus.SUCCESS && result.errors.isNotEmpty()) {
-                _agentState.value = AgentUIState.Error(result.errors.joinToString("\n"))
+                setAgentState(sessionId, AgentUIState.Error(result.errors.joinToString("\n")))
             }
 
         } catch (e: CancellationException) {
-            _agentState.value = AgentUIState.Idle
+            setAgentState(sessionId, AgentUIState.Idle)
             throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "executeAgentRequest 失败: request=$request", e)
-            _agentState.value = AgentUIState.Error(e.toUserMessage())
+            setAgentState(sessionId, AgentUIState.Error(e.toUserMessage()))
+        } finally {
+            if (sessionJobs[sessionId] == coroutineContext[Job]) {
+                sessionJobs.remove(sessionId)
+            }
         }
-    }.also { agentJob = it }
+    }
+
+    fun enqueueAgentRequest(
+        request: String,
+        currentFile: String? = null,
+        selectedCode: String? = null,
+        projectRoot: String = ""
+    ) {
+        val sid = _currentSessionId.value
+        val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
+        if (isCurrentRunning && sid != null) {
+            val req = QueuedRequest(
+                id = UUID.randomUUID().toString(),
+                request = request,
+                currentFile = currentFile,
+                selectedCode = selectedCode,
+                projectRoot = projectRoot
+            )
+            val currentList = _queuedRequests.value[sid] ?: emptyList()
+            _queuedRequests.value = _queuedRequests.value + (sid to (currentList + req))
+        } else {
+            executeAgentRequestStream(request, currentFile, selectedCode, projectRoot, sid)
+        }
+    }
+
+    private fun processNextInQueue(sessionId: String) {
+        val queue = _queuedRequests.value[sessionId] ?: return
+        val next = queue.firstOrNull() ?: return
+        _queuedRequests.value = _queuedRequests.value + (sessionId to queue.drop(1))
+        executeAgentRequestStream(
+            request = next.request,
+            currentFile = next.currentFile,
+            selectedCode = next.selectedCode,
+            projectRoot = next.projectRoot,
+            targetSessionId = sessionId
+        )
+    }
 
     fun executeAgentRequestStream(
         request: String,
         currentFile: String? = null,
         selectedCode: String? = null,
-        projectRoot: String = ""
+        projectRoot: String = "",
+        targetSessionId: String? = null
     ): Job = viewModelScope.launch {
-        _agentState.value = AgentUIState.Streaming
+        val sessionId = targetSessionId ?: ensureSession()
+        sessionJobs[sessionId] = coroutineContext[Job]!!
+        setAgentState(sessionId, AgentUIState.Streaming)
 
         try {
-            val sessionId = ensureSession()
             // 必须在插入本次用户消息之前读取历史：workflow 会自己 add(userRequest)，避免重复。
             val history = buildHistory(sessionId)
             val isFirst = history.isEmpty()
@@ -341,11 +460,11 @@ class AIAgentViewModel @Inject constructor(
                 when (event) {
                     is AgentEvent.AssistantDelta -> {
                         // 仅更新内存态实时文字，不落库；UI 在底部渲染一个跟随增长的助手气泡。
-                        _streamingText.value = event.accumulated
+                        setStreamingText(sessionId, event.accumulated)
                     }
                     is AgentEvent.ReasoningDelta -> {
                         // 仅更新内存态实时思考，不落库；UI 在底部渲染一个可折叠的「思考」气泡。
-                        _streamingReasoning.value = event.accumulated
+                        setStreamingReasoning(sessionId, event.accumulated)
                     }
                     is AgentEvent.AssistantText -> {
                         // 即便 content 为空（纯工具调用），也落库以携带结构化 toolCalls，保证回放配对完整。
@@ -362,9 +481,9 @@ class AIAgentViewModel @Inject constructor(
                             reasoning = reasoning
                         )
                         // 本轮文字已落库，清空实时态，交给持久化气泡显示。
-                        _streamingText.value = null
+                        setStreamingText(sessionId, null)
                         // 本轮思考已结束（拿到正式回复/工具调用），清空思考气泡。
-                        _streamingReasoning.value = null
+                        setStreamingReasoning(sessionId, null)
                     }
                     is AgentEvent.ToolCallStarted -> {
                         val msgId = "tool_${event.id}"
@@ -382,16 +501,16 @@ class AIAgentViewModel @Inject constructor(
                             isError = false
                         )
                         // 标记该占位行进入「实时输出」模式（内存态）。
-                        _runningTool.value = RunningToolOutput(msgId, "", event.toolName, event.argsPreview)
+                        setRunningTool(sessionId, RunningToolOutput(msgId, "", event.toolName, event.argsPreview))
                     }
                     is AgentEvent.ToolCallProgress -> {
                         // 仅更新内存态实时输出，不落库；UI 叠加渲染到对应占位行。
-                        _runningTool.value = RunningToolOutput(
+                        setRunningTool(sessionId, RunningToolOutput(
                             "tool_${event.id}",
                             event.accumulated,
                             event.toolName,
                             toolArgsByMsgId["tool_${event.id}"] ?: ""
-                        )
+                        ))
                     }
                     is AgentEvent.ToolCallFinished -> {
                         val msgId = "tool_${event.id}"
@@ -408,8 +527,8 @@ class AIAgentViewModel @Inject constructor(
                         )
                         toolArgsByMsgId.remove(msgId)
                         // 最终结果已落库，清空实时输出态。
-                        if (_runningTool.value?.messageId == msgId) {
-                            _runningTool.value = null
+                        if (_runningTools.value[sessionId]?.messageId == msgId) {
+                            setRunningTool(sessionId, null)
                         }
                     }
                     AgentEvent.Completed -> { /* 循环结束，下方统一置为成功 */ }
@@ -417,22 +536,31 @@ class AIAgentViewModel @Inject constructor(
             }
 
             chatSessionDao.touch(sessionId, nextTimestamp())
-            _agentState.value = AgentUIState.Result(WorkflowStatus.SUCCESS)
+            setAgentState(sessionId, AgentUIState.Result(WorkflowStatus.SUCCESS))
 
         } catch (e: CancellationException) {
             // 用户主动停止：不是错误，复位为空闲后重新抛出以遵守结构化并发。
-            _agentState.value = AgentUIState.Idle
+            setAgentState(sessionId, AgentUIState.Idle)
             throw e
         } catch (e: Exception) {
              FileLogger.e(TAG, "executeAgentRequestStream 失败: request=$request", e)
-             _agentState.value = AgentUIState.Error(e.toUserMessage())
+             setAgentState(sessionId, AgentUIState.Error(e.toUserMessage()))
         } finally {
+            if (sessionJobs[sessionId] == coroutineContext[Job]) {
+                sessionJobs.remove(sessionId)
+            }
             // 无论成功/失败/取消，都清空实时输出态，避免残留 spinner 与悬挂的流式文字。
-            _runningTool.value = null
-            _streamingText.value = null
-            _streamingReasoning.value = null
+            setRunningTool(sessionId, null)
+            setStreamingText(sessionId, null)
+            setStreamingReasoning(sessionId, null)
+            
+            // Process the next queued request if any
+            val currentState = _agentStates.value[sessionId]
+            if (currentState !is AgentUIState.Loading && currentState !is AgentUIState.Streaming) {
+                processNextInQueue(sessionId)
+            }
         }
-    }.also { agentJob = it }
+    }
 
     fun resolveToolPermission(id: String, choice: PermissionChoice) {
         toolPermissionManager.resolve(id, choice)
@@ -447,14 +575,14 @@ class AIAgentViewModel @Inject constructor(
      * 并把「执行中」的工具占位行收尾为「已停止」，避免悬挂的 spinner 与孤儿记录。
      */
     fun stopAgent() {
-        val job = agentJob ?: return
+        val sessionId = _currentSessionId.value ?: return
+        val job = sessionJobs[sessionId] ?: return
         if (!job.isActive) return
-        // 取消前先抓住运行中的工具与会话，避免与协程 finally 清空 _runningTool 竞争。
-        val running = _runningTool.value
-        val sessionId = _currentSessionId.value
+        // 取消前先抓住运行中的工具，避免与协程 finally 清空 _runningTools 竞争。
+        val running = _runningTools.value[sessionId]
         job.cancel()
         viewModelScope.launch {
-            if (running != null && sessionId != null) {
+            if (running != null) {
                 // 保留已实时输出的内容，仅在末尾追加「已停止」标记，而不是整体替换。
                 val partial = running.text.trimEnd()
                 val content = if (partial.isNotEmpty()) "$partial\n\n$STOPPED_TOOL_TEXT" else STOPPED_TOOL_TEXT
@@ -470,8 +598,7 @@ class AIAgentViewModel @Inject constructor(
                 )
                 toolArgsByMsgId.remove(running.messageId)
             }
-            _runningTool.value = null
-            _agentState.value = AgentUIState.Idle
+            setRunningTool(sessionId, null)
         }
     }
 
@@ -481,44 +608,50 @@ class AIAgentViewModel @Inject constructor(
     fun newSession() = viewModelScope.launch {
         val curId = _currentSessionId.value
         if (curId != null && agentMessageDao.getMessagesBySessionOnce(curId).isEmpty()) {
-            _agentState.value = AgentUIState.Idle
-            _changes.value = emptyList()
+            setAgentState(curId, AgentUIState.Idle)
+            setChanges(curId, emptyList())
             return@launch
         }
         val s = newSessionEntity()
         chatSessionDao.upsert(s)
         _currentSessionId.value = s.id
-        _agentState.value = AgentUIState.Idle
-        _changes.value = emptyList()
+        // Inherits default state (Idle)
     }
 
     fun selectSession(id: String) {
         if (_currentSessionId.value == id) return
         _currentSessionId.value = id
-        _agentState.value = AgentUIState.Idle
-        _changes.value = emptyList()
+        // Do not clear the state, allow it to display its actual background state.
     }
 
     fun deleteSession(id: String) = viewModelScope.launch {
         agentMessageDao.deleteBySession(id)
         chatSessionDao.delete(id)
+
+        sessionJobs[id]?.cancel()
+        sessionJobs.remove(id)
+        _agentStates.value = _agentStates.value - id
+        _streamingTexts.value = _streamingTexts.value - id
+        _streamingReasonings.value = _streamingReasonings.value - id
+        _runningTools.value = _runningTools.value - id
+        _changesMap.value = _changesMap.value - id
+        _queuedRequests.value = _queuedRequests.value - id
+
         if (_currentSessionId.value == id) {
-            val remaining = chatSessionDao.getAllSessionsOnce()
-            _currentSessionId.value = if (remaining.isNotEmpty()) {
-                remaining.first().id
+            val remaining = chatSessionDao.getAllSessionsByWorkspaceOnce(_currentWorkspace.value)
+            if (remaining.isNotEmpty()) {
+                _currentSessionId.value = remaining.first().id
             } else {
                 val s = newSessionEntity()
                 chatSessionDao.upsert(s)
-                s.id
+                _currentSessionId.value = s.id
             }
-            _agentState.value = AgentUIState.Idle
-            _changes.value = emptyList()
         }
     }
 
     private suspend fun ensureSession(): String {
         _currentSessionId.value?.let { return it }
-        val existing = chatSessionDao.getAllSessionsOnce()
+        val existing = chatSessionDao.getAllSessionsByWorkspaceOnce(_currentWorkspace.value)
         val id = if (existing.isNotEmpty()) existing.first().id else {
             val s = newSessionEntity()
             chatSessionDao.upsert(s)
@@ -528,11 +661,12 @@ class AIAgentViewModel @Inject constructor(
         return id
     }
 
-    private fun newSessionEntity(): ChatSessionEntity {
+    private fun newSessionEntity(workspacePath: String = _currentWorkspace.value): ChatSessionEntity {
         val now = nextTimestamp()
         return ChatSessionEntity(
             id = UUID.randomUUID().toString(),
-            title = "新对话",
+            title = "新会话",
+            workspacePath = workspacePath,
             createdAt = now,
             updatedAt = now
         )
@@ -696,17 +830,24 @@ class AIAgentViewModel @Inject constructor(
                     }
                 }
             }
-            _agentState.value = AgentUIState.Applied
-            _changes.value = emptyList()
+            val sessionId = _currentSessionId.value
+            if (sessionId != null) {
+                setAgentState(sessionId, AgentUIState.Applied)
+                setChanges(sessionId, emptyList())
+            }
         } catch (e: Exception) {
             FileLogger.e(TAG, "applyChanges 失败", e)
-            _agentState.value = AgentUIState.Error("应用更改失败: ${e.message}")
+            val sessionId = _currentSessionId.value
+            if (sessionId != null) {
+                setAgentState(sessionId, AgentUIState.Error("应用更改失败: ${e.message}"))
+            }
         }
     }
 
     fun rejectChanges() {
-        _agentState.value = AgentUIState.Idle
-        _changes.value = emptyList()
+        val sessionId = _currentSessionId.value ?: return
+        setAgentState(sessionId, AgentUIState.Idle)
+        setChanges(sessionId, emptyList())
     }
 
     private fun detectLanguage(filePath: String): String {
