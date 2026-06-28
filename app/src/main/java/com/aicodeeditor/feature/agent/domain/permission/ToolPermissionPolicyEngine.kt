@@ -43,9 +43,22 @@ class ToolPermissionPolicyEngine @Inject constructor(
      */
     data class EvalResult(val verdict: Verdict, val rememberablePatterns: List<String>)
 
-    suspend fun evaluate(toolName: String, args: Map<String, JsonElement>): EvalResult {
+    suspend fun evaluate(toolName: String, args: Map<String, JsonElement>, mode: com.aicodeeditor.feature.agent.domain.model.AgentMode): EvalResult {
+        if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName)) {
+            return EvalResult(Verdict.DENY, emptyList())
+        }
+
         val rules = rulesRepo.loadEffectiveForCurrentProject().filter { it.toolName == toolName }
         return if (isShellTool(toolName, args)) evaluateShell(rules, args) else evaluateGeneric(rules)
+    }
+
+    private fun isDangerousTool(toolName: String): Boolean {
+        val dangerousTools = setOf(
+            "write_file",
+            "edit_file",
+            "execute_command"
+        )
+        return toolName in dangerousTools
     }
 
     /** 是否按 shell 命令前缀匹配：[SHELL_TOOLS] 中的工具，或终端工具的 start 动作。 */

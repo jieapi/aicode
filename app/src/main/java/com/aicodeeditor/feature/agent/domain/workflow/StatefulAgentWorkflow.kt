@@ -37,8 +37,9 @@ import javax.inject.Inject
 class StatefulAgentWorkflow @Inject constructor(
     private val toolRegistry: ToolRegistry,
     private val aiProviderRepository: AIProviderRepository,
-    private val openAIProvider: AIProvider,
-    private val anthropicProvider: AIProvider,
+    @javax.inject.Named("OpenAIProvider") private val openAIProvider: AIProvider,
+    @javax.inject.Named("AnthropicProvider") private val anthropicProvider: AIProvider,
+    @javax.inject.Named("GeminiProvider") private val geminiProvider: AIProvider,
     private val promptProvider: SystemPromptProvider,
     private val permissionManager: ToolPermissionManager,
     private val policyEngine: ToolPermissionPolicyEngine,
@@ -84,7 +85,11 @@ class StatefulAgentWorkflow @Inject constructor(
         if (config.apiKey.isBlank()) throw IllegalStateException("「${config.name}」未填写 API Key")
         if (config.effectiveModel.isBlank()) throw IllegalStateException("「${config.name}」未选择模型")
 
-        val provider = if (config.type == ProviderType.ANTHROPIC) anthropicProvider else openAIProvider
+        val provider = when (config.type) {
+            ProviderType.ANTHROPIC -> anthropicProvider
+            ProviderType.GEMINI -> geminiProvider
+            else -> openAIProvider
+        }
         provider.apiKey = config.apiKey
         provider.baseUrl = config.baseUrl
         provider.model = config.effectiveModel
@@ -207,12 +212,12 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AgentSideEffect.RequestPermission -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview)
+                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, context.mode)
                         actionQueue.addLast(AgentAction.PermissionEvaluated(effect.toolCall, approved, argsPreview))
                     }
                     is AgentSideEffect.ExecuteTool -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
-                        val rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments)
+                        val rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, context)
                         val isError = tool == null || rawResult.startsWith("Error")
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                     }
@@ -292,7 +297,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AgentSideEffect.RequestPermission -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
-                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview)
+                        val approved = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, context.mode)
                         
                         if (!approved) {
                             val rawResult = ToolResult.Error("用户拒绝执行该工具", "USER_REJECTED").toString()
@@ -307,7 +312,8 @@ class StatefulAgentWorkflow @Inject constructor(
                         val rawResult = if (tool is StreamingAgentTool) {
                             runToolStream(tool, effect.toolCall) { emit(it) }
                         } else {
-                            runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments)
+                            // 同步兜底
+                            runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, context)
                         }
                         val isError = tool == null || rawResult.startsWith("Error")
                         emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
@@ -320,10 +326,10 @@ class StatefulAgentWorkflow @Inject constructor(
         emit(AgentEvent.Completed)
     }
 
-    private suspend fun runToolSync(tool: AgentTool?, name: String, arguments: Map<String, kotlinx.serialization.json.JsonElement>): String {
+    private suspend fun runToolSync(tool: AgentTool?, name: String, arguments: Map<String, kotlinx.serialization.json.JsonElement>, context: AgentContext): String {
         if (tool == null) return "Error: 工具 $name 不存在"
         return try {
-            tool.execute(arguments).toString()
+            tool.executeWithContext(arguments, context).toString()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -368,11 +374,12 @@ class StatefulAgentWorkflow @Inject constructor(
         tool: AgentTool?,
         callId: String,
         arguments: Map<String, kotlinx.serialization.json.JsonElement>,
-        argsPreview: String
+        argsPreview: String,
+        mode: com.aicodeeditor.feature.agent.domain.model.AgentMode
     ): Boolean {
         if (tool == null || tool.permissionPolicy == ToolPermissionPolicy.AUTO_APPROVE) return true
 
-        val eval = policyEngine.evaluate(tool.name, arguments)
+        val eval = policyEngine.evaluate(tool.name, arguments, mode)
         return when (eval.verdict) {
             ToolPermissionPolicyEngine.Verdict.ALLOW -> true
             ToolPermissionPolicyEngine.Verdict.DENY -> false

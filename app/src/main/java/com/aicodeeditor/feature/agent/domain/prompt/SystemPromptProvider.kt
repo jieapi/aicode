@@ -48,6 +48,18 @@ class SystemPromptProvider @Inject constructor(
         }
     }
 
+    private inner class PlanModeSource : PromptSource {
+        @Volatile private var cached: String? = null
+
+        override fun build(ctx: AgentContext): String? {
+            if (ctx.mode != com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN) return null
+            return cached ?: context.assets.open("prompts/80-plan-mode.md").bufferedReader().use { it.readText() }
+                .replace(LEADING_COMMENT, "")
+                .trim()
+                .also { cached = it }
+        }
+    }
+
     private inner class ActiveSkillsSource : PromptSource {
         @Volatile private var cached: String? = null
 
@@ -120,12 +132,14 @@ class SystemPromptProvider @Inject constructor(
     private val activeSkillsSource = ActiveSkillsSource()
     private val projectRuleSource = ProjectRuleSource()
     private val workspaceSource = WorkspaceSource()
+    private val planModeSource = PlanModeSource()
 
     fun build(agentContext: AgentContext): String {
         // 1. 获取各个 Source 的基线快照。
         val staticContent = staticRuleSource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val projectRules = projectRuleSource.build(agentContext)
+        val planModeContent = planModeSource.build(agentContext)
         
         // 2. 增量 Diff 处理 (仅针对高频变化的 Workspace)
         val currentWorkspaceContext = workspaceSource.build(agentContext)
@@ -158,6 +172,11 @@ class SystemPromptProvider @Inject constructor(
             
             append("\n\n")
             append(effectiveWorkspaceContent)
+
+            planModeContent?.let {
+                append("\n\n")
+                append(it)
+            }
         }
     }
 

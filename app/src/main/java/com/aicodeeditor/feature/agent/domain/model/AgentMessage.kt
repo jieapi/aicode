@@ -29,5 +29,6 @@ data class AgentContext(
     val language: String?,
     val history: List<AgentMessage> = emptyList(),
     /** 当前会话 id：用于把本轮所有 AI 请求/响应落到该会话的日志文件（[com.aicodeeditor.core.util.AILogger]）。 */
-    val sessionId: String? = null
+    val sessionId: String? = null,
+    val mode: AgentMode = AgentMode.BUILD
 )
