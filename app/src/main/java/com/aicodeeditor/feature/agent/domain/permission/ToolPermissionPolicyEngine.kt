@@ -41,32 +41,37 @@ class ToolPermissionPolicyEngine @Inject constructor(
      * @param rememberablePatterns 当 [verdict] 为 ASK 时，「始终允许」会记忆的模式；为空表示不可记忆
      *   （命令不可静态判定，只能单次放行）。
      */
-    data class EvalResult(val verdict: Verdict, val rememberablePatterns: List<String>)
+    data class EvalResult(val verdict: Verdict, val rememberablePatterns: List<String>, val denyReason: String? = null)
 
     suspend fun evaluate(toolName: String, args: Map<String, JsonElement>, mode: com.aicodeeditor.feature.agent.domain.model.AgentMode): EvalResult {
-        if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName)) {
-            return EvalResult(Verdict.DENY, emptyList())
+        if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName, args)) {
+            return EvalResult(Verdict.DENY, emptyList(), denyReason = "当前处于 PLAN（计划）模式，系统物理沙盒已禁止修改系统状态或执行写操作。请在计划模式下仅调用只读工具探索代码，不要尝试修改文件或执行命令。")
         }
 
         val rules = rulesRepo.loadEffectiveForCurrentProject().filter { it.toolName == toolName }
         return if (isShellTool(toolName, args)) evaluateShell(rules, args) else evaluateGeneric(rules)
     }
 
-    private fun isDangerousTool(toolName: String): Boolean {
+    private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>): Boolean {
         val dangerousTools = setOf(
             "write_file",
             "edit_file",
             "execute_command"
         )
-        return toolName in dangerousTools
+        if (toolName in dangerousTools) return true
+        if (toolName == TERMINAL_TOOL) {
+            val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase()
+            return action != "read"
+        }
+        return false
     }
 
-    /** 是否按 shell 命令前缀匹配：[SHELL_TOOLS] 中的工具，或终端工具的 start 动作。 */
+    /** 是否按 shell 命令前缀匹配：[SHELL_TOOLS] 中的工具，或终端工具的 start/send 动作。 */
     private fun isShellTool(toolName: String, args: Map<String, JsonElement>): Boolean {
         if (toolName in SHELL_TOOLS) return true
         if (toolName == TERMINAL_TOOL) {
             val action = (args["action"] as? JsonPrimitive)?.content?.trim()?.lowercase()
-            return action == TERMINAL_SHELL_ACTION
+            return action == TERMINAL_SHELL_ACTION || action == "send"
         }
         return false
     }
@@ -80,13 +85,13 @@ class ToolPermissionPolicyEngine @Inject constructor(
 
     private fun evaluateGeneric(rules: List<PermissionRule>): EvalResult {
         val whole = rules.filter { it.pattern == PermissionRule.WHOLE_TOOL }
-        if (whole.any { it.decision == PermissionDecision.DENY }) return EvalResult(Verdict.DENY, emptyList())
+        if (whole.any { it.decision == PermissionDecision.DENY }) return EvalResult(Verdict.DENY, emptyList(), denyReason = "该工具被项目权限规则策略禁止执行")
         if (whole.any { it.decision == PermissionDecision.ALLOW }) return EvalResult(Verdict.ALLOW, emptyList())
         return EvalResult(Verdict.ASK, listOf(PermissionRule.WHOLE_TOOL))
     }
 
     private fun evaluateShell(rules: List<PermissionRule>, args: Map<String, JsonElement>): EvalResult {
-        val command = (args["command"] as? JsonPrimitive)?.content
+        val command = ((args["command"] ?: args["input"]) as? JsonPrimitive)?.content
             ?: return EvalResult(Verdict.ASK, emptyList())
 
         val analysis = ShellCommandParser.analyze(command)
@@ -95,7 +100,7 @@ class ToolPermissionPolicyEngine @Inject constructor(
 
         // 1) DENY 优先（含对内置安全白名单的覆盖）：任一段命中 DENY 即拒。
         if (analysis.segments.any { seg -> deny.any { ShellCommandParser.matches(it.pattern, seg) } }) {
-            return EvalResult(Verdict.DENY, emptyList())
+            return EvalResult(Verdict.DENY, emptyList(), denyReason = "该命令被项目权限规则策略禁止执行")
         }
 
         // 2) 不可静态判定 → 必须弹窗、不可记忆（内置白名单也不适用）。
