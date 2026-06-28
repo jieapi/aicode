@@ -38,18 +38,22 @@ class SystemPromptProvider @Inject constructor(
     /** 完整 system prompt = 静态片段（缓存）+ 动态上下文 + 项目规则文件 AGENTS.md（每轮实时读取）。 */
     fun build(agentContext: AgentContext): String {
         val base = cachedBase ?: loadBase().also { cachedBase = it }
+        // 优化 Prompt Caching 命中率：把静态或低频变化的部分放前面，高频变化的放末尾。
         return buildString {
             append(base)
-            append("\n\n")
-            append(contextSection(agentContext))
+            
             skillsSection()?.let { skills ->
                 append("\n\n")
                 append(skills)
             }
+            
             agentRules(agentContext)?.let { rules ->
                 append("\n\n")
                 append(rules)
             }
+            
+            append("\n\n")
+            append(contextSection(agentContext))
         }
     }
 
