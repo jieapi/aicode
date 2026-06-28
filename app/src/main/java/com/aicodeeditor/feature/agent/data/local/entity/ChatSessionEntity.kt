@@ -9,13 +9,15 @@ data class ChatSessionEntity(
     @PrimaryKey val id: String,
     val title: String,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val workspacePath: String = ""
 ) {
     fun toDomain(): ChatSession = ChatSession(
         id = id,
         title = title,
         createdAt = createdAt,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        workspacePath = workspacePath
     )
 
     companion object {
@@ -23,7 +25,8 @@ data class ChatSessionEntity(
             id = session.id,
             title = session.title,
             createdAt = session.createdAt,
-            updatedAt = session.updatedAt
+            updatedAt = session.updatedAt,
+            workspacePath = session.workspacePath
         )
     }
 }
