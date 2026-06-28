@@ -87,6 +87,32 @@ class RemoteServerViewModel @Inject constructor(
         }
     }
 
+    fun forceUploadMount(id: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            val result = repository.forceUploadMount(id)
+            _uiState.value = _uiState.value.copy(isLoading = false)
+            if (result.isFailure) {
+                _uiState.value = _uiState.value.copy(error = "全量上传失败: ${result.exceptionOrNull()?.message}")
+            } else {
+                _uiState.value = _uiState.value.copy(error = "全量上传成功！") // 暂时复用 error 展示成功消息，或稍后单独做 toast
+            }
+        }
+    }
+
+    fun forceDownloadMount(id: String) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            val result = repository.forceDownloadMount(id)
+            _uiState.value = _uiState.value.copy(isLoading = false)
+            if (result.isFailure) {
+                _uiState.value = _uiState.value.copy(error = "全量下载失败: ${result.exceptionOrNull()?.message}")
+            } else {
+                _uiState.value = _uiState.value.copy(error = "全量下载成功！")
+            }
+        }
+    }
+
     fun deleteConnection(id: String) {
         viewModelScope.launch {
             repository.deleteConnection(id)

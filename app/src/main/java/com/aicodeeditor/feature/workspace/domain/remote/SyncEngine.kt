@@ -40,6 +40,7 @@ class SyncEngine(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val fileObservers = mutableListOf<FileObserver>()
+    private val retryCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
     
     // 使用 Channel 做缓冲和防抖
     private val syncChannel = Channel<String>(Channel.UNLIMITED)
@@ -102,11 +103,54 @@ class SyncEngine(
                     lFile.mkdirs()
                     pull(rPath, lFile)
                 } else {
-                    syncClient.downloadFile(rPath, lFile.absolutePath)
+                    try {
+                        syncClient.downloadFile(rPath, lFile.absolutePath)
+                        delay(50) // 延时加大到50ms
+                    } catch (e: Exception) {
+                        FileLogger.e(TAG, "Download Error for $rPath: ${e.message}")
+                        forceReconnect()
+                    }
                 }
             }
         }
         pull(mount.remotePath, localRoot)
+    }
+
+    /**
+     * 全量推送本地工作区到远程
+     */
+    suspend fun uploadWorkspace() = withContext(Dispatchers.IO) {
+        if (!syncClient.isConnected()) {
+            throw IllegalStateException("Client not connected")
+        }
+        val localRoot = File(mount.localMountPath)
+        if (!localRoot.exists()) return@withContext
+
+        suspend fun push(localDir: File, remoteDir: String) {
+            val files = localDir.listFiles() ?: return
+            for (file in files) {
+                if (isIgnored(file.absolutePath, file.name)) continue
+                val rPath = "$remoteDir/${file.name}"
+                if (file.isDirectory) {
+                    try { syncClient.createDirectory(rPath) } catch (e: Exception) {}
+                    push(file, rPath)
+                } else {
+                    try {
+                        syncClient.uploadFile(file.absolutePath, rPath)
+                        delay(50) // 延时加大到50ms
+                    } catch (e: Exception) {
+                        FileLogger.e(TAG, "Upload Error for $rPath: ${e.message}")
+                        forceReconnect()
+                        // 全量同步失败的也放入增量队列兜底重传
+                        scope.launch {
+                            delay(1000)
+                            syncChannel.send(file.absolutePath)
+                        }
+                    }
+                }
+            }
+        }
+        push(localRoot, mount.remotePath)
     }
 
     /**
@@ -169,20 +213,52 @@ class SyncEngine(
                 } else {
                     syncClient.uploadFile(localPath, remotePath)
                     FileLogger.i(TAG, "Sync: Uploaded to $remotePath")
+                    delay(50) // 延时加大到50ms
                 }
             } else {
                 syncClient.delete(remotePath)
                 FileLogger.i(TAG, "Sync: Deleted $remotePath")
+                delay(50)
             }
+            retryCounts.remove(localPath) // 成功后清除重试计数
         } catch (e: Exception) {
             FileLogger.e(TAG, "Sync Error for $localPath: ${e.message}", e)
-            e.printStackTrace()
-            // 失败重试逻辑可在此添加
+            forceReconnect()
+            val count = retryCounts.getOrDefault(localPath, 0)
+            if (count < 3) {
+                retryCounts[localPath] = count + 1
+                FileLogger.i(TAG, "Sync: Retry ${count + 1}/3 for $localPath")
+                // 将失败的文件重新放入队列
+                scope.launch {
+                    delay(1000)
+                    syncChannel.send(localPath)
+                }
+            } else {
+                FileLogger.e(TAG, "Sync: Max retries reached for $localPath. Giving up.")
+                retryCounts.remove(localPath)
+            }
         }
     }
 
     fun shutdown() {
         stopWatching()
         scope.cancel()
+    }
+
+    private suspend fun forceReconnect() {
+        try {
+            syncClient.disconnect()
+        } catch (e: Exception) {}
+        try {
+            syncClient.connect(
+                connection.host,
+                connection.port,
+                connection.username,
+                RemoteAuth.Password(connection.password)
+            )
+            FileLogger.i(TAG, "Sync: Force reconnected to server successfully.")
+        } catch (e: Exception) {
+            FileLogger.e(TAG, "Sync: Failed to force reconnect: ${e.message}")
+        }
     }
 }

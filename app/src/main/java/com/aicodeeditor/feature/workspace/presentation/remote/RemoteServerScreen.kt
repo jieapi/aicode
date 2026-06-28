@@ -4,14 +4,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Cloud
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,6 +25,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
 import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
 import com.aicodeeditor.feature.workspace.domain.model.RemoteProtocol
+import compose.icons.FeatherIcons
+import compose.icons.feathericons.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,18 +47,20 @@ fun RemoteServerScreen(
     val maxSyncBatchSize by viewModel.maxSyncBatchSize.collectAsStateWithLifecycle()
 
     Scaffold(
+        containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
         topBar = {
             Column {
                 TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA)),
                     title = { Text("远程工作区") },
                     navigationIcon = {
                         IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                            Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                         }
                     },
                     actions = {
                         IconButton(onClick = { showSyncSettingsDialog = true }) {
-                            Icon(Icons.Default.Settings, contentDescription = "同步设置")
+                            Icon(FeatherIcons.Settings, contentDescription = "同步设置")
                         }
                     }
                 )
@@ -84,7 +88,7 @@ fun RemoteServerScreen(
                     showAddMountDialog = true 
                 }
             }) {
-                Icon(Icons.Default.Add, contentDescription = "添加")
+                Icon(FeatherIcons.Plus, contentDescription = "添加")
             }
         }
     ) { paddingValues ->
@@ -134,7 +138,11 @@ fun RemoteServerScreen(
                                     mountToEdit = it
                                     showAddMountDialog = true
                                 },
-                                onDelete = { viewModel.deleteMount(it.id) }
+                                onDelete = { viewModel.deleteMount(it.id) },
+                                onUpload = { viewModel.forceUploadMount(it.id) },
+                                onDownload = { viewModel.forceDownloadMount(it.id) },
+                                onConnect = { viewModel.connectMount(it.id) },
+                                onDisconnect = { viewModel.disconnectMount(it.id) }
                             )
                         }
                     }
@@ -183,6 +191,7 @@ fun RemoteServerScreen(
     if (showAddMountDialog) {
         if (uiState.connections.isEmpty()) {
             AlertDialog(
+        containerColor = androidx.compose.ui.graphics.Color.White,
                 onDismissRequest = { showAddMountDialog = false },
                 title = { Text("提示") },
                 text = { Text("请先在「连接配置」中添加一个远程通道。") },
@@ -241,6 +250,7 @@ fun RemoteSyncSettingsDialog(
     var maxBatchSizeText by remember { mutableStateOf(maxSyncBatchSize.toString()) }
 
     AlertDialog(
+        containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.9f),
@@ -256,7 +266,7 @@ fun RemoteSyncSettingsDialog(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -290,7 +300,7 @@ fun RemoteSyncSettingsDialog(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Row(
@@ -303,6 +313,7 @@ fun RemoteSyncSettingsDialog(
                             Text(
                                 text = "遵循 .gitignore 规则",
                                 style = MaterialTheme.typography.titleMedium,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
@@ -322,13 +333,14 @@ fun RemoteSyncSettingsDialog(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             text = "单次最大同步队列数量",
                             style = MaterialTheme.typography.titleMedium,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
@@ -370,6 +382,7 @@ fun RemoteConnectionCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -380,22 +393,21 @@ fun RemoteConnectionCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.Cloud,
+                        FeatherIcons.Cloud,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text(text = conn.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(text = conn.name, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium)
                         Text(text = "${conn.protocol}://${conn.username}@${conn.host}:${conn.port}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 Row {
                     IconButton(onClick = { onEdit(conn) }) {
-                        Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "编辑")
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑")
                     }
                     IconButton(onClick = { onDelete(conn) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除")
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除")
                     }
                 }
             }
@@ -407,10 +419,15 @@ fun RemoteConnectionCard(
 fun RemoteMountCard(
     mount: RemoteMount,
     onEdit: (RemoteMount) -> Unit,
-    onDelete: (RemoteMount) -> Unit
+    onDelete: (RemoteMount) -> Unit,
+    onUpload: (RemoteMount) -> Unit,
+    onDownload: (RemoteMount) -> Unit,
+    onConnect: (RemoteMount) -> Unit,
+    onDisconnect: (RemoteMount) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -421,13 +438,12 @@ fun RemoteMountCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Default.Folder,
+                        FeatherIcons.Folder,
                         contentDescription = null,
-                        tint = if (mount.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text(text = "通过: ${mount.connection?.name ?: "未知连接"}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(text = "通过: ${mount.connection?.name ?: "未知连接"}", fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium)
                         if (mount.autoConnect) {
                             Text(text = "自动连接", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                         }
@@ -435,10 +451,10 @@ fun RemoteMountCard(
                 }
                 Row {
                     IconButton(onClick = { onEdit(mount) }) {
-                        Icon(androidx.compose.material.icons.Icons.Default.Edit, contentDescription = "编辑")
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑")
                     }
                     IconButton(onClick = { onDelete(mount) }) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除")
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除")
                     }
                 }
             }
@@ -446,6 +462,28 @@ fun RemoteMountCard(
             Spacer(modifier = Modifier.height(12.dp))
             Text(text = "远程路径: ${mount.remotePath}", style = MaterialTheme.typography.bodySmall)
             Text(text = "本地路径: ${mount.localMountPath}", style = MaterialTheme.typography.bodySmall)
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                if (mount.isActive) {
+                    TextButton(onClick = { onDisconnect(mount) }) {
+                        Text("断开连接")
+                    }
+                    TextButton(onClick = { onUpload(mount) }) {
+                        Text("上传全部")
+                    }
+                    TextButton(onClick = { onDownload(mount) }) {
+                        Text("下载全部")
+                    }
+                } else {
+                    Button(onClick = { onConnect(mount) }) {
+                        Text("连接并同步")
+                    }
+                }
+            }
         }
     }
 }
@@ -469,6 +507,7 @@ fun AddRemoteConnectionDialog(
     var isTesting by remember { mutableStateOf(false) }
 
     AlertDialog(
+        containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
         title = { Text(if (initialConnection != null) "编辑连接通道" else "添加连接通道") },
         text = {
@@ -503,8 +542,8 @@ fun AddRemoteConnectionDialog(
                     visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     trailingIcon = {
                         val image = if (passwordVisible)
-                            androidx.compose.material.icons.Icons.Default.Visibility
-                        else androidx.compose.material.icons.Icons.Default.VisibilityOff
+                            FeatherIcons.Eye
+                        else FeatherIcons.EyeOff
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
                             Icon(image, "Toggle password visibility")
                         }
@@ -569,6 +608,7 @@ fun AddRemoteMountDialog(
     var showBrowser by remember { mutableStateOf(false) }
 
     AlertDialog(
+        containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
         title = { Text(if (initialMount != null) "编辑工作区挂载" else "挂载工作区") },
         text = {
@@ -618,7 +658,7 @@ fun AddRemoteMountDialog(
                         onClick = { showBrowser = true },
                         enabled = selectedConnectionId.isNotEmpty()
                     ) {
-                        Icon(androidx.compose.material.icons.Icons.Default.Folder, contentDescription = "浏览目录")
+                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录")
                     }
                 }
                 
@@ -719,6 +759,7 @@ fun RemoteDirectoryBrowserDialog(
     }
 
     AlertDialog(
+        containerColor = androidx.compose.ui.graphics.Color.White,
         onDismissRequest = onDismiss,
         title = { Text("选择远程目录") },
         text = {
@@ -737,7 +778,7 @@ fun RemoteDirectoryBrowserDialog(
                                     val parent = currentPath.trimEnd('/').substringBeforeLast('/')
                                     currentPath = if (parent.isEmpty()) "/" else "$parent/"
                                 }) {
-                                    Icon(androidx.compose.material.icons.Icons.Default.Folder, contentDescription = null)
+                                    Icon(FeatherIcons.Folder, contentDescription = null)
                                     Spacer(Modifier.width(8.dp))
                                     Text(".. (上一级)")
                                 }
@@ -747,7 +788,7 @@ fun RemoteDirectoryBrowserDialog(
                             TextButton(onClick = { 
                                 currentPath = if (currentPath == "/") "/$dir/" else "$currentPath$dir/"
                             }) {
-                                Icon(androidx.compose.material.icons.Icons.Default.Folder, contentDescription = null)
+                                Icon(FeatherIcons.Folder, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
                                 Text(dir)
                             }

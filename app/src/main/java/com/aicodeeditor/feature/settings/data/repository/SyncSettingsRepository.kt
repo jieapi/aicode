@@ -26,7 +26,7 @@ class SyncSettingsRepository @Inject constructor(
     val useGitIgnore: StateFlow<Boolean> = _useGitIgnore.asStateFlow()
 
     private val _maxSyncBatchSize = MutableStateFlow(
-        prefs.getInt("max_sync_batch_size", 50)
+        prefs.getInt("max_sync_batch_size", 5)
     )
     val maxSyncBatchSize: StateFlow<Int> = _maxSyncBatchSize.asStateFlow()
 
