@@ -15,5 +15,8 @@ data class AIProviderEntity(
     /** 可用模型列表，以换行分隔持久化。 */
     val models: String = "",
     /** 当前选中模型；为空时回退到 defaultModel。 */
-    val selectedModel: String = ""
+    val selectedModel: String = "",
+    val isEnabled: Boolean = true,
+    val apiPath: String = "/chat/completions",
+    val useResponseApi: Boolean = false
 )
