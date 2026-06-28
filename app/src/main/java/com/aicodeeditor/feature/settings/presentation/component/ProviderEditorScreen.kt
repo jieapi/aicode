@@ -43,7 +43,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -79,9 +79,9 @@ fun ProviderEditorScreen(
     var newModel by remember { mutableStateOf("") }
     var showFetchDialog by remember { mutableStateOf(false) }
 
-    val fetchState by viewModel.fetchState.collectAsState()
-    val testResults by viewModel.testResults.collectAsState()
-    val testing by viewModel.testing.collectAsState()
+    val fetchState by viewModel.fetchState.collectAsStateWithLifecycle()
+    val testResults by viewModel.testResults.collectAsStateWithLifecycle()
+    val testing by viewModel.testing.collectAsStateWithLifecycle()
 
     DisposableEffect(Unit) {
         viewModel.resetFetchState()
