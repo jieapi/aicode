@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS todo_items (
+    id TEXT NOT NULL PRIMARY KEY,
+    sessionId TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    priority INTEGER NOT NULL DEFAULT 0,
+    `order` INTEGER NOT NULL DEFAULT 0,
+    createdAt INTEGER NOT NULL,
+    updatedAt INTEGER NOT NULL
+);
