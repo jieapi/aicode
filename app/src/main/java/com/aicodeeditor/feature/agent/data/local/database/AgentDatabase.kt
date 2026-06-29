@@ -4,8 +4,10 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
 import com.aicodeeditor.feature.agent.data.local.dao.ChatSessionDao
+import com.aicodeeditor.feature.agent.data.local.dao.TodoItemDao
 import com.aicodeeditor.feature.agent.data.local.entity.AgentMessageEntity
 import com.aicodeeditor.feature.agent.data.local.entity.ChatSessionEntity
+import com.aicodeeditor.feature.agent.data.local.entity.TodoItemEntity
 import com.aicodeeditor.feature.settings.data.local.dao.AIProviderDao
 import com.aicodeeditor.feature.settings.data.local.entity.AIProviderEntity
 import com.aicodeeditor.feature.workspace.data.local.dao.RemoteConnectionDao
@@ -13,8 +15,8 @@ import com.aicodeeditor.feature.workspace.data.local.entity.RemoteConnectionEnti
 import com.aicodeeditor.feature.workspace.data.local.entity.RemoteMountEntity
 
 @Database(
-    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class],
-    version = 14,
+    entities = [AgentMessageEntity::class, ChatSessionEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class],
+    version = 15,
     exportSchema = false
 )
 abstract class AgentDatabase : RoomDatabase() {
@@ -22,4 +24,5 @@ abstract class AgentDatabase : RoomDatabase() {
     abstract fun chatSessionDao(): ChatSessionDao
     abstract fun aiProviderDao(): AIProviderDao
     abstract fun remoteConnectionDao(): RemoteConnectionDao
+    abstract fun todoItemDao(): TodoItemDao
 }
