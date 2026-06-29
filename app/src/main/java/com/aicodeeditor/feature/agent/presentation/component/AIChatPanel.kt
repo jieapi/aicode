@@ -122,6 +122,7 @@ private val DiffRemoveBg = Color(0x33EF4444)
 private val DiffRemoveText = Color(0xFFEF4444)
 
 private const val DIFF_COLLAPSE_THRESHOLD = 20
+private const val TOOL_SECTION_LINE_LIMIT = 20
 
 private val brandGradient = Brush.linearGradient(listOf(Brand.Blue, Brand.Sky))
 
@@ -859,13 +860,17 @@ private fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null)
                 )
             }
         }
-        // 实时输出：流式过程中始终展示累积内容（为空时不占位）。
+        // 实时输出：流式过程中始终展示累积内容（为空时不占位）；过长时只保留最新20行。
         if (streaming) {
             if (!liveOutput.isNullOrBlank()) {
+                val liveLines = liveOutput.split("\n")
+                val truncated = if (liveLines.size > TOOL_SECTION_LINE_LIMIT) {
+                    liveLines.takeLast(TOOL_SECTION_LINE_LIMIT).joinToString("\n")
+                } else liveOutput
                 Spacer(Modifier.height(Spacing.xs))
                 SelectionContainer {
                     Text(
-                        text = liveOutput,
+                        text = truncated,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
@@ -928,7 +933,7 @@ private fun ToolStatusDot(running: Boolean, isError: Boolean) {
     )
 }
 
-/** 展开区的一段带小标题的内容块（如「指令」「结果」）：标题灰小字 + 等宽正文，真实换行。 */
+/** 展开区的一段带小标题的内容块（如「指令」「结果」）：标题灰小字 + 等宽正文。行数超过 [TOOL_SECTION_LINE_LIMIT] 时默认只显示最新20行，底部提供折叠按钮。 */
 @Composable
 private fun ToolSection(label: String, content: String) {
     Text(
@@ -938,13 +943,29 @@ private fun ToolSection(label: String, content: String) {
         fontWeight = FontWeight.SemiBold
     )
     Spacer(Modifier.height(2.dp))
+
+    val lines = remember(content) { content.split("\n") }
+    val collapsible = lines.size > TOOL_SECTION_LINE_LIMIT
+    var expanded by remember(content) { mutableStateOf(false) }
+    // 截断策略：保留末尾20行（最新输出）
+    val visibleLines = if (collapsible && !expanded) lines.takeLast(TOOL_SECTION_LINE_LIMIT) else lines
+    val hiddenCount = lines.size - TOOL_SECTION_LINE_LIMIT
+
     SelectionContainer {
         Text(
-            text = content,
+            text = visibleLines.joinToString("\n"),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall.copy(
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
             )
+        )
+    }
+
+    if (collapsible) {
+        DiffExpandToggle(
+            expanded = expanded,
+            hiddenCount = hiddenCount,
+            onToggle = { expanded = !expanded }
         )
     }
 }
