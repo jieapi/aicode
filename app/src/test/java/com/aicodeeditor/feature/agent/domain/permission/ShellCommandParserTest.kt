@@ -102,4 +102,27 @@ class ShellCommandParserTest {
         assertEquals("git pull", pullRule)
         assertFalse(ShellCommandParser.matches(pullRule!!, ShellCommandParser.analyze("git push").segments[0]))
     }
+
+    @Test
+    fun rmCommand_fineGrainedHandling() {
+        // 单文件删除记忆为完整前缀，不记忆为宽泛的 "rm"
+        val singleFile = ShellCommandParser.analyze("rm temp.log").segments[0]
+        assertEquals("rm temp.log", ShellCommandParser.rememberablePrefix(singleFile))
+
+        // 带选项的单文件删除
+        val forceFile = ShellCommandParser.analyze("rm -f cache.tmp").segments[0]
+        assertEquals("rm -f cache.tmp", ShellCommandParser.rememberablePrefix(forceFile))
+
+        // 递归删除不可记忆
+        val recursiveDir = ShellCommandParser.analyze("rm -rf build").segments[0]
+        assertEquals(null, ShellCommandParser.rememberablePrefix(recursiveDir))
+
+        // 通配符删除不可记忆
+        val wildcardFile = ShellCommandParser.analyze("rm *.class").segments[0]
+        assertEquals(null, ShellCommandParser.rememberablePrefix(wildcardFile))
+
+        // 无目标参数不可记忆
+        val noTarget = ShellCommandParser.analyze("rm --help").segments[0]
+        assertEquals(null, ShellCommandParser.rememberablePrefix(noTarget))
+    }
 }
