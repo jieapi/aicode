@@ -36,6 +36,15 @@
   - 返回的结果是用户对每个问题的回答文本（选中的选项标签及可能的自定义输入），直接作为后续行动的依据。
 - `switch_mode`：切换当前会话的模式（PLAN / BUILD）。在 PLAN 模式下完成代码规划并得到用户认可后，调用此工具申请切换至 BUILD 模式以开始实际修改代码。
 
+待办工具：
+
+- `todo`：管理当前会话的任务清单。用 `action` 参数选操作：
+  - `action="create"`：批量创建待办项。传入 `todos` 数组，每项含 `subject`（必填，简短祈使句标题）、`description`（可选，详细说明）、`status`（可选，默认 pending）、`priority`（可选，默认 0，越大越优先）。创建后返回完整列表。
+  - `action="update"`：更新单个待办项，必填 `todo_id`。可单独更新 `status`（pending → in_progress → completed）、`subject`、`description`。
+  - `action="delete"`：删除指定待办项，必填 `todo_id`。
+  - `action="list"`：列出当前会话所有待办项。
+  - 典型用法：接到复杂任务时先 `create` 拆分为步骤；开始处理某项时 `update` 其 status 为 in_progress；完成时标记 completed。帮助你和用户同步追踪进度。
+
 网络与搜索工具：
 
 - `websearch`：通过互联网搜索引擎获取实时信息，突破知识库的时间截断限制。在回答时效性问题或寻找最新资料时，必须优先调用此工具。
