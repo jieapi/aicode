@@ -403,7 +403,7 @@ class StatefulAgentWorkflow @Inject constructor(
     }
 
     private fun checkAndUpdateMode(toolCall: ToolCall, isError: Boolean, currentContext: AgentContext): Pair<AgentContext, Boolean> {
-        if (toolCall.name == "switch_mode" && !isError) {
+        if (toolCall.name == "switchMode" && !isError) {
             val targetModeStr = (toolCall.arguments["mode"] as? JsonPrimitive)?.content?.trim()?.uppercase()
                 ?: toolCall.arguments["mode"]?.toString()?.replace("\"", "")?.trim()?.uppercase()
             if (targetModeStr != null) {
@@ -438,7 +438,10 @@ class StatefulAgentWorkflow @Inject constructor(
             }
             ToolPermissionPolicyEngine.Verdict.ASK -> {
                 val request = tool.buildPermissionRequest(callId, arguments, argsPreview)
-                    .copy(rememberablePatterns = eval.rememberablePatterns)
+                    .copy(
+                        rememberablePatterns = eval.rememberablePatterns,
+                        rememberDisabledReason = eval.rememberDisabledReason
+                    )
                 when (permissionManager.awaitApproval(request)) {
                     PermissionChoice.REJECT -> PermissionCheckResult(false, "用户拒绝执行该工具", "USER_REJECTED")
                     PermissionChoice.ONCE -> PermissionCheckResult(true)
