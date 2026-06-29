@@ -42,9 +42,10 @@ object BuiltInSafeCommands {
         "grep", "egrep", "fgrep", "rg", "ack", "zgrep",
         // —— 文本处理（只读，输出到 stdout；不含 sed/awk，二者可 -i/ system 改文件）——
         "sort", "uniq", "cut", "tr", "fold", "fmt", "expand", "unexpand", "rev", "comm", "diff", "cmp",
-        // —— 信息/查找（只读；不含 env/printenv——会泄环境变量且可派生执行）——
+        // —— 信息/查找/系统监视（只读；不含 env/printenv——会泄环境变量且可派生执行）——
         "echo", "printf", "date", "whoami", "id", "uname", "hostname", "uptime", "nproc", "cal",
-        "which", "type", "whereis", "locate", "getconf"
+        "which", "type", "whereis", "locate", "getconf",
+        "ps", "top", "free", "htop", "vmstat", "lscpu", "lsblk", "arch", "clear", "history", "true", "false"
     ) + GIT_READ_ONLY_PREFIXES
 
     /** 该段是否命中任一内置安全前缀。 */

@@ -9,7 +9,7 @@ import javax.inject.Singleton
  * 工具授权策略引擎：在弹窗之前评估一次工具调用应「自动放行 / 自动拒绝 / 询问」，并在用户选择
  * 「始终允许」后把规则记忆下来。
  *
- * 评估顺序（execute_command）：
+ * 评估顺序（Bash）：
  *   1) 任一段命中 DENY 规则 → DENY（即便命令不可静态判定，DENY 也对已解析的段生效；可覆盖内置白名单）；
  *   2) 命令不可静态判定（含命令替换/分组/绝对路径重定向等）→ ASK，且不可记忆；
  *   3) 所有段都命中内置安全白名单（ls/git status 等只读命令，见 [BuiltInSafeCommands]）→ ALLOW；
@@ -24,7 +24,7 @@ class ToolPermissionPolicyEngine @Inject constructor(
 ) {
     private companion object {
         /** 以 `command` 参数承载 shell 命令、按命令前缀做指令级匹配的工具。 */
-        val SHELL_TOOLS = setOf("execute_command")
+        val SHELL_TOOLS = setOf("Bash")
 
         /**
          * 合并后的终端会话工具：其 `start` 动作承载 shell 命令，需走指令级前缀匹配；
@@ -41,7 +41,12 @@ class ToolPermissionPolicyEngine @Inject constructor(
      * @param rememberablePatterns 当 [verdict] 为 ASK 时，「始终允许」会记忆的模式；为空表示不可记忆
      *   （命令不可静态判定，只能单次放行）。
      */
-    data class EvalResult(val verdict: Verdict, val rememberablePatterns: List<String>, val denyReason: String? = null)
+    data class EvalResult(
+        val verdict: Verdict,
+        val rememberablePatterns: List<String>,
+        val denyReason: String? = null,
+        val rememberDisabledReason: String? = null
+    )
 
     suspend fun evaluate(toolName: String, args: Map<String, JsonElement>, mode: com.aicodeeditor.feature.agent.domain.model.AgentMode): EvalResult {
         if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName, args)) {
@@ -54,9 +59,9 @@ class ToolPermissionPolicyEngine @Inject constructor(
 
     private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>): Boolean {
         val dangerousTools = setOf(
-            "write_file",
-            "edit_file",
-            "execute_command"
+            "writeFile",
+            "editFile",
+            "Bash"
         )
         if (toolName in dangerousTools) return true
         if (toolName == TERMINAL_TOOL) {
@@ -90,6 +95,27 @@ class ToolPermissionPolicyEngine @Inject constructor(
         return EvalResult(Verdict.ASK, listOf(PermissionRule.WHOLE_TOOL))
     }
 
+    private fun checkCatastrophicRm(segments: List<List<String>>): String? {
+        val sysDirs = setOf("/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/opt", "/proc", "/root", "/run", "/sbin", "/sys", "/usr", "/var")
+        for (seg in segments) {
+            val rmInfo = ShellCommandParser.parseRmInfo(seg)
+            if (!rmInfo.isRm) continue
+            for (rawPath in rmInfo.targetPaths) {
+                val p = rawPath.trim()
+                val normalized = if (p.length > 1) p.trimEnd('/') else p
+                if (normalized == "/" || normalized == "/*" || normalized == "//*") return "安全防护：禁止执行高危删除操作（根目录删除）"
+                if (normalized == "*" || normalized == ".*" || normalized == "." || normalized == "./*" || normalized == ".." || normalized == "../.*") return "安全防护：禁止执行高危删除操作（全局或相对路径通配删除）"
+                if (normalized == "~" || normalized == "~/*") return "安全防护：禁止执行高危删除操作（用户目录删除）"
+                if (normalized == "/workspace" || normalized == "/workspace/*" || normalized == "/workspace/.*" || normalized == "/workspace/." || normalized == "/workspace/.." || normalized.startsWith("/workspace/../") || normalized == "workspace" || normalized == "workspace/*") return "安全防护：禁止执行高危删除操作（工作区根目录删除）"
+                if (normalized == "/tmp" || normalized == "/tmp/*") return "安全防护：禁止执行高危删除操作（系统临时目录整体删除）"
+                if (sysDirs.any { normalized == it || normalized.startsWith("$it/") || normalized.startsWith("$it/*") }) {
+                    return "安全防护：禁止执行高危删除操作（系统关键目录删除）"
+                }
+            }
+        }
+        return null
+    }
+
     private fun evaluateShell(rules: List<PermissionRule>, args: Map<String, JsonElement>): EvalResult {
         val command = ((args["command"] ?: args["input"]) as? JsonPrimitive)?.content
             ?: return EvalResult(Verdict.ASK, emptyList())
@@ -97,6 +123,12 @@ class ToolPermissionPolicyEngine @Inject constructor(
         val analysis = ShellCommandParser.analyze(command)
         val allow = rules.filter { it.decision == PermissionDecision.ALLOW }
         val deny = rules.filter { it.decision == PermissionDecision.DENY }
+
+        // 0) rm 高危操作防护：禁止直接删除系统根目录、工作区根目录或系统关键目录
+        val catastrophicReason = checkCatastrophicRm(analysis.segments)
+        if (catastrophicReason != null) {
+            return EvalResult(Verdict.DENY, emptyList(), denyReason = catastrophicReason)
+        }
 
         // 1) DENY 优先（含对内置安全白名单的覆盖）：任一段命中 DENY 即拒。
         if (analysis.segments.any { seg -> deny.any { ShellCommandParser.matches(it.pattern, seg) } }) {
@@ -114,11 +146,36 @@ class ToolPermissionPolicyEngine @Inject constructor(
         }
 
         // 4) 已记忆的 ALLOW：每段都命中 → 放行。
+        // 对 rm 命令进行精细化校验：避免存量或宽泛的 "rm"/"rm -rf" 无目标规则放行高风险删除
         val allAllowed = analysis.segments.isNotEmpty() &&
-            analysis.segments.all { seg -> allow.any { ShellCommandParser.matches(it.pattern, seg) } }
+            analysis.segments.all { seg ->
+                val rmInfo = ShellCommandParser.parseRmInfo(seg)
+                allow.any { rule ->
+                    if (!ShellCommandParser.matches(rule.pattern, seg)) {
+                        false
+                    } else if (rmInfo.isRm) {
+                        val ruleRmInfo = ShellCommandParser.parseRmInfo(rule.pattern.split(Regex("\\s+")))
+                        ruleRmInfo.targetPaths.isNotEmpty() && (!rmInfo.isRecursive || ruleRmInfo.isRecursive)
+                    } else {
+                        true
+                    }
+                }
+            }
         if (allAllowed) return EvalResult(Verdict.ALLOW, emptyList())
 
         // 5) 否则弹窗，可记忆前缀（子命令分发器记 程序名+子命令）。
+        val hasRmUnrememberable = analysis.segments.any { seg ->
+            val rmInfo = ShellCommandParser.parseRmInfo(seg)
+            rmInfo.isRm && (rmInfo.targetPaths.isEmpty() || rmInfo.isRecursive || rmInfo.isWildcard)
+        }
+        if (hasRmUnrememberable) {
+            return EvalResult(
+                verdict = Verdict.ASK,
+                rememberablePatterns = emptyList(),
+                rememberDisabledReason = "高风险删除操作（递归/通配/强制批量删除），为确保数据安全不可记忆，仅可单次放行"
+            )
+        }
+
         val rememberable = analysis.segments.mapNotNull { ShellCommandParser.rememberablePrefix(it) }.distinct()
         return EvalResult(Verdict.ASK, rememberable)
     }

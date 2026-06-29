@@ -148,8 +148,47 @@ object ShellCommandParser {
         "az", "aws", "gcloud", "terraform", "ansible"
     )
 
+    data class RmInfo(
+        val isRm: Boolean,
+        val isRecursive: Boolean,
+        val isWildcard: Boolean,
+        val targetPaths: List<String>
+    )
+
+    /** 解析该命令段是否为 rm 删除操作及其参数信息（是否递归、通配以及操作目标路径）。 */
+    fun parseRmInfo(tokens: List<String>): RmInfo {
+        val eff = effectiveTokens(tokens)
+        val program = eff.firstOrNull()
+        if (program != "rm" && program?.endsWith("/rm") != true) {
+            return RmInfo(isRm = false, isRecursive = false, isWildcard = false, targetPaths = emptyList())
+        }
+        var isRecursive = false
+        var isWildcard = false
+        val targetPaths = mutableListOf<String>()
+        var hasDoubleDash = false
+        for (i in 1 until eff.size) {
+            val t = eff[i]
+            if (!hasDoubleDash && t == "--") {
+                hasDoubleDash = true
+                continue
+            }
+            if (!hasDoubleDash && t.startsWith("-") && t != "-") {
+                if (t == "--recursive" || (!t.startsWith("--") && (t.contains('r') || t.contains('R')))) {
+                    isRecursive = true
+                }
+                continue
+            }
+            if (t.contains('*') || t.contains('?')) {
+                isWildcard = true
+            }
+            targetPaths.add(t)
+        }
+        return RmInfo(isRm = true, isRecursive = isRecursive, isWildcard = isWildcard, targetPaths = targetPaths)
+    }
+
     /**
      * 「始终允许」可记忆的命令前缀：
+     * - rm 命令精细处理：递归/通配符删除不可记忆；普通单文件删除精细记忆为完整命令前缀；
      * - 非分发器程序：仅程序名（`cat`/`ls`），与 [programPrefix] 一致；
      * - 子命令分发器：程序名 + 紧随其后的第一个非 flag 子命令（`git pull`/`git clone`/`npm install`），
      *   程序名后紧跟 flag（如 `git --version`）时退化为仅程序名。空段返回 null。
@@ -160,6 +199,13 @@ object ShellCommandParser {
     fun rememberablePrefix(tokens: List<String>): String? {
         val eff = effectiveTokens(tokens)
         val program = eff.firstOrNull() ?: return null
+        val rmInfo = parseRmInfo(tokens)
+        if (rmInfo.isRm) {
+            if (rmInfo.targetPaths.isEmpty() || rmInfo.isRecursive || rmInfo.isWildcard) {
+                return null
+            }
+            return eff.joinToString(" ")
+        }
         if (program !in SUBCOMMAND_DISPATCHERS) return program
         val subcommand = eff.getOrNull(1)?.takeIf { !it.startsWith("-") } ?: return program
         return "$program $subcommand"
