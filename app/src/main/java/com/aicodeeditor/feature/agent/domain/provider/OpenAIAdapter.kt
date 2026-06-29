@@ -69,7 +69,9 @@ class OpenAIAdapter @Inject constructor(
             AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
             val response = try {
-                api.createResponses(url = url, authorization = "Bearer $apiKey", request = request)
+                retryStaircase {
+                    api.createResponses(url = url, authorization = "Bearer $apiKey", request = request)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -116,7 +118,9 @@ class OpenAIAdapter @Inject constructor(
         AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
         val response = try {
-            api.createChatCompletion(url = url, authorization = "Bearer $apiKey", request = request)
+            retryStaircase {
+                api.createChatCompletion(url = url, authorization = "Bearer $apiKey", request = request)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
