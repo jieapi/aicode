@@ -16,16 +16,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.CreateNewFolder
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.UnfoldMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -42,7 +36,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.workspace.domain.model.Workspace
@@ -50,9 +46,6 @@ import com.aicodeeditor.feature.workspace.presentation.WorkspaceViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
-/**
- * 顶栏的工作区选择胶囊：显示当前工作区名，点击弹出选择/新建/删除面板。
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspaceChip(
@@ -77,7 +70,7 @@ fun WorkspaceChip(
         Icon(
             FeatherIcons.Folder,
             contentDescription = null,
-            tint = androidx.compose.ui.graphics.Color(0xFF424242),
+            tint = Brand.IconGray,
             modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(Spacing.xs))
@@ -91,8 +84,72 @@ fun WorkspaceChip(
         Icon(
             FeatherIcons.MoreHorizontal,
             contentDescription = "切换工作区",
-            tint = androidx.compose.ui.graphics.Color(0xFF424242),
+            tint = Brand.IconGray,
             modifier = Modifier.size(16.dp)
+        )
+    }
+
+    if (showSheet) {
+        WorkspaceSheet(
+            workspaces = workspaces,
+            current = current,
+            onSelect = {
+                if (hasRunningSessions()) {
+                    pendingWorkspaceSelect = it
+                } else {
+                    viewModel.selectWorkspace(it.name)
+                    showSheet = false
+                }
+            },
+            onCreate = { viewModel.createWorkspace(it) },
+            onDelete = { viewModel.deleteWorkspace(it.name) },
+            onDismiss = { showSheet = false }
+        )
+    }
+
+    pendingWorkspaceSelect?.let { ws ->
+        AlertDialog(
+            onDismissRequest = { pendingWorkspaceSelect = null },
+            title = { Text("切换工作区") },
+            text = { Text("当前工作区有正在运行的会话，切换工作区后它们将在后台继续运行。确定要切换吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.selectWorkspace(ws.name)
+                    pendingWorkspaceSelect = null
+                    showSheet = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingWorkspaceSelect = null }) { Text("取消") }
+            }
+        )
+    }
+}
+
+/**
+ * 顶栏的工作区选择图标按钮：点击弹出选择/新建/删除面板。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WorkspaceIconButton(
+    viewModel: WorkspaceViewModel,
+    hasRunningSessions: () -> Boolean = { false },
+    modifier: Modifier = Modifier
+) {
+    val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
+    val current by viewModel.current.collectAsStateWithLifecycle()
+
+    var showSheet by remember { mutableStateOf(false) }
+    var pendingWorkspaceSelect by remember { mutableStateOf<Workspace?>(null) }
+
+    IconButton(
+        onClick = { showSheet = true },
+        modifier = modifier
+    ) {
+        Icon(
+            FeatherIcons.Folder,
+            contentDescription = "打开工作区",
+            tint = Brand.IconGray
         )
     }
 
@@ -249,7 +306,7 @@ private fun WorkspaceRow(
         Icon(
             FeatherIcons.Folder,
             contentDescription = null,
-            tint = androidx.compose.ui.graphics.Color(0xFF424242),
+            tint = Brand.IconGray,
             modifier = Modifier.size(20.dp)
         )
         Spacer(Modifier.width(Spacing.md))
@@ -265,7 +322,7 @@ private fun WorkspaceRow(
             Icon(
                 FeatherIcons.Check,
                 contentDescription = "当前",
-                tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                tint = Brand.IconGray,
                 modifier = Modifier.size(20.dp)
             )
         } else if (canDelete) {
@@ -279,7 +336,7 @@ private fun WorkspaceRow(
                 Icon(
                     FeatherIcons.Trash2,
                     contentDescription = "删除",
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                    tint = Brand.IconGray,
                     modifier = Modifier.size(18.dp)
                 )
             }
