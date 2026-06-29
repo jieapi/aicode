@@ -45,7 +45,7 @@ class ExecuteCommandTool @Inject constructor(
         const val MAX_TIMEOUT_SECONDS = 1_800L
     }
 
-    override val name = "execute_command"
+    override val name = "Bash"
     override val description = "在独立的 Linux 容器环境中执行 Shell 命令。支持 npm、git 等绝大多数终端操作。对于耗时任务（如安装大量依赖、启动服务器等），请不要在此命令末尾加 '&' 挂后台，而是强烈建议改用 `terminal` 工具（action=\"start\"）来创建常驻终端页面，这样才能方便后续查看实时输出结果和管理进程。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
 

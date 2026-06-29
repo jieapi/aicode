@@ -34,9 +34,9 @@ private const val TAG = "EditFileTool"
 class EditFileTool @Inject constructor(
     private val pathMapper: WorkspacePathMapper
 ) : AgentTool() {
-    override val name = "edit_file"
+    override val name = "editFile"
     override val description =
-        "通过精确的字符串匹配替换修改已存在的文件内容。作为局部修改文件的首选工具。支持通过 edits 数组一次性应用多处修改，任一处匹配失败将整批回滚。整文件重写请用 write_file。"
+        "通过精确的字符串匹配替换修改已存在的文件内容。作为局部修改文件的首选工具。支持通过 edits 数组一次性应用多处修改，任一处匹配失败将整批回滚。整文件重写请用 writeFile。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema。 */
@@ -105,7 +105,7 @@ class EditFileTool @Inject constructor(
             // 逐个校验编辑本身的合法性（空 old_string / 无变化），避免无意义改动。
             edits.forEachIndexed { i, e ->
                 if (e.oldString.isEmpty()) {
-                    return ToolResult.Error("第 ${i + 1} 个编辑的 old_string 不能为空；创建文件请用 write_file。", "EMPTY_OLD_STRING")
+                    return ToolResult.Error("第 ${i + 1} 个编辑的 old_string 不能为空；创建文件请用 writeFile。", "EMPTY_OLD_STRING")
                 }
                 if (e.oldString == e.newString) {
                     return ToolResult.Error("第 ${i + 1} 个编辑的 old_string 与 new_string 相同，无需修改", "NO_OP")

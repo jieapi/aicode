@@ -118,7 +118,7 @@ fun AskUserQuestionPanel(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "ask_user_question",
+                    text = "askUserQuestion",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

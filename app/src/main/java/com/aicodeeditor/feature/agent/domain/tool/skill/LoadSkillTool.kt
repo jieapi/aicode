@@ -26,7 +26,7 @@ class LoadSkillTool @Inject constructor(
         const val TAG = "LoadSkillTool"
     }
 
-    override val name = "load_skill"
+    override val name = "loadSkill"
     override val description =
         "加载指定技能（Skill）的完整指令内容。当系统提示清单中的技能适用于当前任务时，调用此工具获取其详细操作说明。"
 

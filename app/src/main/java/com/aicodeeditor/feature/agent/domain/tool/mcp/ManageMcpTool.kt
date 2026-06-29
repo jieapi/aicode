@@ -27,7 +27,7 @@ class ManageMcpTool @Inject constructor(
         const val TAG = "ManageMcpTool"
     }
 
-    override val name = "manage_mcp"
+    override val name = "manageMcp"
     override val description = "管理 Model Context Protocol (MCP) 服务器。支持添加、删除与列表查询，并自动准备本地运行环境。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(
