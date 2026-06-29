@@ -6,6 +6,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
 import com.aicodeeditor.feature.agent.data.local.dao.ChatSessionDao
+import com.aicodeeditor.feature.agent.data.local.dao.TodoItemDao
 import com.aicodeeditor.feature.settings.data.local.dao.AIProviderDao
 import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
@@ -24,6 +25,7 @@ import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
 import com.aicodeeditor.feature.agent.domain.tool.container.TerminalSessionTool
 import com.aicodeeditor.feature.agent.domain.tool.skill.LoadSkillTool
 import com.aicodeeditor.feature.agent.domain.tool.question.AskUserQuestionTool
+import com.aicodeeditor.feature.agent.domain.tool.todo.TodoTool
 import com.aicodeeditor.feature.agent.domain.prompt.SystemPromptProvider
 import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
@@ -80,6 +82,12 @@ object AgentModule {
     @Singleton
     fun provideRemoteConnectionDao(database: AgentDatabase): com.aicodeeditor.feature.workspace.data.local.dao.RemoteConnectionDao {
         return database.remoteConnectionDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideTodoItemDao(database: AgentDatabase): TodoItemDao {
+        return database.todoItemDao()
     }
 
     @Provides
@@ -180,21 +188,23 @@ object AgentModule {
         manageSkillTool: com.aicodeeditor.feature.agent.domain.tool.skill.ManageSkillTool,
         webSearchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebSearchTool,
         webFetchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebFetchTool,
-        switchModeTool: com.aicodeeditor.feature.agent.domain.tool.mode.SwitchModeTool
+        switchModeTool: com.aicodeeditor.feature.agent.domain.tool.mode.SwitchModeTool,
+        todoTool: TodoTool
     ): ToolRegistry {
         return ToolRegistry().apply {
-            register("read_file", readFileTool)
-            register("write_file", writeFileTool)
-            register("edit_file", editFileTool)
-            register("execute_command", executeCommandTool)
+            register("readFile", readFileTool)
+            register("writeFile", writeFileTool)
+            register("editFile", editFileTool)
+            register("Bash", executeCommandTool)
             register("terminal", terminalSessionTool)
-            register("load_skill", loadSkillTool)
-            register("ask_user_question", askUserQuestionTool)
-            register("manage_mcp", manageMcpTool)
-            register("manage_skill", manageSkillTool)
+            register("loadSkill", loadSkillTool)
+            register("askUserQuestion", askUserQuestionTool)
+            register("manageMcp", manageMcpTool)
+            register("manageSkill", manageSkillTool)
             register("websearch", webSearchTool)
             register("webfetch", webFetchTool)
-            register("switch_mode", switchModeTool)
+            register("switchMode", switchModeTool)
+            register("todo", todoTool)
         }
     }
 
