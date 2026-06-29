@@ -20,7 +20,7 @@ class ManageSkillTool @Inject constructor(
         const val TAG = "ManageSkillTool"
     }
 
-    override val name = "manage_skill"
+    override val name = "manageSkill"
     override val description = "管理 AI 技能库 (Skills)。支持从远程 Git 仓库安装或移除本地技能。"
 
     override val parameters: Map<String, ToolParameter> = mapOf(

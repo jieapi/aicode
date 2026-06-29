@@ -51,7 +51,8 @@ data class PendingToolPermission(
      * 为空表示该调用不可记忆（命令不可静态判定），UI 应禁用「始终允许」、只留单次放行。
      * 由 [com.aicodeeditor.feature.agent.domain.permission.ToolPermissionPolicyEngine] 评估后填入。
      */
-    val rememberablePatterns: List<String> = emptyList()
+    val rememberablePatterns: List<String> = emptyList(),
+    val rememberDisabledReason: String? = null
 )
 
 abstract class AgentTool {

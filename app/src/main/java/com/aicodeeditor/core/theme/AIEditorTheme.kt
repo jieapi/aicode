@@ -12,9 +12,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/**
- * 设计令牌：统一的间距与圆角规范，供各界面复用，避免散落的魔法数字。
- */
 object Spacing {
     val xs = 4.dp
     val sm = 8.dp
@@ -32,18 +29,16 @@ object Radius {
     val pill = 999.dp
 }
 
-/**
- * 品牌强调色：蓝白基调下只保留清晰的主蓝与浅蓝层级。
- */
 object Brand {
     val Blue = Color(0xFF2563EB)
     val Sky = Color(0xFF38BDF8)
     val Ice = Color(0xFFEFF6FF)
+    val IconGray = Color(0xFF424242)
+    val PageBg = Color(0xFFFAFAFA)
 }
 
 val LocalSpacing = staticCompositionLocalOf { Spacing }
 
-// 深色保留给显式调用；默认界面使用下面的蓝白浅色主题。
 private val DarkColorScheme = darkColorScheme(
     primary = Color(0xFF60A5FA),
     onPrimary = Color(0xFF082F49),
@@ -58,6 +53,7 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = Color(0xFFEAF2FF),
     surfaceVariant = Color(0xFF13273F),
     onSurfaceVariant = Color(0xFFB8C7DA),
+    surfaceTint = Color.Transparent,
     outline = Color(0xFF44617F),
     outlineVariant = Color(0xFF223B57),
     error = Color(0xFFF87171),
@@ -66,7 +62,6 @@ private val DarkColorScheme = darkColorScheme(
     onErrorContainer = Color(0xFFFECACA)
 )
 
-// 浅色：蓝白背景 + 白色面板 + 低饱和边框，整体更简约、现代。
 private val LightColorScheme = lightColorScheme(
     primary = Brand.Blue,
     onPrimary = Color(0xFFFFFFFF),
@@ -81,15 +76,16 @@ private val LightColorScheme = lightColorScheme(
     onSurface = Color(0xFF0F172A),
     surfaceVariant = Color(0xFFEAF4FF),
     onSurfaceVariant = Color(0xFF475569),
+    surfaceTint = Color.White,
     outline = Color(0xFFBBD7F2),
     outlineVariant = Color(0xFFDCEBFA),
     error = Color(0xFFDC2626),
+
     onError = Color(0xFFFFFFFF),
     errorContainer = Color(0xFFFEE2E2),
     onErrorContainer = Color(0xFF7F1D1D)
 )
 
-// 收紧字重与字距，让标题更利落、正文更易读。
 private val AppTypography = Typography().run {
     copy(
         headlineSmall = headlineSmall.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),

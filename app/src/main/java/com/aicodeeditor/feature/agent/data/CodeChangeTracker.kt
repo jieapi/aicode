@@ -19,7 +19,7 @@ class CodeChangeTracker {
         val newChanges = mutableListOf<CodeChange>()
 
         when {
-            toolCall.name == "write_file" && result is ToolResult.Success -> {
+            toolCall.name == "writeFile" && result is ToolResult.Success -> {
                 val filePath = toolCall.arguments["path"]?.jsonPrimitive?.contentOrNull ?: return emptyList()
                 val content = toolCall.arguments["content"]?.jsonPrimitive?.contentOrNull ?: ""
                 newChanges.add(
@@ -34,7 +34,7 @@ class CodeChangeTracker {
                 )
             }
 
-            toolCall.name == "edit_file" && result is ToolResult.Success -> {
+            toolCall.name == "editFile" && result is ToolResult.Success -> {
                 val filePath = (toolCall.arguments["path"] as? JsonPrimitive)?.contentOrNull ?: return emptyList()
                 // 一次 edit_file 可含多处编辑：edits 数组里每个 {old_string,new_string} 各记一条变更。
                 val editsArr = toolCall.arguments["edits"] as? JsonArray

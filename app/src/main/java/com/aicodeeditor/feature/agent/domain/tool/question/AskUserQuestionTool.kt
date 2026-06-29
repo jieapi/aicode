@@ -35,7 +35,7 @@ class AskUserQuestionTool @Inject constructor(
         const val MAX_OPTIONS = 4
     }
 
-    override val name = "ask_user_question"
+    override val name = "askUserQuestion"
 
     override val description =
         "向用户提出结构化的选择题并阻塞等待其选择结果。用于涉及用户决策的场景（如方案选择、环境确认等）。" +
