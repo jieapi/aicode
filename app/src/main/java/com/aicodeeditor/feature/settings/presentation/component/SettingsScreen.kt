@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,18 +26,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Article
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.Cloud
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,17 +43,38 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.border
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.core.util.LogLevel
@@ -141,12 +151,12 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
+        containerColor = Brand.PageBg,
         topBar = {
             TopAppBar(
                 title = { Text(section.title) },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
+                    containerColor = Brand.PageBg,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 navigationIcon = {
@@ -164,11 +174,20 @@ fun SettingsScreen(
                         }) {
                             Icon(FeatherIcons.Plus, contentDescription = "添加服务商")
                         }
-                        SettingsSection.Mcp -> IconButton(onClick = {
-                            editingMcp = null
-                            showMcpDialog = true
-                        }) {
-                            Icon(FeatherIcons.Plus, contentDescription = "添加 MCP 服务器")
+                        SettingsSection.Mcp -> {
+                            IconButton(onClick = { viewModel.reloadMcp() }) {
+                                if (mcpReloading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(FeatherIcons.RefreshCw, contentDescription = "重新连接")
+                                }
+                            }
+                            IconButton(onClick = {
+                                editingMcp = null
+                                showMcpDialog = true
+                            }) {
+                                Icon(FeatherIcons.Plus, contentDescription = "添加 MCP 服务器")
+                            }
                         }
                         else -> {}
                     }
@@ -234,6 +253,8 @@ fun SettingsScreen(
     if (showMcpDialog) {
         McpServerEditDialog(
             initial = editingMcp,
+            tools = viewModel.getMcpServerTools(editingMcp?.name),
+            onRefreshTools = { viewModel.reloadMcp() },
             onDismiss = { showMcpDialog = false },
             onSave = { config ->
                 viewModel.upsertMcpServer(editingMcp?.name, config)
@@ -306,8 +327,8 @@ private fun SettingsMenu(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(Radius.md),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-            border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
                 modifier = Modifier
@@ -318,7 +339,7 @@ private fun SettingsMenu(
                 Icon(
                     imageVector = FeatherIcons.RefreshCw,
                     contentDescription = null,
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                    tint = Brand.IconGray,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(Spacing.md))
@@ -357,8 +378,8 @@ private fun MenuRow(
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier
@@ -369,7 +390,7 @@ private fun MenuRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                tint = Brand.IconGray,
                 modifier = Modifier.size(24.dp)
             )
             Spacer(Modifier.width(Spacing.md))
@@ -389,7 +410,7 @@ private fun MenuRow(
             Icon(
                 imageVector = FeatherIcons.ChevronRight,
                 contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                tint = Brand.IconGray)
         }
     }
 }
@@ -448,21 +469,38 @@ private fun PermissionsSection(
     onPromote: (PermissionRule) -> Unit,
     onDeleteGlobal: (PermissionRule) -> Unit
 ) {
-    if (projectRules.isEmpty() && globalRules.isEmpty()) {
-        EmptyHint("还没有已保存的授权规则。\n在 AI 请求执行命令时选「始终允许」即可记住。")
-        return
-    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
         item {
-            Text(
-                text = "「始终允许」记住的规则。命令按程序名前缀匹配（如 git 命中 git status / git push）。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(Radius.md),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f))
+            ) {
+                Column(modifier = Modifier.padding(Spacing.md)) {
+                    Text(
+                        text = "🔒 内置安全白名单",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(Spacing.xs))
+                    Text(
+                        text = "系统已预设白名单，对少量完全无害、只读且不派生子进程的命令（如 ls、pwd、cat、grep、ps、top、git status 等）免弹窗自动放行。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(Spacing.sm))
+                    Text(
+                        text = "在此可管理用户在对话中选「始终允许」生成的记忆规则。精细化授权机制会按命令或路径精准匹配（如 rm temp.log、git pull）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
         item { RuleGroupHeader(if (projectName != null) "当前项目：$projectName" else "当前项目（未选择）") }
@@ -514,8 +552,8 @@ private fun RuleRow(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier
@@ -541,7 +579,7 @@ private fun RuleRow(
                 TextButton(onClick = onPromote) { Text("提升为全局") }
             }
             IconButton(onClick = onDelete) {
-                Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = Brand.IconGray)
             }
         }
     }
@@ -574,8 +612,8 @@ private fun LogLevelCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(Spacing.lg)) {
             Text(
@@ -609,7 +647,7 @@ private fun LogLevelCard(
 }
 
 /**
- * MCP 二级页（可视化）：顶部说明 + 重新连接按钮 + server 列表。
+ * MCP 二级页（可视化）：全新现代化设计的 Server 列表页面。
  */
 @Composable
 private fun McpSection(
@@ -626,48 +664,50 @@ private fun McpSection(
         contentPadding = PaddingValues(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        item {
-            Text(
-                text = "添加 MCP 服务器：远程 HTTP（含 URL，可选 headers 鉴权）或本地 stdio" +
-                    "（在容器内用 command 启动，如 npx；需先在容器装好运行时如 apk add nodejs npm）。" +
-                    "保存后会自动连接并把其工具加入 AI 可用工具集。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        item {
-            OutlinedButton(
-                onClick = onReload,
-                enabled = !reloading,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (reloading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(Spacing.sm))
-                    Text("连接中…")
-                } else {
-                    Icon(FeatherIcons.RefreshCw, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(Spacing.sm))
-                    Text("重新连接")
-                }
-            }
-        }
         if (servers.isEmpty()) {
             item {
-                Text(
-                    text = "还没有 MCP 服务器，点右上角 + 添加",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = Spacing.lg)
-                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(Radius.lg)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                FeatherIcons.Terminal,
+                                contentDescription = null,
+                                modifier = Modifier.size(28.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "还没有配置 MCP 服务器",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "点击右上角 + 可以添加远程 HTTP 或本地 stdio 服务器",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         } else {
-            items(servers) { server ->
+            items(servers, key = { it.name }) { server ->
                 McpServerRow(
                     server = server,
                     status = statuses.firstOrNull { it.name == server.name },
-                    onToggle = { onToggle(server.name, it) },
-                    onEdit = { onEdit(server) },
+                    onClick = { onEdit(server) },
                     onDelete = { onDelete(server.name) }
                 )
             }
@@ -675,93 +715,286 @@ private fun McpSection(
     }
 }
 
-/** 单个 MCP server 行：名称/URL + 状态圆点 + 启用开关 + 删除；点击整行进入编辑。 */
+/** 单个 MCP server 行：现代化卡片样式（图标状态标签 + 药丸标签 + 右侧箭头，支持左滑删除）。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun McpServerRow(
     server: McpServerConfig,
     status: McpServerStatus?,
-    onToggle: (Boolean) -> Unit,
-    onEdit: () -> Unit,
+    onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onEdit() },
-        shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
-        border = BorderStroke(1.dp, androidx.compose.ui.graphics.Color(0xFFEAEAEA))
+    val isConnected = server.enabled && status?.state == McpServerStatus.State.CONNECTED
+
+    val statusText = when {
+        !server.enabled -> "已禁用"
+        status == null -> "未连接"
+        else -> when (status.state) {
+            McpServerStatus.State.CONNECTED -> "已连接"
+            McpServerStatus.State.CONNECTING -> "连接中…"
+            McpServerStatus.State.FAILED -> "连接失败"
+            McpServerStatus.State.DISABLED -> "已禁用"
+        }
+    }
+
+    val statusColor = when {
+        !server.enabled || status == null || status.state == McpServerStatus.State.DISABLED ->
+            MaterialTheme.colorScheme.outline
+        status.state == McpServerStatus.State.CONNECTED ->
+            MaterialTheme.colorScheme.tertiary
+        status.state == McpServerStatus.State.CONNECTING ->
+            MaterialTheme.colorScheme.primary
+        else ->
+            MaterialTheme.colorScheme.error
+    }
+
+    val statusBgColor = statusColor.copy(alpha = 0.12f)
+
+    val density = LocalDensity.current
+    val revealPx = remember(density) { with(density) { -112.dp.toPx() } }
+    val offsetX = remember { Animatable(0f) }
+    val coroutineScope = rememberCoroutineScope()
+
+    val revealedWidthDp = with(density) { (-offsetX.value).toDp().coerceAtLeast(0.dp) }
+    val maxButtonWidth = 104.dp
+    val buttonWidth = if (revealedWidthDp > 8.dp) (revealedWidthDp - 8.dp).coerceAtMost(maxButtonWidth) else 0.dp
+    val progress = (buttonWidth / maxButtonWidth).coerceIn(0f, 1f)
+
+    Box(
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(Spacing.lg)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        // 1. 底层删除按钮（固定在右端，向右滑动滑动时会受到挤压、缩放与透明度渐变，直到消失）
+        Row(
+            modifier = Modifier
+                .matchParentSize()
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (buttonWidth > 0.dp) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(buttonWidth)
+                        .graphicsLayer {
+                            alpha = (progress * 1.2f).coerceIn(0f, 1f)
+                            scaleX = (0.4f + 0.6f * progress).coerceIn(0f, 1f)
+                            scaleY = (0.7f + 0.3f * progress).coerceIn(0f, 1f)
+                        }
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFFEF4444))
+                        .border(1.dp, Color(0xFFF87171), RoundedCornerShape(16.dp))
+                        .clickable {
+                            coroutineScope.launch {
+                                offsetX.animateTo(0f)
+                                onDelete()
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        modifier = Modifier.requiredWidth(104.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = FeatherIcons.Trash2,
+                            contentDescription = "删除",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "删除",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 15.sp
+                            ),
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+        }
+
+        // 2. 表层卡片（支持手势回弹与滑动展开）
+        Card(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            coroutineScope.launch { offsetX.stop() }
+                        },
+                        onDragEnd = {
+                            coroutineScope.launch {
+                                if (offsetX.value < revealPx / 2) {
+                                    offsetX.animateTo(
+                                        targetValue = revealPx,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioLowBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
+                                } else {
+                                    offsetX.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = spring(
+                                            dampingRatio = Spring.DampingRatioNoBouncy,
+                                            stiffness = Spring.StiffnessMedium
+                                        )
+                                    )
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            coroutineScope.launch {
+                                offsetX.animateTo(0f)
+                            }
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            coroutineScope.launch {
+                                val newOffset = (offsetX.value + dragAmount).coerceIn(revealPx * 1.15f, 0f)
+                                offsetX.snapTo(newOffset)
+                            }
+                        }
+                    )
+                }
+                .clickable {
+                    if (offsetX.value < -10f) {
+                        coroutineScope.launch {
+                            offsetX.animateTo(0f, spring(stiffness = Spring.StiffnessMedium))
+                        }
+                    } else {
+                        onClick()
+                    }
+                },
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 左侧容器图标 + 状态圆点
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                ) {
+                    Icon(
+                        imageVector = if (server.isStdio) FeatherIcons.Terminal else FeatherIcons.Server,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .align(Alignment.Center)
+                    )
+                    // 右下角带描边的状态圆点
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(2.dp)
+                            .size(10.dp)
+                            .background(color = statusColor, shape = RoundedCornerShape(Radius.pill))
+                            .border(1.5.dp, MaterialTheme.colorScheme.surface, RoundedCornerShape(Radius.pill))
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                // 中间标题和 Pill 标签
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = server.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Normal,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp
+                        ),
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = if (server.isStdio) {
-                            "stdio · " + (listOf(server.command.orEmpty()) + server.args).joinToString(" ").trim()
-                        } else {
-                            server.url.orEmpty()
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Switch(checked = server.enabled, onCheckedChange = onToggle)
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        FeatherIcons.Trash2,
-                        contentDescription = "删除",
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
-                }
-            }
-            McpStatusLabel(server = server, status = status)
-        }
-    }
-}
 
-/** server 连接状态：彩色圆点 + 文案（按启用/连接态推导）。 */
-@Composable
-private fun McpStatusLabel(server: McpServerConfig, status: McpServerStatus?) {
-    val (dotColor, label) = when {
-        !server.enabled -> MaterialTheme.colorScheme.outline to "已禁用"
-        status == null -> MaterialTheme.colorScheme.outline to "未连接"
-        else -> when (status.state) {
-            McpServerStatus.State.CONNECTED ->
-                MaterialTheme.colorScheme.primary to "已连接 · ${status.toolCount} 个工具"
-            McpServerStatus.State.CONNECTING ->
-                MaterialTheme.colorScheme.tertiary to "连接中…"
-            McpServerStatus.State.FAILED ->
-                MaterialTheme.colorScheme.error to (status.error ?: "连接失败")
-            McpServerStatus.State.DISABLED ->
-                MaterialTheme.colorScheme.outline to "已禁用"
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1. 状态 Pill
+                        Box(
+                            modifier = Modifier
+                                .background(statusBgColor, RoundedCornerShape(Radius.pill))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                color = statusColor
+                            )
+                        }
+
+                        // 2. 类型 Pill
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant,
+                                    RoundedCornerShape(Radius.pill)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (server.isStdio) "内置" else "HTTP",
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        // 3. 工具数量/信息 Pill
+                        val infoText = when {
+                            isConnected -> "工具: ${status?.toolCount ?: 0}/${status?.toolCount ?: 0}"
+                            server.isStdio -> server.command.orEmpty().ifEmpty { "stdio" }
+                            else -> server.url.orEmpty().ifEmpty { "HTTP" }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .background(
+                                    MaterialTheme.colorScheme.surfaceVariant,
+                                    RoundedCornerShape(Radius.pill)
+                                )
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = infoText,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // 右侧箭头
+                Icon(
+                    imageVector = FeatherIcons.ChevronRight,
+                    contentDescription = "详情",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(top = Spacing.sm)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .background(dotColor, RoundedCornerShape(Radius.md))
-        )
-        Spacer(Modifier.width(Spacing.sm))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -777,11 +1010,11 @@ fun ProviderItem(
             .clickable { onEdit() },
         shape = RoundedCornerShape(Radius.md),
         colors = CardDefaults.cardColors(
-            containerColor = androidx.compose.ui.graphics.Color.White
+            containerColor = Color.White
         ),
         border = BorderStroke(
             1.dp,
-            androidx.compose.ui.graphics.Color(0xFFEAEAEA)
+            MaterialTheme.colorScheme.outlineVariant
         )
     ) {
         Row(
@@ -816,7 +1049,7 @@ fun ProviderItem(
                 Icon(
                     FeatherIcons.Edit2,
                     contentDescription = "编辑",
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                    tint = Brand.IconGray)
             }
         }
     }

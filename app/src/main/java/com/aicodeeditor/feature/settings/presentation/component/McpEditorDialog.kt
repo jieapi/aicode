@@ -1,55 +1,77 @@
 package com.aicodeeditor.feature.settings.presentation.component
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aicodeeditor.core.theme.Spacing
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.platform.LocalConfiguration
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerConfig
+import com.aicodeeditor.feature.agent.domain.mcp.McpToolDescriptor
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
+import kotlinx.serialization.json.JsonObject
 
-/** MCP server 可视化编辑对话框：类型切换（HTTP / stdio）+ 各自字段。 */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun McpServerEditDialog(
     initial: McpServerConfig?,
+    tools: List<McpToolDescriptor> = emptyList(),
+    onRefreshTools: () -> Unit = {},
     onDismiss: () -> Unit,
     onSave: (McpServerConfig) -> Unit,
     onDelete: (() -> Unit)?
 ) {
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: 基础设置, 1: 工具
+
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
     var isStdio by remember { mutableStateOf(initial?.isStdio ?: false) }
@@ -73,124 +95,436 @@ fun McpServerEditDialog(
         }
     }
 
+    // 工具权限字段 (disabledTools / requireApprovalTools)
+    val disabledToolsSet = remember {
+        mutableStateListOf<String>().apply { addAll(initial?.disabledTools ?: emptyList()) }
+    }
+    val requireApprovalToolsSet = remember {
+        mutableStateListOf<String>().apply { addAll(initial?.requireApprovalTools ?: emptyList()) }
+    }
+
     val canSave = name.isNotBlank() && if (isStdio) command.isNotBlank() else url.isNotBlank()
 
-    AlertDialog(
-        containerColor = androidx.compose.ui.graphics.Color.White,
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "添加 MCP 服务器" else "编辑 MCP 服务器") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 480.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                // ── 类型切换 ──
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        dragHandle = { BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = screenHeight * 0.88f)
+        ) {
+                // ── Top Bar ──
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-                ) {
-                    FilterChip(
-                        selected = !isStdio,
-                        onClick = { isStdio = false },
-                        label = { Text("远程 HTTP") },
-                        modifier = Modifier.weight(1f)
-                    )
-                    FilterChip(
-                        selected = isStdio,
-                        onClick = { isStdio = true },
-                        label = { Text("本地 stdio") },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("启用", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
-                }
-
-                HorizontalDivider(modifier = Modifier.fillMaxWidth())
-
-                if (isStdio) {
-                    McpStdioFields(
-                        command = command,
-                        onCommandChange = { command = it },
-                        args = argsList,
-                        env = envList
-                    )
-                } else {
-                    McpHttpFields(
-                        url = url,
-                        onUrlChange = { url = it },
-                        headers = headers
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = canSave,
-                onClick = {
-                    val config = if (isStdio) {
-                        McpServerConfig(
-                            name = name.trim(),
-                            command = command.trim(),
-                            args = argsList.map { it.trim() }.filter { it.isNotEmpty() },
-                            env = envList
-                                .map { it.first.trim() to it.second }
-                                .filter { it.first.isNotEmpty() }
-                                .toMap(),
-                            enabled = enabled
-                        )
-                    } else {
-                        McpServerConfig(
-                            name = name.trim(),
-                            url = url.trim(),
-                            headers = headers
-                                .map { it.first.trim() to it.second }
-                                .filter { it.first.isNotEmpty() }
-                                .toMap(),
-                            enabled = enabled
-                        )
-                    }
-                    onSave(config)
-                }
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                if (onDelete != null) {
-                    TextButton(
-                        onClick = onDelete,
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(36.dp)
                     ) {
-                        Text("删除")
+                        Icon(
+                            FeatherIcons.X,
+                            contentDescription = "关闭",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Text(
+                        text = if (initial == null) "添加 MCP" else "编辑 MCP",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        ),
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    IconButton(
+                        onClick = onRefreshTools,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            FeatherIcons.RefreshCw,
+                            contentDescription = "刷新工具",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
+
+                // ── Tab Segmented Control ──
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            RoundedCornerShape(14.dp)
+                        )
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val tabs = listOf("基础设置", "工具")
+                    tabs.forEachIndexed { index, title ->
+                        val isSelected = selectedTab == index
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent)
+                                .clickable { selectedTab = index }
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                ),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // ── Tab Content Area ──
+                Box(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .fillMaxWidth()
+                ) {
+                    if (selectedTab == 0) {
+                        // Tab 0: 基础设置
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // 是否启用 Card
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "是否启用",
+                                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Switch(
+                                        checked = enabled,
+                                        onCheckedChange = { enabled = it }
+                                    )
+                                }
+                            }
+
+                            // 名称字段
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "名称",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                OutlinedTextField(
+                                    value = name,
+                                    onValueChange = { name = it },
+                                    placeholder = { Text("例如：fetch、github、gitlab") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+
+                            // 传输类型选择
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "传输类型",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                            RoundedCornerShape(12.dp)
+                                        )
+                                        .padding(4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    val types = listOf(false to "远程 HTTP", true to "本地 stdio")
+                                    types.forEach { (stdioFlag, label) ->
+                                        val selected = isStdio == stdioFlag
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent)
+                                                .clickable { isStdio = stdioFlag }
+                                                .padding(vertical = 10.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.bodyMedium.copy(
+                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                                ),
+                                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 具体表单字段
+                            if (isStdio) {
+                                McpStdioFields(
+                                    command = command,
+                                    onCommandChange = { command = it },
+                                    args = argsList,
+                                    env = envList
+                                )
+                            } else {
+                                McpHttpFields(
+                                    url = url,
+                                    onUrlChange = { url = it },
+                                    headers = headers
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    } else {
+                        // Tab 1: 工具
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            if (tools.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 48.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            FeatherIcons.Tool,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(36.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                        Text(
+                                            text = if (initial == null) "请先保存并连接服务器后查看工具列表" else "未检测到工具，点击右上角刷新按钮重试",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            } else {
+                                tools.forEach { tool ->
+                                    val isToolEnabled = tool.name !in disabledToolsSet
+                                    val isApprovalRequired = tool.name in requireApprovalToolsSet
+
+                                    Card(
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                        ),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(16.dp)
+                                        ) {
+                                            // 顶部工具名 & 开关
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = tool.name,
+                                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                                    color = if (isToolEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Switch(
+                                                    checked = isToolEnabled,
+                                                    onCheckedChange = { checked ->
+                                                        if (checked) disabledToolsSet.remove(tool.name) else disabledToolsSet.add(tool.name)
+                                                    }
+                                                )
+                                            }
+
+                                            // 描述
+                                            Text(
+                                                text = tool.description ?: "无描述",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 3,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+
+                                            // 参数标签 pills
+                                            val paramKeys = remember(tool.inputSchema) {
+                                                (tool.inputSchema?.get("properties") as? JsonObject)?.keys ?: emptySet()
+                                            }
+                                            if (paramKeys.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.height(10.dp))
+                                                FlowRow(
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    paramKeys.forEach { key ->
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .background(
+                                                                    MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+                                                                    RoundedCornerShape(6.dp)
+                                                                )
+                                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = key,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            HorizontalDivider(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+
+                                            // 底部审批要求开关
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Icon(
+                                                    FeatherIcons.Shield,
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(16.dp),
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "需要审批",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Switch(
+                                                    checked = isApprovalRequired,
+                                                    onCheckedChange = { checked ->
+                                                        if (checked) requireApprovalToolsSet.add(tool.name) else requireApprovalToolsSet.remove(tool.name)
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+
+                // ── Bottom Action Row (Save & Delete buttons) ──
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        enabled = canSave,
+                        onClick = {
+                            val config = if (isStdio) {
+                                McpServerConfig(
+                                    name = name.trim(),
+                                    command = command.trim(),
+                                    args = argsList.map { it.trim() }.filter { it.isNotEmpty() },
+                                    env = envList
+                                        .map { it.first.trim() to it.second }
+                                        .filter { it.first.isNotEmpty() }
+                                        .toMap(),
+                                    enabled = enabled,
+                                    disabledTools = disabledToolsSet.toSet(),
+                                    requireApprovalTools = requireApprovalToolsSet.toSet()
+                                )
+                            } else {
+                                McpServerConfig(
+                                    name = name.trim(),
+                                    url = url.trim(),
+                                    headers = headers
+                                        .map { it.first.trim() to it.second }
+                                        .filter { it.first.isNotEmpty() }
+                                        .toMap(),
+                                    enabled = enabled,
+                                    disabledTools = disabledToolsSet.toSet(),
+                                    requireApprovalTools = requireApprovalToolsSet.toSet()
+                                )
+                            }
+                            onSave(config)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(FeatherIcons.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("保存", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                    }
+
+                    if (onDelete != null) {
+                        TextButton(
+                            onClick = onDelete,
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(FeatherIcons.Trash2, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("删除此 MCP 服务器")
+                    }
                 }
             }
         }
-    )
+    }
 }
 
-/** HTTP 形态字段：URL + 请求头键值对。 */
+/** HTTP 形态字段：URL + 请求头键值对（按照卡片排版规范）。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun McpHttpFields(
@@ -198,66 +532,138 @@ private fun McpHttpFields(
     onUrlChange: (String) -> Unit,
     headers: SnapshotStateList<Pair<String, String>>
 ) {
-    OutlinedTextField(
-        value = url,
-        onValueChange = onUrlChange,
-        label = { Text("URL") },
-        placeholder = { Text("https://example.com/mcp") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "服务器地址",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = url,
+            onValueChange = onUrlChange,
+            placeholder = { Text("例如：https://api.example.com/sse") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    Text(
+        text = "自定义请求头",
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.onSurface
     )
 
-    HorizontalDivider(modifier = Modifier.fillMaxWidth())
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    if (headers.isEmpty()) {
         Text(
-            "请求头 Headers（${headers.size}）",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f)
+            text = "暂无配置的自定义 Header",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
-        TextButton(onClick = { headers.add("" to "") }) {
-            Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text("添加")
+    } else {
+        headers.forEachIndexed { index, (k, v) ->
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "请求头名称",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = k,
+                        onValueChange = { headers[index] = it to v },
+                        placeholder = { Text("如 Authorization") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "请求头值",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = v,
+                        onValueChange = { headers[index] = k to it },
+                        placeholder = { Text("如 Bearer xxxxxx") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        IconButton(
+                            onClick = { headers.removeAt(index) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                FeatherIcons.Trash2,
+                                contentDescription = "删除",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
-    headers.forEachIndexed { index, (k, v) ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    Row {
+        Surface(
+            onClick = { headers.add("" to "") },
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
         ) {
-            OutlinedTextField(
-                value = k,
-                onValueChange = { headers[index] = it to v },
-                label = { Text("键") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = v,
-                onValueChange = { headers[index] = k to it },
-                label = { Text("值") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = { headers.removeAt(index) }, modifier = Modifier.size(32.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Icon(
-                    FeatherIcons.X,
-                    contentDescription = "删除",
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
-                    modifier = Modifier.size(16.dp)
+                    FeatherIcons.Plus,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "添加请求头",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
 }
 
-/** stdio 形态字段：command + 参数列表 + 环境变量键值对。 */
+/** stdio 形态字段：command + 参数列表 + 环境变量键值对（卡片排版）。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun McpStdioFields(
@@ -266,102 +672,225 @@ private fun McpStdioFields(
     args: SnapshotStateList<String>,
     env: SnapshotStateList<Pair<String, String>>
 ) {
-    OutlinedTextField(
-        value = command,
-        onValueChange = onCommandChange,
-        label = { Text("命令 command") },
-        placeholder = { Text("npx") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "启动命令",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = command,
+            onValueChange = onCommandChange,
+            placeholder = { Text("例如：npx") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    Text(
+        text = "命令参数",
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.onSurface
     )
 
-    // ── 参数 args ──
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    if (args.isEmpty()) {
         Text(
-            "参数 args（${args.size}）",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f)
+            text = "无额外命令行参数",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
-        TextButton(onClick = { args.add("") }) {
-            Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text("添加")
+    } else {
+        args.forEachIndexed { index, value ->
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "参数值",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = value,
+                        onValueChange = { args[index] = it },
+                        placeholder = { Text("如 -y 或 @modelcontextprotocol/server-xxx") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        IconButton(
+                            onClick = { args.removeAt(index) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                FeatherIcons.Trash2,
+                                contentDescription = "删除",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
-    args.forEachIndexed { index, value ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    Row {
+        Surface(
+            onClick = { args.add("") },
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
         ) {
-            OutlinedTextField(
-                value = value,
-                onValueChange = { args[index] = it },
-                label = { Text("参数 ${index + 1}") },
-                placeholder = { Text("-y / @scope/server / --flag") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = { args.removeAt(index) }, modifier = Modifier.size(32.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Icon(
-                    FeatherIcons.X,
-                    contentDescription = "删除",
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
-                    modifier = Modifier.size(16.dp)
+                    FeatherIcons.Plus,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "添加参数",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
     }
 
-    HorizontalDivider(modifier = Modifier.fillMaxWidth())
+    Spacer(modifier = Modifier.height(4.dp))
 
-    // ── 环境变量 env ──
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    Text(
+        text = "环境变量",
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        color = MaterialTheme.colorScheme.onSurface
+    )
+
+    if (env.isEmpty()) {
         Text(
-            "环境变量 env（${env.size}）",
-            style = MaterialTheme.typography.titleSmall,
-            modifier = Modifier.weight(1f)
+            text = "无自定义环境变量",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
         )
-        TextButton(onClick = { env.add("" to "") }) {
-            Icon(FeatherIcons.Plus, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(Spacing.xs))
-            Text("添加")
+    } else {
+        env.forEachIndexed { index, (k, v) ->
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "变量名称",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = k,
+                        onValueChange = { env[index] = it to v },
+                        placeholder = { Text("如 API_KEY") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "变量值",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = v,
+                        onValueChange = { env[index] = k to it },
+                        placeholder = { Text("如 sk-xxxx") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = Color.Transparent,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.45f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        IconButton(
+                            onClick = { env.removeAt(index) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                FeatherIcons.Trash2,
+                                contentDescription = "删除",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
-    env.forEachIndexed { index, (k, v) ->
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+    Row {
+        Surface(
+            onClick = { env.add("" to "") },
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
         ) {
-            OutlinedTextField(
-                value = k,
-                onValueChange = { env[index] = it to v },
-                label = { Text("键") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = v,
-                onValueChange = { env[index] = k to it },
-                label = { Text("值") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(onClick = { env.removeAt(index) }, modifier = Modifier.size(32.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Icon(
-                    FeatherIcons.X,
-                    contentDescription = "删除",
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
-                    modifier = Modifier.size(16.dp)
+                    FeatherIcons.Plus,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "添加环境变量",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
