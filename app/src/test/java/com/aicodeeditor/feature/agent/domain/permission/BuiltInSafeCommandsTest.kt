@@ -22,6 +22,12 @@ class BuiltInSafeCommandsTest {
         assertTrue(safe("du -sh ."))
         assertTrue(safe("echo hello"))
         assertTrue(safe("which node"))
+        assertTrue(safe("ps aux"))
+        assertTrue(safe("top -n 1"))
+        assertTrue(safe("free -m"))
+        assertTrue(safe("htop"))
+        assertTrue(safe("clear"))
+        assertTrue(safe("history"))
     }
 
     @Test
