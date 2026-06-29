@@ -3,16 +3,6 @@ package com.aicodeeditor.feature.workspace.presentation.remote
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Cloud
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -20,12 +10,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
 import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
 import com.aicodeeditor.feature.workspace.domain.model.RemoteProtocol
+import com.aicodeeditor.core.theme.Brand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -47,11 +39,11 @@ fun RemoteServerScreen(
     val maxSyncBatchSize by viewModel.maxSyncBatchSize.collectAsStateWithLifecycle()
 
     Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
+        containerColor = Brand.PageBg,
         topBar = {
             Column {
                 TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA)),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.PageBg),
                     title = { Text("远程工作区") },
                     navigationIcon = {
                         IconButton(onClick = onNavigateBack) {
@@ -211,7 +203,8 @@ fun RemoteServerScreen(
     if (showAddMountDialog) {
         if (uiState.connections.isEmpty()) {
             AlertDialog(
-        containerColor = androidx.compose.ui.graphics.Color.White,
+        containerColor = Color.White,
+                tonalElevation = 0.dp,
                 onDismissRequest = { showAddMountDialog = false },
                 title = { Text("提示") },
                 text = { Text("请先在「连接配置」中添加一个远程通道。") },
@@ -267,7 +260,7 @@ fun SyncSettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -275,7 +268,7 @@ fun SyncSettingsSection(
                     Icon(
                         FeatherIcons.FileText,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        tint = Brand.IconGray,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
@@ -314,7 +307,7 @@ fun SyncSettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
@@ -328,7 +321,7 @@ fun SyncSettingsSection(
                     Icon(
                         FeatherIcons.CheckSquare,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        tint = Brand.IconGray,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
@@ -360,7 +353,7 @@ fun SyncSettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -368,7 +361,7 @@ fun SyncSettingsSection(
                     Icon(
                         FeatherIcons.Layers,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        tint = Brand.IconGray,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
@@ -416,7 +409,7 @@ fun RemoteConnectionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -429,7 +422,7 @@ fun RemoteConnectionCard(
                     Icon(
                         FeatherIcons.Cloud,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        tint = Brand.IconGray)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(text = conn.name, fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
@@ -438,10 +431,10 @@ fun RemoteConnectionCard(
                 }
                 Row {
                     IconButton(onClick = { onEdit(conn) }) {
-                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = Brand.IconGray)
                     }
                     IconButton(onClick = { onDelete(conn) }) {
-                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = Brand.IconGray)
                     }
                 }
             }
@@ -462,7 +455,7 @@ fun RemoteMountCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -475,7 +468,7 @@ fun RemoteMountCard(
                     Icon(
                         FeatherIcons.Folder,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        tint = Brand.IconGray)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(text = "通过: ${mount.connection?.name ?: "未知连接"}", fontWeight = androidx.compose.ui.text.font.FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
@@ -486,10 +479,10 @@ fun RemoteMountCard(
                 }
                 Row {
                     IconButton(onClick = { onEdit(mount) }) {
-                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = Brand.IconGray)
                     }
                     IconButton(onClick = { onDelete(mount) }) {
-                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = Brand.IconGray)
                     }
                 }
             }
@@ -542,7 +535,8 @@ fun AddRemoteConnectionDialog(
     var isTesting by remember { mutableStateOf(false) }
 
     AlertDialog(
-        containerColor = androidx.compose.ui.graphics.Color.White,
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
         onDismissRequest = onDismiss,
         title = { Text(if (initialConnection != null) "编辑连接通道" else "添加连接通道", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
         text = {
@@ -579,7 +573,7 @@ fun AddRemoteConnectionDialog(
                     trailingIcon = {
                         val image = if (passwordVisible) FeatherIcons.Eye else FeatherIcons.EyeOff
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(image, "切换密码可见性", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                            Icon(image, "切换密码可见性", tint = Brand.IconGray)
                         }
                     }
                 )
@@ -642,7 +636,8 @@ fun AddRemoteMountDialog(
     var showBrowser by remember { mutableStateOf(false) }
 
     AlertDialog(
-        containerColor = androidx.compose.ui.graphics.Color.White,
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
         onDismissRequest = onDismiss,
         title = { Text(if (initialMount != null) "编辑工作区" else "添加工作区", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
         text = {
@@ -666,7 +661,7 @@ fun AddRemoteMountDialog(
                     ExposedDropdownMenu(
                         expanded = connExpanded,
                         onDismissRequest = { connExpanded = false },
-                        modifier = Modifier.background(androidx.compose.ui.graphics.Color.White)
+                        modifier = Modifier.background(Color.White)
                     ) {
                         connections.forEach { conn ->
                             DropdownMenuItem(
@@ -693,7 +688,7 @@ fun AddRemoteMountDialog(
                         onClick = { showBrowser = true },
                         enabled = selectedConnectionId.isNotEmpty()
                     ) {
-                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录", tint = Brand.IconGray)
                     }
                 }
                 
@@ -713,7 +708,7 @@ fun AddRemoteMountDialog(
                     ExposedDropdownMenu(
                         expanded = wsExpanded,
                         onDismissRequest = { wsExpanded = false },
-                        modifier = Modifier.background(androidx.compose.ui.graphics.Color.White)
+                        modifier = Modifier.background(Color.White)
                     ) {
                         workspaces.forEach { ws ->
                             DropdownMenuItem(
@@ -803,7 +798,8 @@ fun RemoteDirectoryBrowserDialog(
     }
 
     AlertDialog(
-        containerColor = androidx.compose.ui.graphics.Color.White,
+        containerColor = Color.White,
+        tonalElevation = 0.dp,
         onDismissRequest = onDismiss,
         title = { Text("选择远程目录") },
         text = {
@@ -882,7 +878,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
@@ -894,7 +890,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                 Icon(
                     FeatherIcons.Info,
                     contentDescription = null,
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                    tint = Brand.IconGray,
                     modifier = Modifier.size(20.dp).padding(top = 2.dp)
                 )
                 Spacer(modifier = Modifier.width(16.dp))
@@ -918,7 +914,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -931,7 +927,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                         Icon(
                             FeatherIcons.Share2,
                             contentDescription = null,
-                            tint = if (isRunning) androidx.compose.ui.graphics.Color(0xFF4CAF50) else androidx.compose.ui.graphics.Color(0xFF424242),
+                            tint = if (isRunning) androidx.compose.ui.graphics.Color(0xFF4CAF50) else Brand.IconGray,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
@@ -970,7 +966,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color.White),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(
@@ -981,7 +977,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                     Icon(
                         FeatherIcons.Settings,
                         contentDescription = null,
-                        tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                        tint = Brand.IconGray,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
