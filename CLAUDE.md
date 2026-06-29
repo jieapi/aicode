@@ -6,6 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 永远使用中文回复 (Always reply in Chinese).
 - 优先使用已有工具进行文件操作，比如读取、修改文件 (Prioritize using existing tools for file operations, such as reading and modifying files).
 
+## Asset Synchronization
+项目中的 `assets/prompts/` 和 `assets/docs/` 是 AI Agent 的核心知识来源，必须与代码保持同步：
+
+- **工具变更 → 同步 prompts**：当 `feature/agent/domain/tool/` 下的工具新增、删除、重命名或参数签名变化时，必须同步更新 `assets/prompts/60-tools-and-paths.md` 中的工具描述，确保模型看到的工具定义与实际注册一致。
+- **设置功能变更 → 同步 docs**：当 `feature/settings/` 下的设置项新增、删除或行为变化时，必须同步更新 `assets/docs/` 下对应的文档文件：
+  - AI 服务商与模型配置变更 → `providers-and-models.md`
+  - MCP 服务器与扩展技能配置变更 → `mcp-and-skills.md`
+  - 日志、私有目录与保活设置变更 → `logs-and-private-dir.md`
+  - 远程服务器与同步设置变更 → `remote-servers.md`
+  - 工作区与模式配置变更 → `app-settings-guide.md`
+
 ## Build and Run
 
 This is an Android application built with Kotlin, Jetpack Compose, and Hilt. It uses Gradle as the build system.
