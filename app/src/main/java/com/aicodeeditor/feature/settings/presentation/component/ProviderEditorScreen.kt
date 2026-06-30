@@ -321,6 +321,7 @@ fun ProviderEditorScreen(
                         models.forEach { model ->
                             ProviderModelRow(
                                 model = model,
+                                provider = currentConfig(),
                                 testing = model in testing,
                                 result = testResults[model],
                                 onTest = { viewModel.testModel(currentConfig(), model) },
@@ -450,27 +451,26 @@ private fun FetchModelsDialog(
                         if (newOnes.isEmpty()) {
                             Text("没有匹配的模型", style = MaterialTheme.typography.bodyMedium)
                         } else {
-                            val grouped = newOnes.groupBy { m -> 
-                                val parts = m.split("/", "-", limit = 2)
-                                if (parts.size > 1 && parts[0].length >= 2) parts[0].replaceFirstChar { it.uppercase() } else "其他" 
-                            }
-                            
+                            // 按品牌分组，使用品牌 logo 作为分类图标
+                            val grouped = newOnes.groupBy { m -> modelBrandKey(m) }
+                                .toSortedMap(compareBy { brandDisplayName(it) })
+
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize(),
                                 verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                             ) {
-                                grouped.forEach { (category, models) ->
-                                    item {
+                                grouped.forEach { (brandKey, models) ->
+                                    item(key = "header_$brandKey") {
                                         Row(
                                             modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.sm),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(FeatherIcons.ChevronDown, contentDescription = null, modifier = Modifier.size(20.dp), tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                                            BrandLogoIcon(brandKey = brandKey, size = 18.dp)
                                             Spacer(Modifier.width(Spacing.sm))
-                                            Text(category, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(brandDisplayName(brandKey), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
-                                    items(models) { m ->
+                                    items(models, key = { "${brandKey}_$it" }) { m ->
                                         FetchModelRow(model = m, onAdd = { onAddModel(m) })
                                     }
                                 }
@@ -497,12 +497,7 @@ private fun FetchModelRow(model: String, onAdd: () -> Unit) {
             .padding(vertical = Spacing.sm, horizontal = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            FeatherIcons.Star,
-            contentDescription = null,
-            tint = androidx.compose.ui.graphics.Color(0xFF424242),
-            modifier = Modifier.size(20.dp)
-        )
+        ModelLogoIcon(modelName = model, size = 20.dp)
         Spacer(Modifier.width(Spacing.md))
         Column(modifier = Modifier.weight(1f)) {
             Text(model, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
@@ -552,6 +547,7 @@ private fun ModelTag(text: String? = null, icon: androidx.compose.ui.graphics.ve
 @Composable
 internal fun ProviderModelRow(
     model: String,
+    provider: AIProviderConfig?,
     testing: Boolean,
     result: ModelTestResult?,
     onTest: () -> Unit,
@@ -563,13 +559,12 @@ internal fun ProviderModelRow(
             .padding(horizontal = Spacing.xs, vertical = Spacing.sm)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Left Icon
-            Icon(
-                FeatherIcons.Star,
-                contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF424242),
-                modifier = Modifier.size(24.dp)
-            )
+            // Left Icon — 优先使用 provider 级别 logo，回退到模型名称匹配
+            if (provider != null) {
+                ProviderLogoIcon(provider = provider, size = 24.dp)
+            } else {
+                ModelLogoIcon(modelName = model, size = 24.dp)
+            }
             Spacer(Modifier.width(Spacing.md))
 
             // Center Content (Name & Tags)

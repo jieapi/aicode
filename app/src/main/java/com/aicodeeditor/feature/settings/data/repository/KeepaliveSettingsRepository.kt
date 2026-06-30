@@ -23,7 +23,7 @@ private val Context.keepaliveDataStore by preferencesDataStore(name = "keepalive
  */
 @Singleton
 class KeepaliveSettingsRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private companion object {
         val ENABLED_KEY = booleanPreferencesKey("keepalive_enabled")
