@@ -39,9 +39,9 @@ import javax.inject.Inject
 class StatefulAgentWorkflow @Inject constructor(
     private val toolRegistry: ToolRegistry,
     private val aiProviderRepository: AIProviderRepository,
-    @javax.inject.Named("OpenAIProvider") private val openAIProvider: AIProvider,
-    @javax.inject.Named("AnthropicProvider") private val anthropicProvider: AIProvider,
-    @javax.inject.Named("GeminiProvider") private val geminiProvider: AIProvider,
+    @param:javax.inject.Named("OpenAIProvider") private val openAIProvider: AIProvider,
+    @param:javax.inject.Named("AnthropicProvider") private val anthropicProvider: AIProvider,
+    @param:javax.inject.Named("GeminiProvider") private val geminiProvider: AIProvider,
     private val promptProvider: SystemPromptProvider,
     private val permissionManager: ToolPermissionManager,
     private val policyEngine: ToolPermissionPolicyEngine,
@@ -202,6 +202,7 @@ class StatefulAgentWorkflow @Inject constructor(
 
         var currentContext = context
         var state = AgentSessionState()
+        var currentTools = tools
         val actionQueue = ArrayDeque<AgentAction>()
         actionQueue.addLast(AgentAction.InitRequest(currentContext.history + AgentMessage.UserMessage(content = enrichedRequest)))
 
@@ -221,7 +222,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             state = state.copy(messages = compactedMessages)
                         }
                         try {
-                            val aiResponse = aiProvider.complete(systemPrompt, compactedMessages, tools)
+                            val aiResponse = aiProvider.complete(systemPrompt, compactedMessages, currentTools)
                             actionQueue.addLast(AgentAction.LlmResponse(aiResponse))
                         } catch (e: Exception) {
                             actionQueue.addLast(AgentAction.LlmError("LLM 调用失败: ${e.message}"))
@@ -241,6 +242,8 @@ class StatefulAgentWorkflow @Inject constructor(
                         if (updated) {
                             currentContext = newCtx
                             systemPrompt = promptProvider.build(currentContext)
+                            // 模式切换后重建工具列表：BUILD→PLAN 移除写工具，PLAN→BUILD 恢复全部工具
+                            currentTools = toolRegistry.getAvailableTools(currentContext.mode)
                         }
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                     }
@@ -268,6 +271,7 @@ class StatefulAgentWorkflow @Inject constructor(
 
         var currentContext = context
         var state = AgentSessionState()
+        var currentTools = tools
         val actionQueue = ArrayDeque<AgentAction>()
         actionQueue.addLast(AgentAction.InitRequest(currentContext.history + AgentMessage.UserMessage(content = enrichedRequest)))
 
@@ -286,13 +290,13 @@ class StatefulAgentWorkflow @Inject constructor(
                         if (compactedMessages !== state.messages) {
                             state = state.copy(messages = compactedMessages)
                         }
-                        
+
                         val acc = StringBuilder()
                         val reasoningAcc = StringBuilder()
                         var finalResponse: AIResponse? = null
-                        
+
                         try {
-                            aiProvider.completeStream(systemPrompt, compactedMessages, tools).collect { chunk ->
+                            aiProvider.completeStream(systemPrompt, compactedMessages, currentTools).collect { chunk ->
                                 when (chunk) {
                                     is AIStreamChunk.TextDelta -> {
                                         acc.append(chunk.text)
@@ -302,11 +306,12 @@ class StatefulAgentWorkflow @Inject constructor(
                                         reasoningAcc.append(chunk.text)
                                         emit(AgentEvent.ReasoningDelta(reasoningAcc.toString()))
                                     }
+                                    is AIStreamChunk.Retrying -> emit(AgentEvent.Retrying(chunk.attempt, chunk.maxRetries))
                                     is AIStreamChunk.Final -> finalResponse = chunk.response
                                 }
                             }
                             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
-                            
+
                             if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
                                 emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
                             }
@@ -325,7 +330,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         val argsPreview = JsonObject(effect.toolCall.arguments).toString().take(500)
                         val checkResult = requestPermissionIfNeeded(tool, effect.toolCall.id, effect.toolCall.arguments, argsPreview, currentContext.mode)
-                        
+
                         if (!checkResult.approved) {
                             val rawResult = ToolResult.Error(checkResult.denyReason, checkResult.errorCode).toString()
                             emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, true, argsPreview))
@@ -347,6 +352,8 @@ class StatefulAgentWorkflow @Inject constructor(
                         if (updated) {
                             currentContext = newCtx
                             systemPrompt = promptProvider.build(currentContext)
+                            // 模式切换后重建工具列表：BUILD→PLAN 移除写工具，PLAN→BUILD 恢复全部工具
+                            currentTools = toolRegistry.getAvailableTools(currentContext.mode)
                         }
                         emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
