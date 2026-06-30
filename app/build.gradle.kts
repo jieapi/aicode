@@ -4,9 +4,9 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     kotlin("android")
-    
+
     kotlin("plugin.compose")
-    kotlin("plugin.serialization") version "2.0.0"
+    kotlin("plugin.serialization") version "2.2.21"
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
 }
@@ -21,7 +21,7 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.aicodeeditor"
-    compileSdk = 34
+    compileSdk = 36
 
     signingConfigs {
         create("release") {
@@ -101,7 +101,7 @@ android {
 
 dependencies {
     // Compose BOM
-    val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
+    val composeBom = platform("androidx.compose:compose-bom:2025.12.01")
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
@@ -110,44 +110,44 @@ dependencies {
     implementation("androidx.compose.animation:animation")
 
     // Lifecycle + ViewModel
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
-    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
+    implementation("androidx.activity:activity-compose:1.10.1")
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.8.0")
+    implementation("androidx.navigation:navigation-compose:2.9.0")
 
     // Hilt 依赖注入
-    implementation("com.google.dagger:hilt-android:2.51.1")
-    ksp("com.google.dagger:hilt-compiler:2.51.1")
+    implementation("com.google.dagger:hilt-android:2.56.1")
+    ksp("com.google.dagger:hilt-compiler:2.56.1")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
     // Room 数据库
-    implementation("androidx.room:room-runtime:2.6.0")
-    implementation("androidx.room:room-ktx:2.6.0")
-    ksp("androidx.room:room-compiler:2.6.0")
+    implementation("androidx.room:room-runtime:2.7.1")
+    implementation("androidx.room:room-ktx:2.7.1")
+    ksp("androidx.room:room-compiler:2.7.1")
 
     // DataStore
-    implementation("androidx.datastore:datastore-preferences:1.1.0")
+    implementation("androidx.datastore:datastore-preferences:1.1.4")
 
     // 网络请求
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
     implementation("com.squareup.retrofit2:converter-gson:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    
+
     // HTML 解析与清洗 (用于 WebFetchTool)
-    implementation("org.jsoup:jsoup:1.17.2")
+    implementation("org.jsoup:jsoup:1.18.1")
 
     // 安全存储
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // 协程
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
 
     // Kotlin 序列化
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
 
     // YAML 解析 (用于 Skill Frontmatter)
     implementation("org.yaml:snakeyaml:2.2")
@@ -168,20 +168,20 @@ dependencies {
     implementation("com.github.termux.termux-app:terminal-view:v0.118.0")
 
     // WebView (用于代码编辑器)
-    implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.webkit:webkit:1.13.0")
 
     // Material Icons
     implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.compose.material:material-icons-extended")
-    
+
     // Lucide Icons
     implementation("br.com.devsrsouza.compose.icons:feather:1.1.1")
 
     // Markdown Renderer
-    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.24.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.41.0")
 
     // Core Android
-    implementation("androidx.core:core:1.13.0")
+    implementation("androidx.core:core:1.16.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
