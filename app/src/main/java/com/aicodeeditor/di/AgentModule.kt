@@ -56,7 +56,7 @@ object AgentModule {
             AgentDatabase::class.java,
             "aicodeeditor_agent_db"
         ).addMigrations(*MigrationLoader.loadMigrations(context))
-            .fallbackToDestructiveMigration()
+            .fallbackToDestructiveMigration(dropAllTables = false)
             .build()
     }
 
