@@ -172,7 +172,7 @@ class OpenAIAdapter @Inject constructor(
             AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
             val rawSse = StringBuilder()
             try {
-                streamWithStaircaseRetry { onProduced ->
+                streamWithStaircaseRetry(attemptOnce = { onProduced ->
                     val textBuilder = StringBuilder()
                     val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
                     var finishReason: String? = null
@@ -184,6 +184,9 @@ class OpenAIAdapter @Inject constructor(
                     )
 
                     body.use { rb ->
+                        // 首字节超时 watchdog：60s 内未收到首个内容块则关闭流，触发可重试的 IOException。
+                        val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
+                        val watchdog = launchFirstByteWatchdog({ rb.close() }) { firstByteReceived.get() }
                         val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                             runCatching { rb.close() }
                         }
@@ -205,6 +208,7 @@ class OpenAIAdapter @Inject constructor(
                                         val delta = obj.get("delta")?.asString ?: ""
                                         if (delta.isNotEmpty()) {
                                             textBuilder.append(delta)
+                                            if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
                                             onProduced()
                                             emit(AIStreamChunk.TextDelta(delta))
                                         }
@@ -237,6 +241,7 @@ class OpenAIAdapter @Inject constructor(
                                 }
                             }
                         } finally {
+                            watchdog.cancel()
                             closeHandle?.dispose()
                         }
                     }
@@ -246,7 +251,9 @@ class OpenAIAdapter @Inject constructor(
                         .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
                     onProduced()
                     emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
-                }
+                },
+                onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
+            )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -271,7 +278,8 @@ class OpenAIAdapter @Inject constructor(
 
         // 首字节前失败可安全重试；一旦开始吐字（onProduced 已调用）再失败则上抛，避免重复文本。
         try {
-            streamWithStaircaseRetry { onProduced ->
+            streamWithStaircaseRetry(
+                attemptOnce = { onProduced ->
             val textBuilder = StringBuilder()
             // tool_call index -> 累积中的工具调用（保序）。
             val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
@@ -284,6 +292,9 @@ class OpenAIAdapter @Inject constructor(
             )
 
             body.use { rb ->
+                // 首字节超时 watchdog：60s 内未收到首个内容块则关闭流，触发可重试的 IOException。
+                val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
+                val watchdog = launchFirstByteWatchdog({ rb.close() }) { firstByteReceived.get() }
                 val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                     runCatching { rb.close() }
                 }
@@ -320,14 +331,18 @@ class OpenAIAdapter @Inject constructor(
                             delta.get("content")?.takeIf { !it.isJsonNull }?.asString?.let { c ->
                                 if (c.isNotEmpty()) {
                                     textBuilder.append(c)
+                                    if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
                                     onProduced()
                                     emit(AIStreamChunk.TextDelta(c))
                                 }
                             }
                             // 思考过程增量（reasoning_content）：仅 UI 实时展示，不计入正文、不触发 onProduced
-                            // （思考不落库，重试时重新流出即可，无重复文本风险）。
+                            // （思考不落库，重试时重新流出即可，无重复文本风险），但收到即说明连接已活，取消首字节超时。
                             delta.get("reasoning_content")?.takeIf { !it.isJsonNull }?.asString?.let { r ->
-                                if (r.isNotEmpty()) emit(AIStreamChunk.ReasoningDelta(r))
+                                if (r.isNotEmpty()) {
+                                    if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                    emit(AIStreamChunk.ReasoningDelta(r))
+                                }
                             }
                             // 工具调用增量：按 index 聚合 id/name/arguments 片段。
                             delta.getAsJsonArray("tool_calls")?.forEach { el ->
@@ -348,6 +363,7 @@ class OpenAIAdapter @Inject constructor(
                         }
                     }
                 } finally {
+                    watchdog.cancel()
                     closeHandle?.dispose()
                 }
             }
@@ -358,7 +374,9 @@ class OpenAIAdapter @Inject constructor(
             // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
             emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
-            }
+            },
+            onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
