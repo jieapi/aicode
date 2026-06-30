@@ -161,7 +161,7 @@ class SyncEngine(
         
         fun watchDirectory(dir: File) {
             if (!dir.exists() || !dir.isDirectory || isIgnored(dir.absolutePath)) return
-            val observer = object : FileObserver(dir.absolutePath, mask) {
+            val observer = object : FileObserver(dir, mask) {
                 override fun onEvent(event: Int, path: String?) {
                     if (path == null) return
                     val fullLocalPath = File(dir, path).absolutePath

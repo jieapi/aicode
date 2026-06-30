@@ -28,7 +28,7 @@ private val Context.workspaceDataStore by preferencesDataStore(name = "workspace
  */
 @Singleton
 class WorkspaceRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private companion object {
         const val TAG = "WorkspaceRepository"
