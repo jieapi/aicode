@@ -21,7 +21,7 @@ private val Context.logDataStore by preferencesDataStore(name = "log_prefs")
  */
 @Singleton
 class LogSettingsRepository @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private companion object {
         val LEVEL_KEY = stringPreferencesKey("log_min_level")
