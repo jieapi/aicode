@@ -1,6 +1,7 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -13,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.horizontalScroll
@@ -75,13 +77,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
@@ -98,11 +104,14 @@ import com.aicodeeditor.feature.agent.presentation.hasVisibleContent
 import com.aicodeeditor.feature.agent.presentation.MessageRole
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.presentation.SettingsViewModel
+import com.aicodeeditor.feature.settings.presentation.component.ProviderLogoIcon
 import com.aicodeeditor.feature.workspace.presentation.WorkspaceViewModel
-import com.aicodeeditor.feature.workspace.presentation.component.WorkspaceChip
 import com.aicodeeditor.feature.workspace.presentation.component.WorkspaceIconButton
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -113,6 +122,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import com.aicodeeditor.feature.agent.presentation.MdBlock
 import com.aicodeeditor.feature.agent.presentation.parseMarkdownBlocks
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
+import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.markdownDimens
+import com.mikepenz.markdown.model.markdownPadding
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -213,52 +227,63 @@ fun AIChatPanel(
         }
     }
 
+    // ---- 自动滚动：拆为会话定位 + 流式跟随，避免 11-key LaunchedEffect 频繁重启 ----
+
+    // 滚动信号计数器：任何内容增长时递增，驱动流式跟随 Effect 检查溢出。
+    var scrollSignal by remember { mutableIntStateOf(0) }
     LaunchedEffect(
-        messagesReady,
-        currentSessionId,
-        messages.size,
-        messages.lastOrNull()?.content,
-        runningTool?.text,
         streamingText,
         streamingReasoning,
-        pendingPermission,
-        pendingQuestion,
+        runningTool?.text,
+        messages.size,
         isBusy
     ) {
-        // 尚未就绪（切换/冷启动加载中）时不滚动，避免对旧会话或空列表误操作。
+        scrollSignal++
+    }
+
+    // ① 会话切换定位：只在 sessionId/messagesReady 变化时触发，瞬时跳到底部。
+    LaunchedEffect(currentSessionId, messagesReady) {
         if (!messagesReady) return@LaunchedEffect
-        // 底部可能额外存在临时气泡：思考气泡 / 流式文字气泡 /「思考中」占位气泡。
-        // 判定需与渲染逻辑一致。
+        // 计算尾部额外 item 数（需与 LazyColumn 尾部渲染逻辑一致）
         val hasReasoning = streamingReasoning?.isNotEmpty() == true
         val hasStreamingText = streamingText?.hasVisibleContent() == true
         val hasTrailing = hasReasoning || hasStreamingText || (isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null)
         val target = messages.size - 1 + (if (hasTrailing) 1 else 0)
         if (target < 0) {
-            // 空会话也算已定位，后续首条消息走跟随逻辑。
             positionedSession = currentSessionId
             followBottom = true
             return@LaunchedEffect
         }
         if (positionedSession != currentSessionId) {
-            // 切换会话 / 冷启动首次加载：瞬时定位到底部，不逐项动画。
             listState.scrollToItem(target)
             positionedSession = currentSessionId
             followBottom = true
-        } else if (followBottom) {
-            // 跟随状态下消息新增 / 流式增长：把末项底部带进视口。
-            // 先确保末项已被布局到（超长跳跃时先 scrollToItem 再按溢出量微调），
-            // 随后按「末项底部 − 视口下沿」的溢出量平滑滚动，不做顶部对齐式跳转。
-            val layout = listState.layoutInfo
-            val lastVisible = layout.visibleItemsInfo.lastOrNull()
-            if (lastVisible == null || lastVisible.index < target - 1) {
-                // 末项还远在视口外（如刚切到长会话末尾追加）：先瞬时跳到目标项附近。
-                listState.scrollToItem(target)
-            }
-            val overflow = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.let {
-                (it.offset + it.size) - listState.layoutInfo.viewportEndOffset
-            } ?: 0
-            if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
         }
+    }
+
+    // ② 流式跟随：LaunchedEffect(listState) 永不重启，通过 snapshotFlow 监听 scrollSignal
+    //    驱动溢出检查。用 animateScrollBy（平滑动画）跟随——snapshotFlow 已避免 11-key 重启，
+    //    高频 delta 下新动画取消旧动画自然追赶，不会互相抖动。
+    //    scrollToItem 仅在末项完全不在视口（罕见，如长会话切到末尾追加）时用于瞬时跳转。
+    //    用 collectLatest 而非 collect：新 delta 到来时取消尚未完成的 animateScrollBy，
+    //    避免串行等待动画完成导致滚动滞后于内容增长。
+    LaunchedEffect(listState) {
+        snapshotFlow { scrollSignal }
+            .collectLatest {
+                if (!followBottom || !messagesReady) return@collectLatest
+                val layout = listState.layoutInfo
+                val lastIndex = layout.totalItemsCount - 1
+                if (lastIndex < 0) return@collectLatest
+                val lastVisible = layout.visibleItemsInfo.lastOrNull()
+                if (lastVisible == null || lastVisible.index < lastIndex - 1) {
+                    // 末项远在视口外：先瞬时跳到末项附近
+                    listState.scrollToItem(lastIndex)
+                }
+                val overflow = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.let {
+                    (it.offset + it.size) - listState.layoutInfo.viewportEndOffset
+                } ?: 0
+                if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
+            }
     }
 
     val firstVisibleItemIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
@@ -274,7 +299,6 @@ fun AIChatPanel(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ChatHeader(
-                workspaceViewModel = workspaceViewModel,
                 sessionTitle = sessionTitle,
                 modelName = activeProvider?.effectiveModel,
                 onOpenDrawer = {
@@ -307,23 +331,36 @@ fun AIChatPanel(
                             horizontal = Spacing.lg,
                             vertical = Spacing.md
                         ),
-                        verticalArrangement = Arrangement.spacedBy(Spacing.md)
+                        verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
-                        items(messages, key = { it.id }) { message ->
+                        items(messages, key = { it.id }, contentType = { "message" }) { message ->
                             val live = runningTool?.takeIf { it.messageId == message.id }?.text
                             AgentMessageItem(message = message, liveOutput = live)
                         }
+                        // 推理气泡独立（可与活跃态并存）
                         val reasoning = streamingReasoning
-                        val streaming = streamingText
                         val showReasoning = reasoning != null && reasoning.isNotEmpty()
-                        val showStreaming = streaming != null && streaming.hasVisibleContent()
                         if (showReasoning) {
-                            item(key = "__reasoning__") { ReasoningBubble(text = reasoning!!) }
+                            item(key = "__reasoning__", contentType = "tail") { ReasoningBubble(text = reasoning!!) }
                         }
-                        if (showStreaming) {
-                            item(key = "__streaming__") { StreamingBubble(text = streaming!!) }
-                        } else if (!showReasoning && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null) {
-                            item(key = "__thinking__") { ThinkingBubble() }
+                        // 活跃态气泡（流式/思考）统一 key，避免 delete+insert 闪烁。
+                        // 使用 Crossfade 在 streaming / thinking / none 之间平滑过渡。
+                        val streaming = streamingText
+                        val showStreaming = streaming != null && streaming.hasVisibleContent()
+                        val showThinking = !showReasoning && !showStreaming && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null
+                        val activeState: Any = when {
+                            showStreaming -> streaming!!
+                            showThinking -> "__thinking__"
+                            else -> "__none__"
+                        }
+                        item(key = "__active__", contentType = "tail") {
+                            Crossfade(targetState = activeState, label = "tail-active") { state ->
+                                when {
+                                    state == "__thinking__" -> ThinkingBubble()
+                                    state == "__none__" -> Box(Modifier) // 0高度占位，保持槽位常驻
+                                    else -> StreamingBubble(text = state as String)
+                                }
+                            }
                         }
                     }
                 }
@@ -380,9 +417,17 @@ fun AIChatPanel(
                 onStop = { viewModel.stopAgent() },
                 isBusy = isBusy,
                 workspaceViewModel = workspaceViewModel,
+                hasRunningSessions = { viewModel.hasRunningSessionsInCurrentWorkspace() },
                 activeProvider = activeProvider,
                 providers = providers,
-                onSelectModel = { p, m -> settingsViewModel?.selectModel(p, m) },
+                onSelectModel = { p, m ->
+                    val svm = settingsViewModel ?: return@ChatInputBar
+                    // 切换到其他供应商时，需同步激活该供应商，否则主页与 Agent 仍使用旧供应商
+                    if (p != activeProvider?.id) {
+                        svm.setActiveProvider(p)
+                    }
+                    svm.selectModel(p, m)
+                },
                 onNavigateToSettings = onNavigateToSettings,
                 currentMode = currentMode,
                 onToggleMode = { viewModel.setSessionMode(it) }
@@ -393,7 +438,6 @@ fun AIChatPanel(
 
 @Composable
 private fun ChatHeader(
-    workspaceViewModel: WorkspaceViewModel?,
     sessionTitle: String,
     modelName: String?,
     onOpenDrawer: () -> Unit,
@@ -444,9 +488,6 @@ private fun ChatHeader(
                         FeatherIcons.Plus,
                         contentDescription = "新建会话",
                         tint = Brand.IconGray)
-                }
-                if (workspaceViewModel != null) {
-                    WorkspaceIconButton(viewModel = workspaceViewModel)
                 }
                 IconButton(onClick = onNavigateToGit) {
                     Icon(
@@ -556,7 +597,7 @@ fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
                             MarkdownContent(
                                 text = message.content.ifEmpty { "…" },
                                 color = textColor,
-                                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp),
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
                                 preParsedBlocks = message.parsedBlocks.takeIf { it.isNotEmpty() }
                             )
                         }
@@ -577,12 +618,58 @@ private fun MarkdownContent(
     modifier: Modifier = Modifier,
     preParsedBlocks: List<MdBlock>? = null
 ) {
+    val isDark = isSystemInDarkTheme()
+    // 注意：markdownColor / markdownTypography 是 @Composable 工厂函数，无法用 remember 缓存。
+    // 但这里的样式只随 color / isDark 变化，Compose 会自动跳过未变化参数的重组。
+
+    val mdColors = markdownColor(
+        text = color,
+        codeBackground = if (isDark) Color(0xFF152030) else Color(0xFFE8EDF3),
+        inlineCodeBackground = if (isDark) Color(0xFF1C2E44) else Color(0xFFDBEAFE),
+        dividerColor = if (isDark) Color(0xFF2A3F56) else Color(0xFFCBD5E1),
+        tableBackground = if (isDark) Color(0xFF152030) else Color(0xFFF1F5F9),
+    )
+
+    val typography = MaterialTheme.typography
+    val mdTypography = markdownTypography(
+        h1 = typography.headlineSmall.copy(fontWeight = FontWeight.Bold, color = color),
+        h2 = typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = color),
+        h3 = typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, color = color),
+        h4 = typography.titleSmall.copy(fontWeight = FontWeight.SemiBold, color = color),
+        h5 = typography.bodyLarge.copy(fontWeight = FontWeight.Medium, color = color),
+        h6 = typography.bodyMedium.copy(fontWeight = FontWeight.Medium, color = color),
+        paragraph = typography.bodyMedium.copy(color = color, lineHeight = 20.sp),
+        code = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp, color = if (isDark) Color(0xFFE2E8F0) else Color(0xFF1E293B)),
+        inlineCode = TextStyle(fontFamily = FontFamily.Monospace, color = if (isDark) Color(0xFFE2E8F0) else Color(0xFF1E293B)),
+        ordered = typography.bodyMedium.copy(color = color, lineHeight = 20.sp),
+        bullet = typography.bodyMedium.copy(color = color, lineHeight = 20.sp),
+        table = typography.bodySmall.copy(color = color),
+    )
+
+    val mdPadding = markdownPadding(
+        block = 4.dp,
+        list = 2.dp,
+        listItemBottom = 1.dp,
+        listIndent = 12.dp,
+        codeBlock = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+    )
+
+    val mdDimens = markdownDimens(
+        codeBackgroundCornerSize = 6.dp,
+        tableCellPadding = 6.dp,
+        tableCornerSize = 6.dp,
+    )
+
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.material3.LocalContentColor provides color
     ) {
-        com.mikepenz.markdown.m3.Markdown(
+        Markdown(
             content = text,
-            modifier = modifier
+            modifier = modifier,
+            colors = mdColors,
+            typography = mdTypography,
+            padding = mdPadding,
+            dimens = mdDimens,
         )
     }
 }
@@ -610,13 +697,25 @@ private fun ThinkingBubble() {
 }
 
 /**
- * 模型流式吐字时的实时气泡：左对齐、与助手气泡同款。文字经打字机平滑处理后逐字浮现
- * （把网络分片的跳变抹平），尾部带三个跳动的点表示仍在生成。本轮结束后由落库的助手气泡接管。
+ * 模型流式吐字时的实时气泡：左对齐、与助手气泡同款。
+ * 尾部带三个跳动的点表示仍在生成。本轮结束后由落库的助手气泡接管。
+ *
+ * 性能优化：节流——流式 delta 频率远高于 Markdown AST 解析速度，
+ * 用 debounce(80ms) 将渲染更新降到约 12fps，避免每个 delta 都触发
+ * 库内部 Loading→Success 状态循环导致的 0 高度闪烁帧。
  */
+@OptIn(kotlinx.coroutines.FlowPreview::class)
 @Composable
 private fun StreamingBubble(text: String) {
-    // 打字机平滑：以稳定节奏「追赶」目标文本，把一次性到达的大块分片抹成逐字浮现。
-    val display = rememberTypewriterText(text)
+    // 节流：流式 delta 高频更新时限制 Markdown 重渲染频率，减少 AST 重解析次数。
+    // debounce(80ms) 兼顾流畅感（约 12fps）和性能；最终文本会同步追加，不丢失末尾内容。
+    var throttledText by remember { mutableStateOf(text) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { text }
+            .debounce(80)
+            .collect { throttledText = it }
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start
@@ -627,9 +726,9 @@ private fun StreamingBubble(text: String) {
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.fillMaxWidth(0.88f)
         ) {
-            Column(modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp)) {
+            Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
                 MarkdownContent(
-                    text = display,
+                    text = throttledText,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.height(Spacing.sm))
@@ -655,7 +754,7 @@ private fun ReasoningBubble(text: String, initiallyExpanded: Boolean = true) {
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.fillMaxWidth(0.88f)
         ) {
-            Column(modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp)) {
+            Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -708,9 +807,9 @@ private fun rememberTypewriterText(target: String): String {
         while (visibleCount < target.length) {
             val remaining = target.length - visibleCount
             // 按比例追赶：远落后时快速逼近，临近时退化为逐字，末尾不会出现长尾延迟。
-            val step = (remaining / 8).coerceIn(1, 40)
+            val step = (remaining / 4).coerceIn(1, 60)
             visibleCount += step
-            delay(16)
+            delay(32)
         }
     }
     return target.take(visibleCount.coerceAtMost(target.length))
@@ -719,6 +818,10 @@ private fun rememberTypewriterText(target: String): String {
 /**
  * 三个循环跳动的点：通用「正在输入/生成」指示器，取代转圈 spinner。
  * 三点以固定相位差依次上下弹跳，形成波浪式律动。
+ *
+ * 性能优化：用 graphicsLayer { translationY } 替代 offset(y)，动画值变化在 draw 阶段
+ * 处理而不触发 compose/recompose，消除无限动画导致父布局每帧重组的开销。
+ * 容器高度固定，防止布局波动传递到 LazyColumn。
  */
 @Composable
 private fun TypingDots(
@@ -726,7 +829,10 @@ private fun TypingDots(
     dotSize: androidx.compose.ui.unit.Dp = 6.dp
 ) {
     val transition = rememberInfiniteTransition(label = "typing-dots")
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.height(dotSize + 10.dp) // 固定高度，防止动画偏移影响父布局测量
+    ) {
         repeat(3) { index ->
             val offsetY by transition.animateFloat(
                 initialValue = 0f,
@@ -747,7 +853,7 @@ private fun TypingDots(
             )
             Box(
                 modifier = Modifier
-                    .offset(y = offsetY.dp)
+                    .graphicsLayer { translationY = offsetY } // draw 阶段偏移，不触发 recompose
                     .size(dotSize)
                     .clip(CircleShape)
                     .background(color)
@@ -797,7 +903,7 @@ private fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null)
     // 折叠标题：编辑结果显示文件名，其余显示工具名。
     val toolLabel = if (edit != null) edit.path.substringAfterLast('/') else (message.toolName ?: "工具")
 
-    Column(modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm + 2.dp)) {
+    Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -861,12 +967,22 @@ private fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null)
             }
         }
         // 实时输出：流式过程中始终展示累积内容（为空时不占位）；过长时只保留最新20行。
+        // 性能优化：用 remember(liveOutput) 缓存截断结果 + 反向扫描 substring 替代 split+takeLast+joinToString，
+        // 避免 100ms 间隔的重复字符串分配和拷贝。
         if (streaming) {
             if (!liveOutput.isNullOrBlank()) {
-                val liveLines = liveOutput.split("\n")
-                val truncated = if (liveLines.size > TOOL_SECTION_LINE_LIMIT) {
-                    liveLines.takeLast(TOOL_SECTION_LINE_LIMIT).joinToString("\n")
-                } else liveOutput
+                val truncated = remember(liveOutput) {
+                    if (liveOutput.count { it == '\n' } + 1 > TOOL_SECTION_LINE_LIMIT) {
+                        var count = 0
+                        var cut = liveOutput.length
+                        for (i in liveOutput.lastIndex downTo 0) {
+                            if (liveOutput[i] == '\n' && ++count == TOOL_SECTION_LINE_LIMIT) {
+                                cut = i + 1; break
+                            }
+                        }
+                        liveOutput.substring(cut)
+                    } else liveOutput
+                }
                 Spacer(Modifier.height(Spacing.xs))
                 SelectionContainer {
                     Text(
@@ -915,7 +1031,7 @@ private fun ToolStatusDot(running: Boolean, isError: Boolean) {
         isError -> DiffRemoveText
         else -> DiffAddText
     }
-    val alpha = if (running) {
+    if (running) {
         val transition = rememberInfiniteTransition(label = "tool-status-dot")
         val a by transition.animateFloat(
             initialValue = 1f,
@@ -923,14 +1039,21 @@ private fun ToolStatusDot(running: Boolean, isError: Boolean) {
             animationSpec = infiniteRepeatable(animation = tween(650), repeatMode = RepeatMode.Reverse),
             label = "tool-status-dot-alpha"
         )
-        a
-    } else 1f
-    Box(
-        modifier = Modifier
-            .size(8.dp)
-            .clip(CircleShape)
-            .background(baseColor.copy(alpha = alpha))
-    )
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .graphicsLayer { alpha = a } // draw 阶段处理，不触发 recompose
+                .clip(CircleShape)
+                .background(baseColor)
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(baseColor)
+        )
+    }
 }
 
 /** 展开区的一段带小标题的内容块（如「指令」「结果」）：标题灰小字 + 等宽正文。行数超过 [TOOL_SECTION_LINE_LIMIT] 时默认只显示最新20行，底部提供折叠按钮。 */
@@ -1231,6 +1354,7 @@ private fun ChatInputBar(
     onStop: () -> Unit,
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
+    hasRunningSessions: () -> Boolean,
     activeProvider: AIProviderConfig?,
     providers: List<AIProviderConfig>,
     onSelectModel: (String, String) -> Unit,
@@ -1314,13 +1438,18 @@ private fun ChatInputBar(
                         )
                     }
                     Spacer(Modifier.width(Spacing.sm))
-                    
-                    if (activeProvider != null) {
-                        ModelChip(
-                            provider = activeProvider,
-                            providers = providers,
-                            onSelectModel = onSelectModel,
-                            onClick = onNavigateToSettings
+
+                    ModelIconButton(
+                        provider = activeProvider,
+                        providers = providers,
+                        onSelectModel = onSelectModel,
+                        onManage = onNavigateToSettings
+                    )
+
+                    if (workspaceViewModel != null) {
+                        WorkspaceIconButton(
+                            viewModel = workspaceViewModel,
+                            hasRunningSessions = hasRunningSessions
                         )
                     }
                 }
@@ -1331,59 +1460,32 @@ private fun ChatInputBar(
 }
 
 /**
- * 输入区下行的模型切换胶囊：显示当前模型名，点击导航到设置页。
+ * 输入区下行的模型切换图标按钮：显示品牌 logo（无选中模型或未匹配显示默认 Cpu 图标），点击弹出模型选择面板。
  */
 @Composable
-private fun ModelChip(
-    provider: AIProviderConfig,
+private fun ModelIconButton(
+    provider: AIProviderConfig?,
     providers: List<AIProviderConfig>,
     onSelectModel: (String, String) -> Unit,
-    onClick: () -> Unit
+    onManage: () -> Unit
 ) {
     var showSheet by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(Radius.pill))
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable(onClick = { showSheet = true })
-            .padding(horizontal = Spacing.md, vertical = Spacing.xs),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(14.dp)
-                .clip(RoundedCornerShape(Radius.xs))
-                .background(MaterialTheme.colorScheme.primary)
-        )
-        Spacer(Modifier.width(Spacing.xs))
-        Text(
-            text = provider.effectiveModel,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.widthIn(max = 140.dp)
-        )
-        Icon(
-            FeatherIcons.MoreHorizontal,
-            contentDescription = "切换模型",
-            tint = Brand.IconGray,
-            modifier = Modifier.size(16.dp)
-        )
+    IconButton(onClick = { showSheet = true }) {
+        ProviderLogoIcon(provider = provider, size = 22.dp)
     }
 
     if (showSheet) {
         ModelSheet(
             providers = providers,
-            currentProviderId = provider.id,
-            currentModel = provider.effectiveModel,
+            currentProviderId = provider?.id ?: "",
+            currentModel = provider?.effectiveModel ?: "",
             onSelect = { pId, model ->
                 onSelectModel(pId, model)
                 showSheet = false
             },
             onManage = {
-                onClick()
+                onManage()
                 showSheet = false
             },
             onDismiss = { showSheet = false }
@@ -1445,12 +1547,18 @@ private fun ModelSheet(
                     providers.forEach { p ->
                         if (p.models.isNotEmpty()) {
                             item(key = "header_${p.id}") {
-                                Text(
-                                    text = p.name,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs, start = Spacing.xs)
-                                )
+                                Row(
+                                    modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs, start = Spacing.xs),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    ProviderLogoIcon(provider = p, size = 18.dp)
+                                    Spacer(Modifier.width(Spacing.xs))
+                                    Text(
+                                        text = p.name,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                             items(p.models, key = { "${p.id}_$it" }) { model ->
                                 val selected = p.id == currentProviderId && model == currentModel
@@ -1911,8 +2019,9 @@ private fun TodoItemRow(item: ParsedTodoItem) {
                 Box(
                     modifier = Modifier
                         .size(8.dp)
+                        .graphicsLayer { this.alpha = alpha } // draw 阶段处理，不触发 recompose
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = alpha))
+                        .background(MaterialTheme.colorScheme.primary)
                 )
             }
             else -> {
