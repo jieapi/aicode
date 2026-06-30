@@ -23,12 +23,15 @@ data class AIResponse(
  * 流式补全过程中向上游推送的分块。
  * [TextDelta] 为模型新吐出的一小段文字（增量，非累积）；
  * [Final] 在本轮结束时给出完整结果（聚合后的文字 + 工具调用），供 Agent 循环驱动后续工具执行。
+ * [Retrying] 在网络重试时推送，供 UI 展示"正在重试"提示。
  */
 sealed class AIStreamChunk {
     data class TextDelta(val text: String) : AIStreamChunk()
     /** 模型新吐出的一小段思考过程（增量，非累积）。仅用于 UI 实时展示，不进入上下文回放。 */
     data class ReasoningDelta(val text: String) : AIStreamChunk()
     data class Final(val response: AIResponse) : AIStreamChunk()
+    /** 网络请求正在重试。仅用于 UI 实时展示，不进入上下文回放。 */
+    data class Retrying(val attempt: Int, val maxRetries: Int) : AIStreamChunk()
 }
 
 interface AIProvider {

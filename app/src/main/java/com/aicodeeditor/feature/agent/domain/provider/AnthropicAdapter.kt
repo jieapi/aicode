@@ -125,7 +125,8 @@ class AnthropicAdapter @Inject constructor(
 
         // 首字节前失败可安全重试；一旦开始吐字（onProduced 已调用）再失败则上抛，避免重复文本。
         try {
-            streamWithStaircaseRetry { onProduced ->
+            streamWithStaircaseRetry(
+                attemptOnce = { onProduced ->
             val textBuilder = StringBuilder()
             // content block index -> 累积中的 tool_use（仅 tool_use 块建条目，保序）。
             val toolBlocks = LinkedHashMap<Int, ToolBlockAcc>()
@@ -134,6 +135,9 @@ class AnthropicAdapter @Inject constructor(
             val body = api.streamMessage(url = url, apiKey = apiKey, request = request)
 
             body.use { rb ->
+                // 首字节超时 watchdog：60s 内未收到首个内容块则关闭流，触发可重试的 IOException。
+                val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
+                val watchdog = launchFirstByteWatchdog({ rb.close() }) { firstByteReceived.get() }
                 val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                     runCatching { rb.close() }
                 }
@@ -174,13 +178,18 @@ class AnthropicAdapter @Inject constructor(
                                             val t = delta.get("text")?.asString ?: ""
                                             if (t.isNotEmpty()) {
                                                 textBuilder.append(t)
+                                                if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
                                                 onProduced()
                                                 emit(AIStreamChunk.TextDelta(t))
                                             }
                                         }
                                         "thinking_delta" -> {
                                             val t = delta.get("thinking")?.asString ?: ""
-                                            if (t.isNotEmpty()) emit(AIStreamChunk.ReasoningDelta(t))
+                                            if (t.isNotEmpty()) {
+                                                // 思考内容不落库、可重试重流出，但收到即说明连接已活，取消首字节超时。
+                                                if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                                emit(AIStreamChunk.ReasoningDelta(t))
+                                            }
                                         }
                                         "input_json_delta" -> {
                                             val index = obj.get("index")?.asInt
@@ -205,6 +214,7 @@ class AnthropicAdapter @Inject constructor(
                         }
                     }
                 } finally {
+                    watchdog.cancel()
                     closeHandle?.dispose()
                 }
             }
@@ -215,7 +225,9 @@ class AnthropicAdapter @Inject constructor(
             // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
             emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason)))
-            }
+                },
+                onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -317,7 +329,6 @@ class AnthropicAdapter @Inject constructor(
             is JsonObject -> element.mapValues { (_, v) -> jsonElementToMap(v) }
             is kotlinx.serialization.json.JsonArray -> element.map { jsonElementToMap(it) }
             is JsonPrimitive -> element.contentOrNull ?: ""
-            else -> element.toString()
         }
     }
 }

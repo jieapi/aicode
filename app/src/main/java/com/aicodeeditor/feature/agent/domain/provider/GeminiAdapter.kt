@@ -135,7 +135,8 @@ class GeminiAdapter @Inject constructor(
         val rawSse = StringBuilder()
 
         try {
-            streamWithStaircaseRetry { onProduced ->
+            streamWithStaircaseRetry(
+                attemptOnce = { onProduced ->
                 val textBuilder = StringBuilder()
                 val toolCalls = mutableListOf<ToolCall>()
                 var currentFinishReason: String? = null
@@ -143,6 +144,9 @@ class GeminiAdapter @Inject constructor(
                 val body = api.streamGenerateContent(url = url, apiKey = apiKey, request = request)
 
                 body.use { rb ->
+                    // 首字节超时 watchdog：60s 内未收到首个内容块则关闭流，触发可重试的 IOException。
+                    val firstByteReceived = java.util.concurrent.atomic.AtomicBoolean(false)
+                    val watchdog = launchFirstByteWatchdog({ rb.close() }) { firstByteReceived.get() }
                     val closeHandle = coroutineContext[Job]?.invokeOnCompletion {
                         runCatching { rb.close() }
                     }
@@ -171,6 +175,7 @@ class GeminiAdapter @Inject constructor(
                                             val text = part.get("text")?.asString ?: ""
                                             if (text.isNotEmpty()) {
                                                 textBuilder.append(text)
+                                                if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
                                                 onProduced()
                                                 emit(AIStreamChunk.TextDelta(text))
                                             }
@@ -192,13 +197,16 @@ class GeminiAdapter @Inject constructor(
                             }
                         }
                     } finally {
+                        watchdog.cancel()
                         closeHandle?.dispose()
                     }
                 }
 
                 onProduced()
                 emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason)))
-            }
+                },
+                onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
