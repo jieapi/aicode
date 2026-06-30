@@ -17,7 +17,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class SystemPromptProvider @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val skillRepository: SkillRepository
 ) {
     // 抽象独立的 Source
@@ -69,7 +69,7 @@ class SystemPromptProvider @Inject constructor(
             if (skills.isEmpty()) return null
             
             val list = skills.joinToString("\n") { "- ${it.name}: ${it.description.ifBlank { "（无描述）" }}" }
-            val newContent = "可用技能 (skills)（格式为 名称: 何时使用；相关时用 load_skill 传入名称取完整正文，详见上文「技能」说明）：\n$list"
+            val newContent = "可用技能 (skills)（格式为 名称: 何时使用；相关时用 loadSkill 传入名称取完整正文，详见上文「技能」说明）：\n$list"
             
             if (cached != newContent) {
                 cached = newContent
@@ -136,10 +136,11 @@ class SystemPromptProvider @Inject constructor(
 
     fun build(agentContext: AgentContext): String {
         // 1. 获取各个 Source 的基线快照。
+        // PLAN 模式提示词放在最前面（紧随静态规则之后），确保模型优先注意到模式约束
+        val planModeContent = planModeSource.build(agentContext)
         val staticContent = staticRuleSource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val projectRules = projectRuleSource.build(agentContext)
-        val planModeContent = planModeSource.build(agentContext)
         
         // 2. 增量 Diff 处理 (仅针对高频变化的 Workspace)
         val currentWorkspaceContext = workspaceSource.build(agentContext)
@@ -157,26 +158,27 @@ class SystemPromptProvider @Inject constructor(
         }
 
         // 3. 组装最终提示词：把稳定不变的重头基线放最前面（享受 KV Cache），变化部分放末尾
+        // PLAN 模式约束紧随静态规则之后，确保模型优先感知模式限制
         return buildString {
             append(staticContent)
-            
-            skillsContent?.let { 
-                append("\n\n")
-                append(it)
-            }
-            
-            projectRules?.let {
-                append("\n\n")
-                append(it)
-            }
-            
-            append("\n\n")
-            append(effectiveWorkspaceContent)
 
             planModeContent?.let {
                 append("\n\n")
                 append(it)
             }
+
+            skillsContent?.let {
+                append("\n\n")
+                append(it)
+            }
+
+            projectRules?.let {
+                append("\n\n")
+                append(it)
+            }
+
+            append("\n\n")
+            append(effectiveWorkspaceContent)
         }
     }
 
