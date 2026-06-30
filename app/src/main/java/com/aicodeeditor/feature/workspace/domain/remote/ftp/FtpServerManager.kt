@@ -37,7 +37,7 @@ private val Context.ftpServerDataStore by preferencesDataStore(name = "ftp_serve
 
 @Singleton
 class FtpServerManager @Inject constructor(
-    @ApplicationContext private val context: Context
+    @param:ApplicationContext private val context: Context
 ) {
     private companion object {
         const val TAG = "FtpServerManager"

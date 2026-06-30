@@ -51,7 +51,7 @@ fun RemoteServerScreen(
                         }
                     }
                 )
-                TabRow(selectedTabIndex = selectedTab) {
+                PrimaryTabRow(selectedTabIndex = selectedTab) {
                     Tab(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
@@ -656,8 +656,7 @@ fun AddRemoteMountDialog(
                         readOnly = true,
                         label = { Text("关联远程连接通道") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = connExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)                    )
                     ExposedDropdownMenu(
                         expanded = connExpanded,
                         onDismissRequest = { connExpanded = false },
@@ -703,8 +702,7 @@ fun AddRemoteMountDialog(
                         readOnly = true,
                         label = { Text("映射到本地工作区") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = wsExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)                    )
                     ExposedDropdownMenu(
                         expanded = wsExpanded,
                         onDismissRequest = { wsExpanded = false },
