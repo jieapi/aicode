@@ -1,5 +1,6 @@
 package com.aicodeeditor.feature.agent.presentation
 
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicodeeditor.core.util.FileLogger
@@ -57,6 +58,14 @@ sealed class AgentUIState {
     data class Error(val message: String) : AgentUIState()
 }
 
+/**
+ * 网络请求重试状态（仅用于 UI 实时展示「正在重试 (N/M)...」提示）。
+ * 与 [AgentUIState] 解耦：重试是 Streaming 的子状态，不改变顶层 agent 状态机。
+ */
+@Immutable
+data class RetryState(val attempt: Int, val maxRetries: Int)
+
+@Immutable
 data class AgentUIMessage(
     val id: String,
     val role: MessageRole,
@@ -75,8 +84,8 @@ data class AgentUIMessage(
 
 /** Markdown 渲染块：纯文本段或围栏代码块。 */
 sealed interface MdBlock {
-    data class Text(val text: String) : MdBlock
-    data class Code(val lang: String, val code: String) : MdBlock
+    @Immutable data class Text(val text: String) : MdBlock
+    @Immutable data class Code(val lang: String, val code: String) : MdBlock
 }
 
 /**
@@ -131,6 +140,7 @@ enum class MessageRole {
  * - [messages]：已过滤、可直接渲染的消息列表。
  * - [loaded]：是否已经从数据库读到该会话的数据，用以区分「加载中」与「空会话」。
  */
+@Immutable
 data class ChatMessagesState(
     val sessionId: String?,
     val messages: List<AgentUIMessage>,
@@ -174,6 +184,7 @@ fun CharSequence.hasVisibleContent(): Boolean = any { ch ->
  * 运行中工具的实时累积输出。仅存内存、不落库：用于在该工具消息气泡里实时叠加显示
  * 命令逐行 stdout；命令结束后清空，最终完整结果走正常 persist 落库。
  */
+@Immutable
 data class RunningToolOutput(val messageId: String, val text: String, val toolName: String = "", val toolArgs: String = "")
 
 data class QueuedRequest(
@@ -333,6 +344,19 @@ class AIAgentViewModel @Inject constructor(
         _streamingReasonings.value = if (text == null) _streamingReasonings.value - sessionId else _streamingReasonings.value + (sessionId to text)
     }
 
+    /** 按 sessionId 维护的重试状态；流式恢复或结束后置 null。 */
+    private val _retryStates = MutableStateFlow<Map<String, RetryState?>>(emptyMap())
+    val retryState: StateFlow<RetryState?> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(null)
+            else _retryStates.map { it[id] }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun setRetryState(sessionId: String, state: RetryState?) {
+        _retryStates.value = if (state == null) _retryStates.value - sessionId else _retryStates.value + (sessionId to state)
+    }
+
     val pendingToolPermission = toolPermissionManager.pendingRequest
 
     val pendingUserQuestion = askUserQuestionManager.pendingQuestion
@@ -444,7 +468,7 @@ class AIAgentViewModel @Inject constructor(
             val result = agentWorkflow.execute(
                 userRequest = request,
                 context = context,
-                tools = toolRegistry.getAvailableTools()
+                tools = toolRegistry.getAvailableTools(mode)
             )
 
             persist(sessionId, MessageRole.ASSISTANT, result.result)
@@ -478,7 +502,7 @@ class AIAgentViewModel @Inject constructor(
     ) {
         val sid = _currentSessionId.value
         val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
-        if (isCurrentRunning && sid != null) {
+        if (isCurrentRunning) {
             val req = QueuedRequest(
                 id = UUID.randomUUID().toString(),
                 request = request,
@@ -542,16 +566,24 @@ class AIAgentViewModel @Inject constructor(
             agentWorkflow.executeEvents(
                 userRequest = request,
                 context = context,
-                tools = toolRegistry.getAvailableTools()
+                tools = toolRegistry.getAvailableTools(mode)
             ).collect { event ->
                 when (event) {
                     is AgentEvent.AssistantDelta -> {
                         // 仅更新内存态实时文字，不落库；UI 在底部渲染一个跟随增长的助手气泡。
+                        // 流已恢复吐字，清除「正在重试」提示。
+                        setRetryState(sessionId, null)
                         setStreamingText(sessionId, event.accumulated)
                     }
                     is AgentEvent.ReasoningDelta -> {
                         // 仅更新内存态实时思考，不落库；UI 在底部渲染一个可折叠的「思考」气泡。
+                        // 流已恢复吐字，清除「正在重试」提示。
+                        setRetryState(sessionId, null)
                         setStreamingReasoning(sessionId, event.accumulated)
+                    }
+                    is AgentEvent.Retrying -> {
+                        // 网络请求正在重试（首字节前失败触发自动重试），UI 展示「正在重试 (N/M)...」。
+                        setRetryState(sessionId, RetryState(event.attempt, event.maxRetries))
                     }
                     is AgentEvent.AssistantText -> {
                         // 即便 content 为空（纯工具调用），也落库以携带结构化 toolCalls，保证回放配对完整。
@@ -567,13 +599,16 @@ class AIAgentViewModel @Inject constructor(
                             toolCalls = event.toolCalls,
                             reasoning = reasoning
                         )
-                        // 本轮文字已落库，清空实时态，交给持久化气泡显示。
-                        setStreamingText(sessionId, null)
                         // 本轮思考已结束（拿到正式回复/工具调用），清空思考气泡。
                         setStreamingReasoning(sessionId, null)
+                        // 保留满文本的流式气泡撑到回合真正结束——避免在 isBusy=true 期间清流式
+                        // 导致 __thinking__ 出现继而消失的闪烁序列。回合结束处统一清空。
+                        setStreamingText(sessionId, normalized.ifEmpty { null })
                     }
                     is AgentEvent.ToolCallStarted -> {
                         val msgId = "tool_${event.id}"
+                        // 即将执行工具，清空之前的流式文本气泡（它会被落库消息取代）。
+                        setStreamingText(sessionId, null)
                         // 记下本次调用参数，供 Finished/停止时用同 id REPLACE 落库复用。
                         toolArgsByMsgId[msgId] = event.argsPreview
                         // 占位行：执行中提示；ToolCallFinished 用相同 id REPLACE 为最终结果。
@@ -618,12 +653,18 @@ class AIAgentViewModel @Inject constructor(
                             setRunningTool(sessionId, null)
                         }
                     }
-                    AgentEvent.Completed -> { /* 循环结束，下方统一置为成功 */ }
+                    AgentEvent.Completed -> {
+                        // 循环结束，下方统一置为成功；同时清掉残留的重试提示。
+                        setRetryState(sessionId, null)
+                    }
                 }
             }
 
             chatSessionDao.touch(sessionId, nextTimestamp())
+            // 先关 busy（让 isBusy=false），再清流式气泡——同一 snapshot 内完成，
+            // 避免 isBusy=true 期间流式气泡已清而触发 __thinking__ 短暂出现的闪烁。
             setAgentState(sessionId, AgentUIState.Result(WorkflowStatus.SUCCESS))
+            setStreamingText(sessionId, null)
 
         } catch (e: CancellationException) {
             // 用户主动停止：不是错误，复位为空闲后重新抛出以遵守结构化并发。
@@ -640,6 +681,7 @@ class AIAgentViewModel @Inject constructor(
             setRunningTool(sessionId, null)
             setStreamingText(sessionId, null)
             setStreamingReasoning(sessionId, null)
+            setRetryState(sessionId, null)
             
             // Process the next queued request if any
             val currentState = _agentStates.value[sessionId]
@@ -700,6 +742,7 @@ class AIAgentViewModel @Inject constructor(
             setRunningTool(sessionId, null)
             setStreamingText(sessionId, null)
             setStreamingReasoning(sessionId, null)
+            setRetryState(sessionId, null)
         }
     }
 
@@ -750,6 +793,7 @@ class AIAgentViewModel @Inject constructor(
         _streamingTexts.value = _streamingTexts.value - id
         _streamingReasonings.value = _streamingReasonings.value - id
         _runningTools.value = _runningTools.value - id
+        _retryStates.value = _retryStates.value - id
         _changesMap.value = _changesMap.value - id
         _queuedRequests.value = _queuedRequests.value - id
 
