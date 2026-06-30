@@ -179,6 +179,8 @@ dependencies {
 
     // Markdown Renderer
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.41.0")
+    // Markdown Renderer — Code Syntax Highlighting
+    implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.41.0")
 
     // Core Android
     implementation("androidx.core:core:1.16.0")
