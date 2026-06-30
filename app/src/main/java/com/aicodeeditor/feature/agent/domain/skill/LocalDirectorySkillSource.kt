@@ -10,7 +10,7 @@ import javax.inject.Singleton
 
 @Singleton
 class LocalDirectorySkillSource @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     private val containerInstaller: ContainerInstaller
 ) : SkillSource {
     private companion object {
