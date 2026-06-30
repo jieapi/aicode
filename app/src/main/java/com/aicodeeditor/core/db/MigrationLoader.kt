@@ -24,7 +24,7 @@ class FileMigration(
         }
         db.execSQL(
             "INSERT INTO migration_history (version, script_name, executed_at) VALUES (?, ?, ?)",
-            arrayOf(version, scriptName, System.currentTimeMillis())
+            arrayOf<Any>(version, scriptName, System.currentTimeMillis())
         )
         FileLogger.i("MigrationLoader", "Applied migration: $scriptName")
     }
