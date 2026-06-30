@@ -54,7 +54,6 @@ import com.aicodeeditor.feature.agent.domain.tool.question.QuestionItem
 import com.aicodeeditor.feature.agent.domain.tool.question.SingleAnswer
 import com.aicodeeditor.feature.agent.domain.tool.question.UserQuestionAnswer
 
-private val brandGradient = Brush.linearGradient(listOf(Brand.Blue, Brand.Sky))
 
 /** 「其他」选项的固定 label，不与 AI 传入的选项重复。 */
 private const val OTHER_LABEL = "其他"
@@ -307,4 +306,6 @@ private fun QuestionCard(
             }
         }
     }
+
+
 }
