@@ -39,6 +39,9 @@ sealed class AgentEvent {
         val argsPreview: String? = null
     ) : AgentEvent()
 
+    /** 网络请求正在重试（首字节前失败触发自动重试）。仅用于 UI 实时展示，不落库。 */
+    data class Retrying(val attempt: Int, val maxRetries: Int) : AgentEvent()
+
     /** 整个流程结束。 */
     object Completed : AgentEvent()
 }
