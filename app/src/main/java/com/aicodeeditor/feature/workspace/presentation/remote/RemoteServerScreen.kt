@@ -8,13 +8,11 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
 import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
-import com.aicodeeditor.core.theme.Brand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -36,11 +34,11 @@ fun RemoteServerScreen(
     val maxSyncBatchSize by viewModel.maxSyncBatchSize.collectAsStateWithLifecycle()
 
     Scaffold(
-        containerColor = Brand.PageBg,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             Column {
                 TopAppBar(
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Brand.PageBg),
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
                     title = { Text("远程工作区") },
                     navigationIcon = {
                         IconButton(onClick = onNavigateBack) {
@@ -198,7 +196,7 @@ fun RemoteServerScreen(
     if (showAddMountDialog) {
         if (uiState.connections.isEmpty()) {
             AlertDialog(
-        containerColor = Color.White,
+                containerColor = MaterialTheme.colorScheme.surface,
                 tonalElevation = 0.dp,
                 onDismissRequest = { showAddMountDialog = false },
                 title = { Text("提示") },

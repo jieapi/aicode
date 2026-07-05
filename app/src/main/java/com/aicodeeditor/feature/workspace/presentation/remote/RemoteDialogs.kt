@@ -11,13 +11,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
 import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
 import com.aicodeeditor.feature.workspace.domain.model.RemoteProtocol
-import com.aicodeeditor.core.theme.Brand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -40,7 +38,7 @@ fun AddRemoteConnectionDialog(
     var isTesting by remember { mutableStateOf(false) }
 
     AlertDialog(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         onDismissRequest = onDismiss,
         title = { Text(if (initialConnection != null) "编辑连接通道" else "添加连接通道", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
@@ -78,7 +76,7 @@ fun AddRemoteConnectionDialog(
                     trailingIcon = {
                         val image = if (passwordVisible) FeatherIcons.Eye else FeatherIcons.EyeOff
                         IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(image, "切换密码可见性", tint = Brand.IconGray)
+                            Icon(image, "切换密码可见性", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 )
@@ -141,7 +139,7 @@ fun AddRemoteMountDialog(
     var showBrowser by remember { mutableStateOf(false) }
 
     AlertDialog(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         onDismissRequest = onDismiss,
         title = { Text(if (initialMount != null) "编辑工作区" else "添加工作区", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
@@ -165,7 +163,7 @@ fun AddRemoteMountDialog(
                     ExposedDropdownMenu(
                         expanded = connExpanded,
                         onDismissRequest = { connExpanded = false },
-                        modifier = Modifier.background(Color.White)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                     ) {
                         connections.forEach { conn ->
                             DropdownMenuItem(
@@ -192,7 +190,7 @@ fun AddRemoteMountDialog(
                         onClick = { showBrowser = true },
                         enabled = selectedConnectionId.isNotEmpty()
                     ) {
-                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录", tint = Brand.IconGray)
+                        Icon(FeatherIcons.Folder, contentDescription = "浏览目录", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -211,7 +209,7 @@ fun AddRemoteMountDialog(
                     ExposedDropdownMenu(
                         expanded = wsExpanded,
                         onDismissRequest = { wsExpanded = false },
-                        modifier = Modifier.background(Color.White)
+                        modifier = Modifier.background(MaterialTheme.colorScheme.surface)
                     ) {
                         workspaces.forEach { ws ->
                             DropdownMenuItem(
@@ -301,7 +299,7 @@ fun RemoteDirectoryBrowserDialog(
     }
 
     AlertDialog(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 0.dp,
         onDismissRequest = onDismiss,
         title = { Text("选择远程目录") },

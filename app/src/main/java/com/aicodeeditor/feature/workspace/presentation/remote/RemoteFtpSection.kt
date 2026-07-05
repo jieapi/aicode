@@ -9,11 +9,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aicodeeditor.core.theme.Brand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -45,7 +43,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
@@ -57,7 +55,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                 Icon(
                     FeatherIcons.Info,
                     contentDescription = null,
-                    tint = Brand.IconGray,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp).padding(top = 2.dp)
                 )
                 Spacer(modifier = Modifier.width(16.dp))
@@ -81,7 +79,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -94,7 +92,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                         Icon(
                             FeatherIcons.Share2,
                             contentDescription = null,
-                            tint = if (isRunning) androidx.compose.ui.graphics.Color(0xFF4CAF50) else Brand.IconGray,
+                            tint = if (isRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(16.dp))
@@ -108,7 +106,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                             Text(
                                 text = if (isRunning) "运行中: $serverUrl" else "服务未开启",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (isRunning) androidx.compose.ui.graphics.Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
                         }
@@ -133,7 +131,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(
@@ -144,7 +142,7 @@ fun WiFiFtpServerSection(viewModel: RemoteServerViewModel) {
                     Icon(
                         FeatherIcons.Settings,
                         contentDescription = null,
-                        tint = Brand.IconGray,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
