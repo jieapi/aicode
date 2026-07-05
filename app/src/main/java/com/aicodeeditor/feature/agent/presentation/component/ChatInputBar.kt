@@ -626,3 +626,67 @@ fun ChangeItem(change: com.aicodeeditor.feature.agent.domain.model.CodeChange) {
         )
     }
 }
+
+/**
+ * 计划审查面板：AI 从 PLAN 模式切回 BUILD 时弹出，展示计划摘要供用户批准或继续反馈。
+ * 风格与 ToolPermissionPanel / AskUserQuestionPanel 一致，配色与 PLAN 标签（紫色）呼应。
+ */
+@Composable
+internal fun PlanApprovalPanel(
+    state: com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalRequest,
+    onApprove: () -> Unit,
+    onRefine: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
+        color = Color(0xFFF5F3FF),
+        shape = RoundedCornerShape(Radius.md),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF8B5CF6))
+    ) {
+        Column(modifier = Modifier.padding(Spacing.md)) {
+            Text(
+                text = "📋 计划已完成",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF8B5CF6),
+                fontWeight = FontWeight.SemiBold
+            )
+
+            if (state.reason.isNotBlank()) {
+                Spacer(Modifier.height(Spacing.xs))
+                Text(
+                    text = state.reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(Modifier.height(Spacing.md))
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                TextButton(
+                    onClick = onRefine,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("继续反馈", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(Radius.sm))
+                        .background(brandGradient)
+                        .clickable(onClick = onApprove)
+                        .padding(vertical = Spacing.sm + 2.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "批准并实施",
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}

@@ -31,58 +31,8 @@ data class AgentUIMessage(
     val toolArgs: String? = null,
     val isError: Boolean = false,
     // 仅 ASSISTANT 消息：本轮模型的思考过程，渲染为可折叠「思考过程」气泡；无则为 null。
-    val reasoning: String? = null,
-    // 预解析后的 Markdown 块（普通文本或代码块），供 UI 层极速渲染。
-    val parsedBlocks: List<MdBlock> = emptyList()
+    val reasoning: String? = null
 )
-
-/** Markdown 渲染块：纯文本段或围栏代码块。 */
-sealed interface MdBlock {
-    @Immutable data class Text(val text: String) : MdBlock
-    @Immutable data class Code(val lang: String, val code: String) : MdBlock
-}
-
-/**
- * 按行扫描，把文本切成「文本段」与「围栏代码块」。以 ``` 开头的行进入代码模式，
- * 直到下一条 ``` 行或文本结束（流式途中未闭合也按代码块收尾）。围栏行本身被丢弃，
- * 其后的标识符作为语言标签。相邻文本被合并为一段，纯空白段丢弃。
- */
-fun parseMarkdownBlocks(src: String): List<MdBlock> {
-    val blocks = mutableListOf<MdBlock>()
-    val lines = src.split("\n")
-    val textBuf = StringBuilder()
-
-    fun flushText() {
-        val t = textBuf.toString().trim('\n')
-        if (t.isNotBlank()) blocks.add(MdBlock.Text(t))
-        textBuf.clear()
-    }
-
-    var i = 0
-    while (i < lines.size) {
-        val line = lines[i]
-        if (line.trimStart().startsWith("```")) {
-            flushText()
-            val lang = line.trimStart().removePrefix("```").trim()
-            val code = StringBuilder()
-            i++
-            while (i < lines.size && !lines[i].trimStart().startsWith("```")) {
-                if (code.isNotEmpty()) code.append("\n")
-                code.append(lines[i])
-                i++
-            }
-            if (i < lines.size) i++
-            blocks.add(MdBlock.Code(lang, code.toString()))
-        } else {
-            if (textBuf.isNotEmpty()) textBuf.append("\n")
-            textBuf.append(line)
-            i++
-        }
-    }
-    flushText()
-    if (blocks.isEmpty()) blocks.add(MdBlock.Text(src))
-    return blocks
-}
 
 enum class MessageRole {
     USER, ASSISTANT, TOOL

@@ -24,19 +24,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.LocalTextSelectionColors
-import androidx.compose.material3.TextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -44,10 +49,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aicodeeditor.core.theme.Brand
@@ -55,19 +61,23 @@ import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.agent.presentation.AgentUIMessage
 import com.aicodeeditor.feature.agent.presentation.hasVisibleContent
-import com.aicodeeditor.feature.agent.presentation.MdBlock
 import com.aicodeeditor.feature.agent.presentation.MessageRole
+import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
-import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
+import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownDimens
 import com.mikepenz.markdown.model.markdownPadding
+import com.mikepenz.markdown.model.rememberMarkdownState
+import com.mikepenz.markdown.model.State as MarkdownParseState
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.SyntaxThemes
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Check
+import compose.icons.feathericons.Copy
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.Star
@@ -75,22 +85,48 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 
+internal class MarkdownRenderCache(
+    private val maxEntries: Int = 80
+) {
+    private val parsedStates = object : LinkedHashMap<String, MarkdownParseState.Success>(
+        maxEntries,
+        0.75f,
+        true
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MarkdownParseState.Success>?): Boolean {
+            return size > maxEntries
+        }
+    }
+
+    fun get(text: String): MarkdownParseState.Success? = parsedStates[text]
+
+    fun put(state: MarkdownParseState.Success) {
+        parsedStates[state.content] = state
+    }
+}
+
 @Composable
-fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
+internal fun AgentMessageItem(
+    message: AgentUIMessage,
+    liveOutput: String? = null,
+    markdownCache: MarkdownRenderCache? = null
+) {
     val hasReasoning = message.role == MessageRole.ASSISTANT && !message.reasoning.isNullOrEmpty()
     val hasContent = message.content.hasVisibleContent()
     if (message.role == MessageRole.ASSISTANT && !hasContent && !hasReasoning) return
 
     val isUser = message.role == MessageRole.USER
+    var copied by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
 
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
         if (hasReasoning) {
             ReasoningBubble(text = message.reasoning!!, initiallyExpanded = false)
         }
         if (hasContent || message.role != MessageRole.ASSISTANT) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+            Column(
+                // 助手消息左对齐，用户消息右对齐
+                horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
             ) {
                 Surface(
                     shape = if (isUser) {
@@ -116,12 +152,46 @@ fun AgentMessageItem(message: AgentUIMessage, liveOutput: String? = null) {
                             else -> MaterialTheme.colorScheme.onSurface
                         }
                         SelectionContainer {
-                            MarkdownContent(
-                                text = message.content.ifEmpty { "…" },
-                                color = textColor,
-                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
-                                preParsedBlocks = message.parsedBlocks.takeIf { it.isNotEmpty() }
+                            // 用户气泡背景为 primary（蓝色），光标默认也是蓝色会隐形；
+                            // 助手气泡背景为 surface，光标与文字同色也不明显。
+                            // 统一提供高对比度选区颜色，确保光标和选区 handles 始终可见。
+                            val selectionColors = TextSelectionColors(
+                                handleColor = Color.White,
+                                backgroundColor = Color.White.copy(alpha = 0.4f),
                             )
+                            CompositionLocalProvider(LocalTextSelectionColors provides selectionColors) {
+                                MarkdownContent(
+                                    text = message.content.ifEmpty { "…" },
+                                    color = textColor,
+                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+                                    cache = markdownCache
+                                )
+                            }
+                        }
+                    }
+                }
+                // 气泡下方复制按钮（工具消息不显示）
+                if (message.content.hasVisibleContent() && message.role != MessageRole.TOOL) {
+                    val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
+                    IconButton(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(message.content))
+                            copied = true
+                        },
+                        modifier = Modifier.size(28.dp),
+                        colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
+                    ) {
+                        Icon(
+                            if (copied) FeatherIcons.Check else FeatherIcons.Copy,
+                            contentDescription = if (copied) "已复制" else "复制",
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    // 复制成功 1.5s 后恢复图标
+                    if (copied) {
+                        LaunchedEffect(Unit) {
+                            delay(1500)
+                            copied = false
                         }
                     }
                 }
@@ -138,7 +208,7 @@ internal fun MarkdownContent(
     text: String,
     color: Color,
     modifier: Modifier = Modifier,
-    preParsedBlocks: List<MdBlock>? = null
+    cache: MarkdownRenderCache? = null
 ) {
     val isDark = isSystemInDarkTheme()
 
@@ -187,33 +257,77 @@ internal fun MarkdownContent(
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.material3.LocalContentColor provides color
     ) {
-        Markdown(
-            content = text,
-            modifier = modifier,
-            colors = mdColors,
-            typography = mdTypography,
-            padding = mdPadding,
-            dimens = mdDimens,
-            components = markdownComponents(
-                codeFence = {
-                    MarkdownHighlightedCodeFence(
-                        content = it.content,
-                        node = it.node,
-                        highlightsBuilder = highlightsBuilder,
-                        showHeader = true,
-                    )
-                },
-                codeBlock = {
-                    MarkdownHighlightedCodeBlock(
-                        content = it.content,
-                        node = it.node,
-                        highlightsBuilder = highlightsBuilder,
-                        showHeader = true,
-                    )
-                },
-            ),
-        )
+        val cachedState = cache?.get(text)
+        val parsedState = if (cachedState != null) {
+            cachedState
+        } else {
+            val mdState = rememberMarkdownState(content = text, retainState = true)
+            val state by mdState.state.collectAsState()
+            state
+        }
+
+        if (parsedState is MarkdownParseState.Success) {
+            LaunchedEffect(cache, parsedState) {
+                cache?.put(parsedState)
+            }
+        }
+
+        when (parsedState) {
+            is MarkdownParseState.Success -> Markdown(
+                state = parsedState,
+                modifier = modifier,
+                colors = mdColors,
+                typography = mdTypography,
+                padding = mdPadding,
+                dimens = mdDimens,
+                // 关闭段落文本的 animateContentSize：快速流式更新下它会持续追赶目标高度，反而弹性抖动。
+                animations = markdownAnimations(animateTextSize = { this }),
+                components = markdownComponents(
+                    codeFence = {
+                        MarkdownHighlightedCodeFence(
+                            content = it.content,
+                            node = it.node,
+                            highlightsBuilder = highlightsBuilder,
+                            showHeader = true,
+                        )
+                    },
+                    codeBlock = {
+                        MarkdownHighlightedCodeBlock(
+                            content = it.content,
+                            node = it.node,
+                            highlightsBuilder = highlightsBuilder,
+                            showHeader = true,
+                        )
+                    },
+                ),
+            )
+
+            is MarkdownParseState.Loading -> PlainMarkdownText(
+                text = text,
+                color = color,
+                modifier = modifier
+            )
+
+            is MarkdownParseState.Error -> PlainMarkdownText(
+                text = text,
+                color = color,
+                modifier = modifier
+            )
+        }
     }
+}
+
+@Composable
+private fun PlainMarkdownText(
+    text: String,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Text(
+        text = text,
+        modifier = modifier,
+        style = MaterialTheme.typography.bodyMedium.copy(color = color, lineHeight = 20.sp)
+    )
 }
 
 /** 等待模型返回时的占位气泡：左对齐、与助手气泡同款，内含三个循环跳动的点。 */
@@ -242,19 +356,22 @@ internal fun ThinkingBubble() {
  * 模型流式吐字时的实时气泡：左对齐、与助手气泡同款。
  * 尾部带三个跳动的点表示仍在生成。本轮结束后由落库的助手气泡接管。
  *
- * 性能优化：节流——流式 delta 频率远高于 Markdown AST 解析速度，
- * 用 debounce(80ms) 将渲染更新降到约 12fps，避免每个 delta 都触发
- * 库内部 Loading→Success 状态循环导致的 0 高度闪烁帧。
+ * 流式阶段只渲染纯文本，避免每个打字机 tick 都重建 Markdown AST。
+ * 稳定落库后的助手消息再走 [MarkdownContent]，这样滚动和生成都不会被解析任务卡住。
  */
 @OptIn(FlowPreview::class)
 @Composable
 internal fun StreamingBubble(text: String) {
     var throttledText by remember { mutableStateOf(text) }
+    val latestText by rememberUpdatedState(text)
     LaunchedEffect(Unit) {
-        snapshotFlow { text }
+        snapshotFlow { latestText }
             .debounce(80)
             .collect { throttledText = it }
     }
+
+    // 打字机：把节流后「蹦出来」的目标文本转成逐字浮现，避免每隔 80ms 跳变一次的顿挫感。
+    val displayText = rememberTypewriterText(target = throttledText)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -267,8 +384,8 @@ internal fun StreamingBubble(text: String) {
             modifier = Modifier.fillMaxWidth(0.88f)
         ) {
             Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
-                MarkdownContent(
-                    text = throttledText,
+                PlainMarkdownText(
+                    text = displayText,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.height(Spacing.sm))
@@ -276,6 +393,35 @@ internal fun StreamingBubble(text: String) {
             }
         }
     }
+}
+
+/**
+ * 打字机平滑：把会「跳变」的目标文本（节流后每 80ms 往往一次蹦出一大块）
+ * 转成以稳定帧率逐字浮现的显示文本。落后越多步进越大（按比例追赶），既不会越拖越远，
+ * 临近追平时又退化为逐字，呈现自然的打字手感。目标被清空/缩短（新一轮或重置）时立即对齐。
+ *
+ * 实现要点：用 rememberUpdatedState 持有最新目标，LaunchedEffect(Unit) 跑一个常驻追赶循环——
+ * 不要把 target 当 LaunchedEffect 的 key，那样目标每变（每 80ms）就重启 effect、丢失追赶进度。
+ */
+@Composable
+internal fun rememberTypewriterText(target: String): String {
+    var visibleCount by remember { mutableIntStateOf(0) }
+    val latestTarget by rememberUpdatedState(target)
+    LaunchedEffect(Unit) {
+        while (true) {
+            val t = latestTarget
+            // 目标缩短（新一轮/重置）：立即对齐，避免逐字回退。
+            if (t.length < visibleCount) visibleCount = t.length
+            if (visibleCount < t.length) {
+                val remaining = t.length - visibleCount
+                // 按比例追赶：落后越多步进越大；临近追平时退化为逐字。
+                val step = (remaining / 4).coerceIn(1, 60)
+                visibleCount += step
+            }
+            delay(32)
+        }
+    }
+    return target.take(visibleCount.coerceAtMost(target.length))
 }
 
 /**
@@ -332,26 +478,6 @@ internal fun ReasoningBubble(text: String, initiallyExpanded: Boolean = true) {
             }
         }
     }
-}
-
-/**
- * 打字机平滑：把会「跳变」的目标文本（流式分片经 StateFlow 合流后常常一次到达一大块）
- * 转成以稳定帧率逐字浮现的显示文本。落后越多步进越大（按比例追赶），既不会越拖越远，
- * 临近追平时又退化为逐字，呈现自然的打字手感。目标被清空/缩短（新一轮）时立即对齐。
- */
-@Composable
-internal fun rememberTypewriterText(target: String): String {
-    var visibleCount by remember { mutableIntStateOf(0) }
-    LaunchedEffect(target) {
-        if (target.length < visibleCount) visibleCount = target.length
-        while (visibleCount < target.length) {
-            val remaining = target.length - visibleCount
-            val step = (remaining / 4).coerceIn(1, 60)
-            visibleCount += step
-            delay(32)
-        }
-    }
-    return target.take(visibleCount.coerceAtMost(target.length))
 }
 
 /**
