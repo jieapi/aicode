@@ -255,11 +255,14 @@ class AnthropicAdapter @Inject constructor(
 
     private fun convertToAnthropicMessages(messages: List<AgentMessage>): MutableList<AnthropicMessage> {
         val result = mutableListOf<AnthropicMessage>()
+        // 防御性跟踪：上一个 assistant 消息是否包含 tool_use
+        var lastAssistantHadToolUse = false
 
         for (message in messages) {
             when (message) {
                 is AgentMessage.UserMessage -> {
                     result.add(AnthropicMessage(role = "user", content = message.content))
+                    lastAssistantHadToolUse = false
                 }
                 is AgentMessage.AssistantMessage -> {
                     val contentBlocks = mutableListOf<AnthropicContentBlock>()
@@ -281,11 +284,15 @@ class AnthropicAdapter @Inject constructor(
                         )
                     }
 
+                    lastAssistantHadToolUse = message.toolCalls.isNotEmpty()
+
                     if (contentBlocks.isNotEmpty()) {
                         result.add(AnthropicMessage(role = "assistant", content = contentBlocks))
                     }
                 }
                 is AgentMessage.ToolResultMessage -> {
+                    // 防御性清理：跳过没有配对 tool_use 的孤立 tool_result
+                    if (!lastAssistantHadToolUse) continue
                     result.add(
                         AnthropicMessage(
                             role = "user",

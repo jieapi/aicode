@@ -13,7 +13,9 @@ data class AIResponse(
      * OpenAI: "stop" / "tool_calls" / "length"。
      * 当值为 "max_tokens" 或 "length" 时表示输出因 token 上限被截断，Agent 循环应自动续写。
      */
-    val stopReason: String? = null
+    val stopReason: String? = null,
+    /** 本轮模型的完整思考过程（对应 OpenAI/DeepSeek 的 reasoning_content）。非空时需回传给 API，否则 DeepSeek 思考模式会报 400。 */
+    val reasoning: String? = null
 ) {
     val isTruncated: Boolean
         get() = stopReason == "max_tokens" || stopReason == "length"
