@@ -236,14 +236,14 @@ class AIAgentViewModel @Inject constructor(
     private companion object {
         const val TAG = "AIAgentViewModel"
         // 工具占位行前缀：标记「执行中、结果未回」的孤儿，UI 与回放据此识别并排除。
-        const val PENDING_TOOL_MARKER = "⏳"
-        // 用户主动停止时的收尾标记（追加在已输出内容之后，而非整体替换）。
-        const val STOPPED_TOOL_TEXT = "⏹ 已被用户停止"
+        const val PENDING_TOOL_MARKER = "[running]"
+        // 用户主动停止时的收尾文案（追加在已输出内容之后，而非整体替换）。
+        const val STOPPED_TOOL_TEXT = "已被用户停止"
     }
 
     init {
         viewModelScope.launch {
-            // 冷启动收尾：上次进程被杀时若有工具正在执行，其 ⏳ 占位行会永久显示「执行中」。
+            // 冷启动收尾：上次进程被杀时若有工具正在执行，其占位行会永久显示「执行中」。
             // 这些工具不可能还在跑，统一回填为「已中断」。放在设置会话之前完成，使首帧不再闪转圈。
             sessionUseCase.initColdStartCleanup()
 

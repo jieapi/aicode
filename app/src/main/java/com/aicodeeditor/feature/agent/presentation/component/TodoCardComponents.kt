@@ -64,7 +64,7 @@ internal data class ParsedTodoItem(
 internal fun parseTodoResult(content: String): ParsedTodoResult? {
     return try {
         // 先剥掉 Success(data=...) / Error(...) 外壳
-        val s = content.trim().removePrefix("⏹").removePrefix("⏳").trim()
+        val s = content.withoutToolStatusPrefix()
         val jsonStr = when {
             s.startsWith("Success(data=") -> s.removePrefix("Success(data=").removeSuffix(")")
             s.startsWith("Partial(data=") -> {

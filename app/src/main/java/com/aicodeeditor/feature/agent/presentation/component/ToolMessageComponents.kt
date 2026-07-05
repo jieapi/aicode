@@ -66,6 +66,9 @@ internal val DiffRemoveText = Color(0xFFEF4444)
 
 internal const val DIFF_COLLAPSE_THRESHOLD = 20
 internal const val TOOL_SECTION_LINE_LIMIT = 20
+private const val RUNNING_TOOL_MARKER = "[running]"
+private const val LEGACY_RUNNING_TOOL_MARKER = "\u23F3"
+private const val LEGACY_STOPPED_TOOL_MARKER = "\u23F9"
 
 /**
  * 工具消息：默认折叠为一行「状态圆点 + 工具名 + 参数摘要 + 箭头」，点击展开查看「指令」与「结果」。
@@ -76,7 +79,8 @@ internal const val TOOL_SECTION_LINE_LIMIT = 20
 @Composable
 internal fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null) {
     val streaming = liveOutput != null
-    val running = streaming || message.content.startsWith("⏳")
+    val running = streaming || message.content.startsWith(RUNNING_TOOL_MARKER) ||
+        message.content.startsWith(LEGACY_RUNNING_TOOL_MARKER)
     val edit = if (!running && !message.isError &&
         (message.toolName == "editFile" || message.toolName == "writeFile")
     ) {
@@ -443,7 +447,7 @@ internal fun parseEditDiff(content: String): EditDiff? {
  * 把落库的原始工具结果清洗成可读文本
  */
 internal fun formatToolResult(raw: String): String {
-    val s = raw.trim().removePrefix("⏹").removePrefix("⏳").trim()
+    val s = raw.withoutToolStatusPrefix()
     when {
         s.startsWith("Error(") -> {
             val msgIdx = s.indexOf("message=")
@@ -467,6 +471,12 @@ internal fun formatToolResult(raw: String): String {
     }
     return s
 }
+
+internal fun String.withoutToolStatusPrefix(): String = trim()
+    .removePrefix(LEGACY_STOPPED_TOOL_MARKER)
+    .removePrefix(LEGACY_RUNNING_TOOL_MARKER)
+    .removePrefix(RUNNING_TOOL_MARKER)
+    .trim()
 
 /**
  * 把 `data=` 里的 JsonElement 文本渲染成可读结果

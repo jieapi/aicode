@@ -97,7 +97,7 @@ data class PermissionFile(
     }
 }
 
-// ── PermissionFile ↔ List<PermissionRule> 转换 ────────────────────
+// PermissionFile 和 List<PermissionRule> 转换
 
 /** 从 [PermissionFile] 解析为规则列表。 */
 fun PermissionFile.toRuleList(): List<PermissionRule> =

@@ -16,19 +16,22 @@ class SessionUseCase @Inject constructor(
 ) {
     companion object {
         private const val TAG = "SessionUseCase"
+        private const val LEGACY_PENDING_TOOL_MARKER = "\u23F3"
         const val TITLE_MAX = 20
-        const val PENDING_TOOL_MARKER = "⏳"
-        const val INTERRUPTED_TOOL_TEXT = "⏹ 执行被中断（应用已关闭）"
+        const val PENDING_TOOL_MARKER = "[running]"
+        const val INTERRUPTED_TOOL_TEXT = "执行被中断（应用已关闭）"
     }
 
-    /** 冷启动收尾：上次进程被杀时若有工具正在执行，其 ⏳ 占位行会永久显示「执行中」。 */
+    /** 冷启动收尾：上次进程被杀时若有工具正在执行，其占位行会永久显示「执行中」。 */
     suspend fun initColdStartCleanup() {
         runCatching {
-            val n = agentMessageDao.markPendingToolsInterrupted(
-                toolRole = MessageRole.TOOL.name,
-                pendingPrefix = "$PENDING_TOOL_MARKER%",
-                interruptedContent = INTERRUPTED_TOOL_TEXT
-            )
+            val n = listOf(PENDING_TOOL_MARKER, LEGACY_PENDING_TOOL_MARKER).sumOf { marker ->
+                agentMessageDao.markPendingToolsInterrupted(
+                    toolRole = MessageRole.TOOL.name,
+                    pendingPrefix = "$marker%",
+                    interruptedContent = INTERRUPTED_TOOL_TEXT
+                )
+            }
             if (n > 0) FileLogger.i(TAG, "冷启动收尾 $n 条残留「执行中」工具行为已中断")
         }.onFailure { FileLogger.e(TAG, "回收残留执行中工具行失败", it) }
     }

@@ -40,7 +40,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -54,7 +53,7 @@ import com.aicodeeditor.feature.agent.domain.model.AgentMode
 import com.aicodeeditor.feature.agent.domain.permission.PermissionChoice
 import com.aicodeeditor.feature.agent.domain.tool.PendingToolPermission
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
-import com.aicodeeditor.feature.settings.presentation.component.ProviderLogoIcon
+import com.aicodeeditor.feature.settings.presentation.component.ModelLogoIcon
 import com.aicodeeditor.feature.workspace.presentation.WorkspaceViewModel
 import com.aicodeeditor.feature.workspace.presentation.component.WorkspaceIconButton
 import compose.icons.FeatherIcons
@@ -63,7 +62,6 @@ import compose.icons.feathericons.ArrowUp
 import compose.icons.feathericons.Check
 import compose.icons.feathericons.Settings
 import compose.icons.feathericons.Square
-import compose.icons.feathericons.X
 
 @Composable
 internal fun ChatInputBar(
@@ -92,7 +90,7 @@ internal fun ChatInputBar(
                 .padding(bottom = rememberImeBottomInset())
                 .padding(horizontal = Spacing.lg, vertical = Spacing.md)
                 .clip(RoundedCornerShape(Radius.lg))
-                .background(Color.White)
+                .background(MaterialTheme.colorScheme.surface)
                 .border(
                     1.dp,
                     MaterialTheme.colorScheme.outlineVariant,
@@ -136,7 +134,7 @@ internal fun ChatInputBar(
                     val isPlan = currentMode == AgentMode.PLAN
                     Surface(
                         shape = RoundedCornerShape(16.dp),
-                        color = if (isPlan) Color(0xFF8B5CF6) else Color(0xFF10B981),
+                        color = if (isPlan) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier
                             .clickable {
                                 val nextMode = if (isPlan) AgentMode.BUILD else AgentMode.PLAN
@@ -148,7 +146,7 @@ internal fun ChatInputBar(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = if (isPlan) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
                             )
                         )
                     }
@@ -187,7 +185,7 @@ internal fun ModelIconButton(
     var showSheet by remember { mutableStateOf(false) }
 
     IconButton(onClick = { showSheet = true }) {
-        ProviderLogoIcon(provider = provider, size = 22.dp)
+        ModelLogoIcon(modelName = provider?.effectiveModel.orEmpty(), size = 22.dp)
     }
 
     if (showSheet) {
@@ -266,8 +264,6 @@ internal fun ModelSheet(
                                     modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs, start = Spacing.xs),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    ProviderLogoIcon(provider = p, size = 18.dp)
-                                    Spacer(Modifier.width(Spacing.xs))
                                     Text(
                                         text = p.name,
                                         style = MaterialTheme.typography.labelMedium,
@@ -305,12 +301,7 @@ internal fun ModelRow(
             .padding(horizontal = Spacing.md, vertical = Spacing.md),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            modifier = Modifier
-                .size(14.dp)
-                .clip(RoundedCornerShape(Radius.xs))
-                .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
-        )
+        ModelLogoIcon(modelName = name, size = 22.dp)
         Spacer(Modifier.width(Spacing.md))
         Text(
             text = name,
@@ -335,10 +326,11 @@ internal fun ModelRow(
 internal fun SendButton(canSend: Boolean, isBusy: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
     val clickable = isBusy || canSend
     val bg = if (clickable) {
-        Modifier.background(brandGradient)
+        Modifier.background(if (isBusy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary)
     } else {
         Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
     }
+    val iconTint = if (clickable) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
     Box(
         modifier = Modifier
             .padding(Spacing.xs)
@@ -352,14 +344,14 @@ internal fun SendButton(canSend: Boolean, isBusy: Boolean, onSend: () -> Unit, o
             Icon(
                 FeatherIcons.Square,
                 contentDescription = "停止",
-                tint = Brand.IconGray,
+                tint = iconTint,
                 modifier = Modifier.size(20.dp)
             )
         } else {
             Icon(
                 FeatherIcons.ArrowUp,
                 contentDescription = "发送",
-                tint = Brand.IconGray,
+                tint = iconTint,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -442,38 +434,25 @@ internal fun ToolPermissionPanel(
 
             Spacer(Modifier.height(Spacing.sm))
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                TextButton(
+                AgentActionButton(
+                    text = "拒绝",
                     onClick = { onChoice(PermissionChoice.REJECT) },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("拒绝", color = MaterialTheme.colorScheme.error)
-                }
-                TextButton(
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Danger
+                )
+                AgentActionButton(
+                    text = "始终允许",
+                    onClick = { onChoice(PermissionChoice.ALWAYS) },
+                    modifier = Modifier.weight(1f),
+                    enabled = canRemember,
+                    tone = AgentActionTone.Neutral
+                )
+                AgentActionButton(
+                    text = "允许",
                     onClick = { onChoice(PermissionChoice.ONCE) },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("本次")
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(Radius.sm))
-                        .then(
-                            if (canRemember) Modifier.background(brandGradient)
-                            else Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
-                        )
-                        .clickable(enabled = canRemember) { onChoice(PermissionChoice.ALWAYS) }
-                        .padding(vertical = Spacing.sm + 2.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "始终允许",
-                        color = if (canRemember) Color.White
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
-                }
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Success
+                )
             }
         }
     }
@@ -563,31 +542,18 @@ fun ChangePreviewPanel(
             Spacer(Modifier.height(Spacing.md))
 
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                TextButton(onClick = onReject, modifier = Modifier.weight(1f)) {
-                    Icon(FeatherIcons.X, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(Spacing.xs))
-                    Text("拒绝")
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(Radius.sm))
-                        .background(brandGradient)
-                        .clickable(onClick = onApply)
-                        .padding(vertical = Spacing.sm + 2.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            FeatherIcons.Check,
-                            contentDescription = null,
-                            tint = Brand.IconGray,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text("应用", color = Color.White, fontWeight = FontWeight.Medium)
-                    }
-                }
+                AgentActionButton(
+                    text = "拒绝",
+                    onClick = onReject,
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Danger
+                )
+                AgentActionButton(
+                    text = "应用",
+                    onClick = onApply,
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Success
+                )
             }
         }
     }
@@ -629,7 +595,7 @@ fun ChangeItem(change: com.aicodeeditor.feature.agent.domain.model.CodeChange) {
 
 /**
  * 计划审查面板：AI 从 PLAN 模式切回 BUILD 时弹出，展示计划摘要供用户批准或继续反馈。
- * 风格与 ToolPermissionPanel / AskUserQuestionPanel 一致，配色与 PLAN 标签（紫色）呼应。
+ * 风格与 ToolPermissionPanel / AskUserQuestionPanel 一致。
  */
 @Composable
 internal fun PlanApprovalPanel(
@@ -641,17 +607,26 @@ internal fun PlanApprovalPanel(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = Spacing.lg, vertical = Spacing.xs),
-        color = Color(0xFFF5F3FF),
+        color = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(Radius.md),
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF8B5CF6))
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(Spacing.md)) {
-            Text(
-                text = "📋 计划已完成",
-                style = MaterialTheme.typography.labelLarge,
-                color = Color(0xFF8B5CF6),
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.tertiary)
+                )
+                Spacer(Modifier.width(Spacing.sm))
+                Text(
+                    text = "计划已完成",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
 
             if (state.reason.isNotBlank()) {
                 Spacer(Modifier.height(Spacing.xs))
@@ -664,28 +639,18 @@ internal fun PlanApprovalPanel(
 
             Spacer(Modifier.height(Spacing.md))
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                TextButton(
+                AgentActionButton(
+                    text = "继续反馈",
                     onClick = onRefine,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("继续反馈", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(Radius.sm))
-                        .background(brandGradient)
-                        .clickable(onClick = onApprove)
-                        .padding(vertical = Spacing.sm + 2.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "批准并实施",
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
-                }
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Neutral
+                )
+                AgentActionButton(
+                    text = "批准并实施",
+                    onClick = onApprove,
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Success
+                )
             }
         }
     }

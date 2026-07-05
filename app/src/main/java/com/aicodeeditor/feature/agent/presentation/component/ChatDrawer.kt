@@ -65,7 +65,7 @@ fun ChatDrawerContent(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(androidx.compose.ui.graphics.Color.White)
+            .background(MaterialTheme.colorScheme.surface)
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = Spacing.md, vertical = Spacing.lg)
     ) {
@@ -81,7 +81,7 @@ fun ChatDrawerContent(
             Icon(
                 FeatherIcons.Plus,
                 contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(Spacing.md))
@@ -146,7 +146,7 @@ fun ChatDrawerContent(
             Icon(
                 FeatherIcons.Settings,
                 contentDescription = null,
-                tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(Spacing.md))
