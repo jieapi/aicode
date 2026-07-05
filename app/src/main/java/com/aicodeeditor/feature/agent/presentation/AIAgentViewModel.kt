@@ -58,7 +58,8 @@ class AIAgentViewModel @Inject constructor(
     private val askUserQuestionManager: AskUserQuestionManager,
     private val containerEngine: LinuxContainerEngine,
     private val sessionUseCase: SessionUseCase,
-    private val messagePersistenceUseCase: MessagePersistenceUseCase
+    private val messagePersistenceUseCase: MessagePersistenceUseCase,
+    private val planApprovalManager: com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalManager
 ) : ViewModel() {
 
     private val sessionJobs = mutableMapOf<String, Job>()
@@ -123,26 +124,21 @@ class AIAgentViewModel @Inject constructor(
         .flatMapLatest { (id, limit) ->
             if (id == null) flowOf(ChatMessagesState(null, emptyList(), loaded = false))
             else agentMessageDao.getMessagesBySessionPaged(id, limit).map { list ->
-                // 在后台线程执行预解析
-                withContext(Dispatchers.Default) {
-                    ChatMessagesState(
-                        sessionId = id,
-                        messages = list.asSequence()
-                            .filterNot {
-                                it.role == MessageRole.ASSISTANT.name &&
-                                    !it.content.hasVisibleContent() &&
-                                    it.reasoning.isNullOrEmpty()
-                            }
-                            .map { entity ->
-                                val uiMessage = entity.toUIMessage()
-                                uiMessage.copy(parsedBlocks = parseMarkdownBlocks(uiMessage.content))
-                            }
-                            .toList(),
-                        loaded = true,
-                        hasMore = list.size >= limit,
-                        isLoadingMore = false
-                    )
-                }
+                ChatMessagesState(
+                    sessionId = id,
+                    messages = list.asSequence()
+                        .filterNot { it.isCompacted }
+                        .filterNot {
+                            it.role == MessageRole.ASSISTANT.name &&
+                                !it.content.hasVisibleContent() &&
+                                it.reasoning.isNullOrEmpty()
+                        }
+                        .map { entity -> entity.toUIMessage() }
+                        .toList(),
+                    loaded = true,
+                    hasMore = list.size >= limit,
+                    isLoadingMore = false
+                )
             }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, ChatMessagesState(null, emptyList(), loaded = false))
@@ -220,6 +216,8 @@ class AIAgentViewModel @Inject constructor(
             else _queuedRequests.map { it[id] ?: emptyList() }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val pendingPlanApproval: StateFlow<com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalRequest?> = planApprovalManager.pendingApproval
 
     // 工具调用传入参数（argsPreview）按落库消息 id 暂存：ToolCallStarted 落库后，
     // ToolCallFinished / 用户停止会用同 id REPLACE 整行，需在此把参数带到后续落库。
@@ -371,6 +369,7 @@ class AIAgentViewModel @Inject constructor(
         setAgentState(sessionId, AgentUIState.Streaming)
 
         try {
+            var failed = false
             // 必须在插入本次用户消息之前读取历史：workflow 会自己 add(userRequest)，避免重复。
             val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
@@ -463,14 +462,24 @@ class AIAgentViewModel @Inject constructor(
                             setRunningTool(sessionId, null)
                         }
                     }
+                    is AgentEvent.Failed -> {
+                        failed = true
+                        setAgentState(sessionId, AgentUIState.Error(event.error))
+                    }
                     AgentEvent.Completed -> {
                         setRetryState(sessionId, null)
+                    }
+                    is AgentEvent.ModeChanged -> {
+                        // 模式切换事件：PlanApprovalManager 已在 workflow 层面挂起等待用户批准
+                        // 这里只更新 streamingText 显示
                     }
                 }
             }
 
             sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
-            setAgentState(sessionId, AgentUIState.Result(WorkflowStatus.SUCCESS))
+            if (!failed) {
+                setAgentState(sessionId, AgentUIState.Result(WorkflowStatus.SUCCESS))
+            }
             setStreamingText(sessionId, null)
 
         } catch (e: CancellationException) {
@@ -574,6 +583,16 @@ class AIAgentViewModel @Inject constructor(
         viewModelScope.launch {
             sessionUseCase.updateMode(sid, mode.name)
         }
+    }
+
+    /** 用户批准计划，唤醒 workflow 继续在 BUILD 模式执行。 */
+    fun approvePlanAndBuild() {
+        planApprovalManager.resolve(com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalChoice.APPROVE)
+    }
+
+    /** 用户选择继续反馈，唤醒 workflow 回滚到 PLAN 模式。 */
+    fun refinePlan() {
+        planApprovalManager.resolve(com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalChoice.REFINE)
     }
 
     fun selectSession(id: String) {

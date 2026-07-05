@@ -8,9 +8,6 @@ import javax.inject.Singleton
 class ToolRegistry {
     private val tools = ConcurrentHashMap<String, AgentTool>()
 
-    /** PLAN 模式下应从工具列表中移除的写操作/危险工具 */
-    private val planModeBlockedTools = setOf("writeFile", "editFile", "Bash")
-
     fun register(name: String, tool: AgentTool) {
         tools[name] = tool
     }
@@ -33,13 +30,11 @@ class ToolRegistry {
 
     /**
      * 根据当前模式返回可用工具列表。
-     * PLAN 模式下会过滤掉写操作工具（writeFile、editFile、Bash），
-     * 防止模型尝试调用不可用的工具。terminal 工具保留，
-     * 由 [ToolPermissionPolicyEngine] 在运行时拦截其 start/send 操作。
+     * PLAN 模式下仍返回全部工具定义（让 AI 知道这些工具存在，可在计划中引用），
+     * 写操作工具由 [ToolPermissionPolicyEngine] 在运行时拦截并返回 PLAN_MODE_REJECTED。
      */
     fun getAvailableTools(mode: AgentMode): List<AgentTool> {
-        if (mode != AgentMode.PLAN) return tools.values.toList()
-        return tools.values.filter { it.name !in planModeBlockedTools }
+        return tools.values.toList()
     }
 
     fun hasTool(name: String): Boolean {

@@ -1,6 +1,7 @@
 package com.aicodeeditor.feature.agent.domain.workflow
 
 import com.aicodeeditor.feature.agent.domain.model.AgentContext
+import com.aicodeeditor.feature.agent.domain.model.AgentMode
 import com.aicodeeditor.feature.agent.domain.model.WorkflowResult
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
@@ -42,8 +43,14 @@ sealed class AgentEvent {
     /** 网络请求正在重试（首字节前失败触发自动重试）。仅用于 UI 实时展示，不落库。 */
     data class Retrying(val attempt: Int, val maxRetries: Int) : AgentEvent()
 
+    /** 整个流程因错误终止（如流式请求被网络中断、达到迭代上限）。与 [Completed] 区别：携带错误，UI 应展示错误而非成功。 */
+    data class Failed(val error: String) : AgentEvent()
+
     /** 整个流程结束。 */
     object Completed : AgentEvent()
+
+    /** 模式已切换（由 AI 调用 switchMode 触发），UI 据此展示计划审查面板等。 */
+    data class ModeChanged(val newMode: AgentMode, val reason: String) : AgentEvent()
 }
 
 interface AgentWorkflow {

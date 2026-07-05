@@ -58,6 +58,10 @@ class ToolPermissionPolicyEngine @Inject constructor(
     }
 
     private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>): Boolean {
+        // 只读探索工具在 PLAN 模式下永远安全
+        val safePlanModeTools = setOf("list", "search")
+        if (toolName in safePlanModeTools) return false
+
         val dangerousTools = setOf(
             "writeFile",
             "editFile",

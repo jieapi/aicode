@@ -23,6 +23,8 @@ import com.aicodeeditor.feature.agent.domain.tool.file.WriteFileTool
 import com.aicodeeditor.feature.agent.domain.tool.editor.EditFileTool
 import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
 import com.aicodeeditor.feature.agent.domain.tool.container.TerminalSessionTool
+import com.aicodeeditor.feature.agent.domain.tool.explorer.ListFilesTool
+import com.aicodeeditor.feature.agent.domain.tool.explorer.SearchCodeTool
 import com.aicodeeditor.feature.agent.domain.tool.skill.LoadSkillTool
 import com.aicodeeditor.feature.agent.domain.tool.question.AskUserQuestionTool
 import com.aicodeeditor.feature.agent.domain.tool.todo.TodoTool
@@ -182,10 +184,11 @@ object AgentModule {
         editFileTool: EditFileTool,
         executeCommandTool: ExecuteCommandTool,
         terminalSessionTool: TerminalSessionTool,
+        listFilesTool: ListFilesTool,
+        searchCodeTool: SearchCodeTool,
         loadSkillTool: LoadSkillTool,
         askUserQuestionTool: AskUserQuestionTool,
         manageMcpTool: com.aicodeeditor.feature.agent.domain.tool.mcp.ManageMcpTool,
-        manageSkillTool: com.aicodeeditor.feature.agent.domain.tool.skill.ManageSkillTool,
         webSearchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebSearchTool,
         webFetchTool: com.aicodeeditor.feature.agent.domain.tool.search.WebFetchTool,
         switchModeTool: com.aicodeeditor.feature.agent.domain.tool.mode.SwitchModeTool,
@@ -197,10 +200,11 @@ object AgentModule {
             register("editFile", editFileTool)
             register("Bash", executeCommandTool)
             register("terminal", terminalSessionTool)
+            register("list", listFilesTool)
+            register("search", searchCodeTool)
             register("loadSkill", loadSkillTool)
             register("askUserQuestion", askUserQuestionTool)
             register("manageMcp", manageMcpTool)
-            register("manageSkill", manageSkillTool)
             register("websearch", webSearchTool)
             register("webfetch", webFetchTool)
             register("switchMode", switchModeTool)
@@ -225,7 +229,8 @@ object AgentModule {
         promptProvider: SystemPromptProvider,
         permissionManager: ToolPermissionManager,
         policyEngine: ToolPermissionPolicyEngine,
-        contextCompactor: com.aicodeeditor.feature.agent.domain.workflow.ContextCompactor
+        contextCompactor: com.aicodeeditor.feature.agent.domain.workflow.ContextCompactor,
+        planApprovalManager: com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalManager
     ): AgentWorkflow {
         return com.aicodeeditor.feature.agent.domain.workflow.StatefulAgentWorkflow(
             toolRegistry,
@@ -236,7 +241,8 @@ object AgentModule {
             promptProvider,
             permissionManager,
             policyEngine,
-            contextCompactor
+            contextCompactor,
+            planApprovalManager
         )
     }
 }

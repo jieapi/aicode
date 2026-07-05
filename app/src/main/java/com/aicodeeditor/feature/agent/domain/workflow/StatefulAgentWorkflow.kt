@@ -16,6 +16,8 @@ import com.aicodeeditor.feature.agent.domain.provider.AIStreamChunk
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.StreamingAgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
+import com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalChoice
+import com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalManager
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
@@ -45,14 +47,15 @@ class StatefulAgentWorkflow @Inject constructor(
     private val promptProvider: SystemPromptProvider,
     private val permissionManager: ToolPermissionManager,
     private val policyEngine: ToolPermissionPolicyEngine,
-    private val contextCompactor: ContextCompactor
+    private val contextCompactor: ContextCompactor,
+    private val planApprovalManager: PlanApprovalManager
 ) : AgentWorkflow {
 
     private companion object {
         const val TAG = "StatefulAgentWorkflow"
         const val MAX_ITERATIONS = 50
-        const val LIVE_TAIL_CHARS = 8_000
-        const val PROGRESS_INTERVAL_MS = 100L
+        const val LIVE_TAIL_CHARS = 4_000
+        const val PROGRESS_INTERVAL_MS = 250L
     }
 
     /** 不可变状态树 */
@@ -127,7 +130,8 @@ class StatefulAgentWorkflow @Inject constructor(
             is AgentAction.LlmResponse -> {
                 val assistantMsg = AgentMessage.AssistantMessage(
                     content = action.response.content,
-                    toolCalls = action.response.toolCalls
+                    toolCalls = action.response.toolCalls,
+                    reasoning = action.response.reasoning ?: ""
                 )
                 newState = state.copy(
                     messages = state.messages + assistantMsg,
@@ -236,14 +240,31 @@ class StatefulAgentWorkflow @Inject constructor(
                     }
                     is AgentSideEffect.ExecuteTool -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
-                        val rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, currentContext)
-                        val isError = tool == null || rawResult.startsWith("Error")
+                        var rawResult = runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, currentContext)
+                        var isError = tool == null || rawResult.startsWith("Error")
                         val (newCtx, updated) = checkAndUpdateMode(effect.toolCall, isError, currentContext)
                         if (updated) {
-                            currentContext = newCtx
-                            systemPrompt = promptProvider.build(currentContext)
-                            // 模式切换后重建工具列表：BUILD→PLAN 移除写工具，PLAN→BUILD 恢复全部工具
-                            currentTools = toolRegistry.getAvailableTools(currentContext.mode)
+                            val reason = (effect.toolCall.arguments["reason"] as? JsonPrimitive)?.content?.trim()
+                                ?: effect.toolCall.arguments["reason"]?.toString()?.replace("\"", "")?.trim()
+                                ?: ""
+
+                            // PLAN→BUILD 时挂起 workflow，等待用户在计划审查面板批准后才继续
+                            if (newCtx.mode == AgentMode.BUILD) {
+                                val choice = planApprovalManager.awaitApproval(reason, currentContext.sessionId)
+                                if (choice == PlanApprovalChoice.APPROVE) {
+                                    currentContext = newCtx
+                                    systemPrompt = promptProvider.build(currentContext)
+                                } else {
+                                    // 用户选择继续反馈，回滚到 PLAN 模式，修正工具结果让 AI 知道切换被取消
+                                    currentContext = currentContext.copy(mode = AgentMode.PLAN)
+                                    systemPrompt = promptProvider.build(currentContext)
+                                    rawResult = ToolResult.Error("用户拒绝了模式切换请求，请继续在 PLAN 模式下完善方案，待用户认可后再次申请切换。", "MODE_SWITCH_REJECTED").toString()
+                                    isError = true
+                                }
+                            } else {
+                                currentContext = newCtx
+                                systemPrompt = promptProvider.build(currentContext)
+                            }
                         }
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                     }
@@ -311,17 +332,25 @@ class StatefulAgentWorkflow @Inject constructor(
                                 }
                             }
                             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
+                            // 将本轮 reasoning 附加到 AIResponse，以便 reduce 时存入 AssistantMessage 并在下一轮回传
+                            val responseWithReasoning = if (reasoningAcc.isNotEmpty()) {
+                                aiResponse.copy(reasoning = reasoningAcc.toString())
+                            } else aiResponse
 
                             if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
                                 emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
                             }
-                            actionQueue.addLast(AgentAction.LlmResponse(aiResponse))
+                            actionQueue.addLast(AgentAction.LlmResponse(responseWithReasoning))
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Throwable) {
                             val partial = acc.toString()
-                            if (partial.isNotEmpty()) {
-                                emit(AgentEvent.AssistantText(partial, emptyList(), reasoningAcc.toString()))
+                            val reasoning = reasoningAcc.toString()
+                            // 流式被中断时也要落库已收到的思考：否则下方 finally 会清空流式思考气泡，
+                            // 而落库的接力消息又没产生，表现为「思考显示后凭空消失且无报错」。
+                            // 有正文或有思考其一即落库；两者皆空则不写空消息。
+                            if (partial.isNotEmpty() || reasoning.isNotBlank()) {
+                                emit(AgentEvent.AssistantText(partial, emptyList(), reasoning))
                             }
                             actionQueue.addLast(AgentAction.LlmError("LLM 调用失败: ${e.message}"))
                         }
@@ -341,19 +370,37 @@ class StatefulAgentWorkflow @Inject constructor(
                     }
                     is AgentSideEffect.ExecuteTool -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
-                        val rawResult = if (tool is StreamingAgentTool) {
+                        var rawResult = if (tool is StreamingAgentTool) {
                             runToolStream(tool, effect.toolCall) { emit(it) }
                         } else {
                             // 同步兜底
                             runToolSync(tool, effect.toolCall.name, effect.toolCall.arguments, currentContext)
                         }
-                        val isError = tool == null || rawResult.startsWith("Error")
+                        var isError = tool == null || rawResult.startsWith("Error")
                         val (newCtx, updated) = checkAndUpdateMode(effect.toolCall, isError, currentContext)
                         if (updated) {
-                            currentContext = newCtx
-                            systemPrompt = promptProvider.build(currentContext)
-                            // 模式切换后重建工具列表：BUILD→PLAN 移除写工具，PLAN→BUILD 恢复全部工具
-                            currentTools = toolRegistry.getAvailableTools(currentContext.mode)
+                            val reason = (effect.toolCall.arguments["reason"] as? JsonPrimitive)?.content?.trim()
+                                ?: effect.toolCall.arguments["reason"]?.toString()?.replace("\"", "")?.trim()
+                                ?: ""
+                            emit(AgentEvent.ModeChanged(newCtx.mode, reason))
+
+                            // PLAN→BUILD 时挂起 workflow，等待用户在计划审查面板批准后才继续
+                            if (newCtx.mode == AgentMode.BUILD) {
+                                val choice = planApprovalManager.awaitApproval(reason, currentContext.sessionId)
+                                if (choice == PlanApprovalChoice.APPROVE) {
+                                    currentContext = newCtx
+                                    systemPrompt = promptProvider.build(currentContext)
+                                } else {
+                                    // 用户选择继续反馈，回滚到 PLAN 模式，修正工具结果让 AI 知道切换被取消
+                                    currentContext = currentContext.copy(mode = AgentMode.PLAN)
+                                    systemPrompt = promptProvider.build(currentContext)
+                                    rawResult = ToolResult.Error("用户拒绝了模式切换请求，请继续在 PLAN 模式下完善方案，待用户认可后再次申请切换。", "MODE_SWITCH_REJECTED").toString()
+                                    isError = true
+                                }
+                            } else {
+                                currentContext = newCtx
+                                systemPrompt = promptProvider.build(currentContext)
+                            }
                         }
                         emit(AgentEvent.ToolCallFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
                         actionQueue.addLast(AgentAction.ToolFinished(effect.toolCall.id, effect.toolCall.name, rawResult, isError))
@@ -362,6 +409,7 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         }
         
+        state.error?.let { emit(AgentEvent.Failed(it)) }
         emit(AgentEvent.Completed)
     }
 
