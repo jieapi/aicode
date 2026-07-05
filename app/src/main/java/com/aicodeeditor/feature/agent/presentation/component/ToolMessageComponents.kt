@@ -161,28 +161,15 @@ internal fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null
         }
         if (streaming) {
             if (!liveOutput.isNullOrBlank()) {
-                val truncated = remember(liveOutput) {
-                    if (liveOutput.count { it == '\n' } + 1 > TOOL_SECTION_LINE_LIMIT) {
-                        var count = 0
-                        var cut = liveOutput.length
-                        for (i in liveOutput.lastIndex downTo 0) {
-                            if (liveOutput[i] == '\n' && ++count == TOOL_SECTION_LINE_LIMIT) {
-                                cut = i + 1; break
-                            }
-                        }
-                        liveOutput.substring(cut)
-                    } else liveOutput
-                }
+                val truncated = remember(liveOutput) { liveOutput.takeLastLines(TOOL_SECTION_LINE_LIMIT) }
                 Spacer(Modifier.height(Spacing.xs))
-                SelectionContainer {
-                    Text(
-                        text = truncated,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace
-                        )
+                Text(
+                    text = truncated,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace
                     )
-                }
+                )
             }
         } else if (expanded) {
             if (todoData != null && todoData.items.isNotEmpty()) {
@@ -205,6 +192,17 @@ internal fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null
             }
         }
     }
+}
+
+private fun String.takeLastLines(maxLines: Int): String {
+    if (maxLines <= 0 || isEmpty()) return ""
+    var seen = 0
+    for (i in lastIndex downTo 0) {
+        if (this[i] == '\n' && ++seen == maxLines) {
+            return substring(i + 1)
+        }
+    }
+    return this
 }
 
 /**
