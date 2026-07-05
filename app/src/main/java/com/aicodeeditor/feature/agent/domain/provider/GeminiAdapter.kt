@@ -227,6 +227,9 @@ class GeminiAdapter @Inject constructor(
 
     private fun convertToGeminiContents(messages: List<AgentMessage>): List<Map<String, Any>> {
         val result = mutableListOf<Map<String, Any>>()
+        // 防御性跟踪：上一个 assistant(即 model) 消息是否包含 functionCall
+        var lastModelHadFunctionCall = false
+
         for (message in messages) {
             when (message) {
                 is AgentMessage.UserMessage -> {
@@ -236,6 +239,7 @@ class GeminiAdapter @Inject constructor(
                             "parts" to listOf(mapOf("text" to message.content))
                         )
                     )
+                    lastModelHadFunctionCall = false
                 }
                 is AgentMessage.AssistantMessage -> {
                     val parts = mutableListOf<Map<String, Any>>()
@@ -252,6 +256,7 @@ class GeminiAdapter @Inject constructor(
                             )
                         )
                     }
+                    lastModelHadFunctionCall = message.toolCalls.isNotEmpty()
                     if (parts.isNotEmpty()) {
                         result.add(
                             mapOf(
@@ -262,6 +267,8 @@ class GeminiAdapter @Inject constructor(
                     }
                 }
                 is AgentMessage.ToolResultMessage -> {
+                    // 防御性清理：跳过没有配对 functionCall 的孤立 functionResponse
+                    if (!lastModelHadFunctionCall) continue
                     result.add(
                         mapOf(
                             "role" to "user",

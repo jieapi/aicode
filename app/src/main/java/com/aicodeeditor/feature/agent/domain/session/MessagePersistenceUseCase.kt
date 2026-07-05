@@ -63,9 +63,11 @@ class MessagePersistenceUseCase @Inject constructor(
      * 从持久化的消息重建合法的上下文历史。
      * 关键：只保留「assistant 的 tool_call」与「tool 结果」能配对成功的部分，
      * 丢弃任何一方缺失的悬挂项，避免回放出现孤儿 tool_use / tool_result 违反 API 约束。
+     * 已被上下文压缩标记的消息（isCompacted=true）不参与回放。
      */
     suspend fun buildHistory(sessionId: String, pendingToolMarker: String): List<AgentMessage> {
         val entities = agentMessageDao.getMessagesBySessionOnce(sessionId)
+            .filter { !it.isCompacted }
 
         // 第一遍：求 assistant 声明的 toolCallId 与 tool 结果 toolCallId 的交集。
         val declaredIds = mutableSetOf<String>()

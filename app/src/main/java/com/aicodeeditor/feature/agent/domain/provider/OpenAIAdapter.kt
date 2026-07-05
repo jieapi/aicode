@@ -134,8 +134,9 @@ class OpenAIAdapter @Inject constructor(
         val finishReason = response.choices.firstOrNull()?.finish_reason
         val content = message?.content ?: ""
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
+        val reasoning = message?.reasoning_content?.takeIf { it.isNotEmpty() }
 
-        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason)
+        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning)
     }
 
     override fun completeStream(
@@ -345,13 +346,17 @@ class OpenAIAdapter @Inject constructor(
                                 }
                             }
                             // 工具调用增量：按 index 聚合 id/name/arguments 片段。
+                            // 有些模型（如 DeepSeek）在后续增量 chunk 中只传 arguments 片段，
+                            // id 和 name 为空字符串 ""，不应覆盖已收到的有效值——否则首次 chunk
+                            // 收到的完整 id/name 会被后续空值清空，导致 ToolCall 丢失。
                             delta.getAsJsonArray("tool_calls")?.forEach { el ->
                                 val tc = el.asJsonObject
                                 val idx = tc.get("index")?.asInt ?: 0
                                 val acc = toolAccs.getOrPut(idx) { OpenAIToolAcc() }
-                                tc.get("id")?.takeIf { !it.isJsonNull }?.asString?.let { acc.id = it }
+                                // 仅在 id/name 非空时更新，避免增量 chunk 的空值覆盖首 chunk 的有效值
+                                tc.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotEmpty() }?.let { acc.id = it }
                                 tc.getAsJsonObject("function")?.let { fn ->
-                                    fn.get("name")?.takeIf { !it.isJsonNull }?.asString?.let { acc.name = it }
+                                    fn.get("name")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotEmpty() }?.let { acc.name = it }
                                     fn.get("arguments")?.takeIf { !it.isJsonNull }?.asString?.let { acc.args.append(it) }
                                 }
                             }
@@ -405,14 +410,19 @@ class OpenAIAdapter @Inject constructor(
     }
 
     private fun convertToOpenAIMessages(messages: List<AgentMessage>): MutableList<OpenAIChatMessage> {
-        return messages.map { message ->
+        val raw = messages.map { message ->
             when (message) {
                 is AgentMessage.UserMessage -> OpenAIChatMessage(role = "user", content = message.content)
                 is AgentMessage.AssistantMessage -> {
                     val toolCalls = if (message.toolCalls.isNotEmpty()) {
                         message.toolCalls.map { convertToOpenAIToolCall(it) }
                     } else null
-                    OpenAIChatMessage(role = "assistant", content = message.content, tool_calls = toolCalls)
+                    OpenAIChatMessage(
+                        role = "assistant",
+                        content = message.content,
+                        tool_calls = toolCalls,
+                        reasoning_content = message.reasoning.ifEmpty { null }
+                    )
                 }
                 is AgentMessage.ToolResultMessage -> OpenAIChatMessage(
                     role = "tool",
@@ -420,7 +430,27 @@ class OpenAIAdapter @Inject constructor(
                     tool_call_id = message.id
                 )
             }
-        }.toMutableList()
+        }
+
+        // 防御性清理：确保每个 role: "tool" 消息的前驱 assistant 消息包含对应的 tool_calls。
+        // 上下文压缩可能导致 assistant(toolCalls) + tool 的配对断裂，产生孤立 tool 消息，
+        // OpenAI API 对此会报 400: "Messages with role 'tool' must be a response to a preceding
+        // message with 'tool_calls'"。
+        val cleaned = mutableListOf<OpenAIChatMessage>()
+        var lastAssistantHadToolCalls = false
+        for (msg in raw) {
+            if (msg.role == "tool" && !lastAssistantHadToolCalls) {
+                // 孤立 tool 消息，跳过
+                continue
+            }
+            if (msg.role == "assistant") {
+                lastAssistantHadToolCalls = msg.tool_calls?.isNotEmpty() == true
+            } else if (msg.role != "tool") {
+                lastAssistantHadToolCalls = false
+            }
+            cleaned.add(msg)
+        }
+        return cleaned
     }
 
     private fun convertToToolCall(openAIToolCall: OpenAIToolCall): ToolCall {
