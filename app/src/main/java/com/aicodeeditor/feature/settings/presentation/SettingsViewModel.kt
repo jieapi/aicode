@@ -12,8 +12,10 @@ import com.aicodeeditor.feature.agent.domain.permission.PermissionRule
 import com.aicodeeditor.feature.agent.domain.permission.PermissionRulesRepository
 import com.aicodeeditor.feature.settings.data.remote.ModelApiService
 import com.aicodeeditor.feature.settings.data.remote.ModelTestResult
+import com.aicodeeditor.feature.settings.data.repository.AppThemeMode
 import com.aicodeeditor.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.LogSettingsRepository
+import com.aicodeeditor.feature.settings.data.repository.ThemeSettingsRepository
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -37,6 +39,7 @@ class SettingsViewModel @Inject constructor(
     private val repository: AIProviderRepository,
     private val modelApiService: ModelApiService,
     private val logSettingsRepository: LogSettingsRepository,
+    private val themeSettingsRepository: ThemeSettingsRepository,
     private val keepaliveSettingsRepository: KeepaliveSettingsRepository,
     private val mcpConfigRepository: McpConfigRepository,
     private val mcpManager: McpManager,
@@ -54,6 +57,9 @@ class SettingsViewModel @Inject constructor(
 
     private val _keepaliveEnabled = MutableStateFlow(false)
     val keepaliveEnabled: StateFlow<Boolean> = _keepaliveEnabled.asStateFlow()
+
+    private val _themeMode = MutableStateFlow(AppThemeMode.AUTO)
+    val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
 
     private val _mcpServers = MutableStateFlow<List<McpServerConfig>>(emptyList())
     val mcpServers: StateFlow<List<McpServerConfig>> = _mcpServers.asStateFlow()
@@ -110,6 +116,12 @@ class SettingsViewModel @Inject constructor(
             launch {
                 keepaliveSettingsRepository.enabledFlow.collectLatest {
                     _keepaliveEnabled.value = it
+                }
+            }
+
+            launch {
+                themeSettingsRepository.themeModeFlow.collectLatest {
+                    _themeMode.value = it
                 }
             }
 
@@ -195,6 +207,12 @@ class SettingsViewModel @Inject constructor(
     fun setKeepaliveEnabled(enabled: Boolean) {
         viewModelScope.launch {
             keepaliveSettingsRepository.setEnabled(enabled)
+        }
+    }
+
+    fun setThemeMode(mode: AppThemeMode) {
+        viewModelScope.launch {
+            themeSettingsRepository.setThemeMode(mode)
         }
     }
 

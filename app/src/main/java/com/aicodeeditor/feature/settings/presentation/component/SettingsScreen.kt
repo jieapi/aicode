@@ -17,10 +17,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -33,17 +38,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.core.util.LogLevel
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerConfig
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerStatus
+import com.aicodeeditor.feature.settings.data.repository.AppThemeMode
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.presentation.SettingsViewModel
 import compose.icons.FeatherIcons
@@ -75,6 +79,7 @@ fun SettingsScreen(
     val globalRules by viewModel.globalRules.collectAsStateWithLifecycle()
     val projectRules by viewModel.projectRules.collectAsStateWithLifecycle()
     val keepaliveEnabled by viewModel.keepaliveEnabled.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
@@ -115,12 +120,12 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        containerColor = Brand.PageBg,
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(section.title) },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Brand.PageBg,
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 navigationIcon = {
@@ -172,6 +177,8 @@ fun SettingsScreen(
                     mcpConnected = mcpStatuses.count { it.state == McpServerStatus.State.CONNECTED },
                     logLevel = logLevel,
                     permissionRuleCount = projectRules.size + globalRules.size,
+                    themeMode = themeMode,
+                    onThemeModeChange = { viewModel.setThemeMode(it) },
                     keepaliveEnabled = keepaliveEnabled,
                     onToggleKeepalive = { viewModel.setKeepaliveEnabled(it) },
                     onOpen = { section = it }
@@ -243,6 +250,8 @@ internal fun SettingsMenu(
     mcpConnected: Int,
     logLevel: LogLevel,
     permissionRuleCount: Int,
+    themeMode: AppThemeMode,
+    onThemeModeChange: (AppThemeMode) -> Unit,
     keepaliveEnabled: Boolean,
     onToggleKeepalive: (Boolean) -> Unit,
     onOpen: (SettingsSection) -> Unit
@@ -288,43 +297,143 @@ internal fun SettingsMenu(
             onClick = { onOpen(SettingsSection.RemoteServers) }
         )
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(Radius.md),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ThemeModeRow(
+            icon = FeatherIcons.Moon,
+            title = "外观主题",
+            subtitle = "选择跟随系统或固定明暗模式",
+            selected = themeMode,
+            onSelected = onThemeModeChange
+        )
+        SwitchRow(
+            icon = FeatherIcons.RefreshCw,
+            title = "后台运行保活",
+            subtitle = "显示前台通知，避免退到后台时系统杀进程",
+            checked = keepaliveEnabled,
+            onCheckedChange = onToggleKeepalive
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ThemeModeRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    selected: AppThemeMode,
+    onSelected: (AppThemeMode) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Radius.md),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Spacing.lg),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(Spacing.lg),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = FeatherIcons.RefreshCw,
-                    contentDescription = null,
-                    tint = Brand.IconGray,
-                    modifier = Modifier.size(24.dp)
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(Modifier.width(Spacing.md))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "后台运行保活",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "显示前台通知，避免退到后台时系统杀进程",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = keepaliveEnabled,
-                    onCheckedChange = onToggleKeepalive
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded }
+            ) {
+                OutlinedTextField(
+                    value = selected.label,
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier
+                        .width(124.dp)
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    AppThemeMode.entries.forEach { mode ->
+                        DropdownMenuItem(
+                            text = { Text(mode.label) },
+                            onClick = {
+                                onSelected(mode)
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SwitchRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(Radius.md),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Spacing.lg),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange
+            )
         }
     }
 }
@@ -342,7 +451,7 @@ internal fun MenuRow(
             .fillMaxWidth()
             .clickable { onClick() },
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
@@ -354,7 +463,7 @@ internal fun MenuRow(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = Brand.IconGray,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(24.dp)
             )
             Spacer(Modifier.width(Spacing.md))
@@ -374,7 +483,7 @@ internal fun MenuRow(
             Icon(
                 imageVector = FeatherIcons.ChevronRight,
                 contentDescription = null,
-                tint = Brand.IconGray)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
