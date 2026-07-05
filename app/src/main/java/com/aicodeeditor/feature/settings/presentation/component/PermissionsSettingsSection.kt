@@ -25,11 +25,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.agent.domain.permission.PermissionDecision
@@ -63,7 +61,7 @@ internal fun PermissionsSection(
             ) {
                 Column(modifier = Modifier.padding(Spacing.md)) {
                     Text(
-                        text = "🔒 内置安全白名单",
+                        text = "内置安全白名单",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -132,7 +130,7 @@ internal fun RuleRow(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(Radius.md),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
@@ -159,7 +157,7 @@ internal fun RuleRow(
                 TextButton(onClick = onPromote) { Text("提升为全局") }
             }
             IconButton(onClick = onDelete) {
-                Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = Brand.IconGray)
+                Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
