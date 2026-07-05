@@ -8,12 +8,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
 import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
-import com.aicodeeditor.core.theme.Brand
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -40,7 +38,7 @@ fun SyncSettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -48,7 +46,7 @@ fun SyncSettingsSection(
                     Icon(
                         FeatherIcons.FileText,
                         contentDescription = null,
-                        tint = Brand.IconGray,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
@@ -87,7 +85,7 @@ fun SyncSettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
@@ -101,7 +99,7 @@ fun SyncSettingsSection(
                     Icon(
                         FeatherIcons.CheckSquare,
                         contentDescription = null,
-                        tint = Brand.IconGray,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
@@ -133,7 +131,7 @@ fun SyncSettingsSection(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -141,7 +139,7 @@ fun SyncSettingsSection(
                     Icon(
                         FeatherIcons.Layers,
                         contentDescription = null,
-                        tint = Brand.IconGray,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(16.dp))
@@ -189,7 +187,7 @@ fun RemoteConnectionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -202,7 +200,7 @@ fun RemoteConnectionCard(
                     Icon(
                         FeatherIcons.Cloud,
                         contentDescription = null,
-                        tint = Brand.IconGray)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(text = conn.name, fontWeight = FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
@@ -211,10 +209,10 @@ fun RemoteConnectionCard(
                 }
                 Row {
                     IconButton(onClick = { onEdit(conn) }) {
-                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = Brand.IconGray)
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { onDelete(conn) }) {
-                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = Brand.IconGray)
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -235,7 +233,7 @@ fun RemoteMountCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -248,7 +246,7 @@ fun RemoteMountCard(
                     Icon(
                         FeatherIcons.Folder,
                         contentDescription = null,
-                        tint = Brand.IconGray)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(text = "通过: ${mount.connection?.name ?: "未知连接"}", fontWeight = FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
@@ -259,10 +257,10 @@ fun RemoteMountCard(
                 }
                 Row {
                     IconButton(onClick = { onEdit(mount) }) {
-                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = Brand.IconGray)
+                        Icon(FeatherIcons.Edit2, contentDescription = "编辑", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(onClick = { onDelete(mount) }) {
-                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = Brand.IconGray)
+                        Icon(FeatherIcons.Trash2, contentDescription = "删除", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
