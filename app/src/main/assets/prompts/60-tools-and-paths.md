@@ -20,6 +20,15 @@
   - `action="read"`：按 `tab_id` 读取某终端当前的全部输出（含后台命令的实时日志）；省略 `tab_id` 则列出所有终端标签及其状态。
 - 选择：一次性、会自行结束的命令用 `Bash`；需要常驻的服务用 `terminal(action="start")` 启动，再配合 `terminal(action="read")` 看日志、`terminal(action="send")` 发指令。
 
+代码探索工具（只读）：
+
+- `list`：列出指定目录下的文件和子目录，以缩进树形格式展示。支持 glob 模式过滤、深度限制和排除目录。不加参数时列出项目根目录结构。
+  - 参数：`path`（目录路径，默认 /workspace）、`pattern`（glob 过滤，如 `*.kt`）、`max_depth`（递归深度，默认 3，最大 10）、`exclude`（排除的目录名，逗号分隔，如 `.git,node_modules,build`）
+  - 典型用法：`list()` 列出项目全貌；`list(path="/workspace/src", pattern="*.kt", max_depth=5)` 精细查看 Kotlin 源码；`list(exclude=".git,node_modules,build")` 跳过常见大目录。
+- `search`：在项目代码中搜索匹配指定字符串或正则模式的行，类似 grep。返回 `文件路径:行号:匹配内容` 格式。支持多个查询同时搜索（数组参数），共享同一次文件遍历，各自独立匹配。
+  - 参数：`query`（搜索查询数组，每个元素是一个查询，如 `["class Foo", "class Bar"]`）、`path`（搜索起始路径，默认 /workspace）、`file_pattern`（文件名 glob 过滤，如 `*.kt`）、`exclude`（排除的目录名，逗号分隔，如 `.git,node_modules,build`）、`case_sensitive`（默认 false）、`max_results`（每个查询的最大匹配数，默认 50，上限 200）
+  - 典型用法：`search(query=["fun main"])` 搜索单个查询；`search(query=["class Foo", "class Bar"], exclude=".git,build")` 同时搜两个查询并排除目录。
+
 路径约定（重要）：
 
 - 项目根目录固定为容器内路径 `/workspace`。你只看得到、也只需使用容器内路径。

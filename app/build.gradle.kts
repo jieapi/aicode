@@ -139,9 +139,6 @@ dependencies {
     // HTML 解析与清洗 (用于 WebFetchTool)
     implementation("org.jsoup:jsoup:1.18.1")
 
-    // 安全存储
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
-
     // 协程
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
@@ -166,9 +163,6 @@ dependencies {
     // 避免自行实现终端模拟器。
     implementation("com.github.termux.termux-app:terminal-emulator:v0.118.0")
     implementation("com.github.termux.termux-app:terminal-view:v0.118.0")
-
-    // WebView (用于代码编辑器)
-    implementation("androidx.webkit:webkit:1.13.0")
 
     // Material Icons
     implementation("androidx.compose.material:material-icons-core")

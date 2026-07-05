@@ -108,9 +108,9 @@ class TerminalSessionManager @Inject constructor(
         ensureContainer()
         val id = nextId()
         val session = buildSession(
-            // -w 已把 cwd 设为 /workspace，cd 仅作兜底；裸 sh 在 tty 上自动进交互模式，
-            // 靠 ENV=/etc/profile 加载登录环境；exec 让 sh 取代外层 sh -c 成为前台交互 shell。
-            shellCommand = "cd /workspace 2>/dev/null; export ENV=/etc/profile; exec /bin/sh"
+            // -w 已把 cwd 设为 /workspace，cd 仅作兜底；裸 sh/bash 在 tty 上自动进交互模式，
+            // 靠 ENV=/etc/profile 加载登录环境；exec 让 shell 取代外层 sh -c 成为前台交互 shell。
+            shellCommand = "cd /workspace 2>/dev/null; export ENV=/etc/profile; exec ${containerEngine.defaultShell()}"
         )
         addTab(
             TerminalTab(
@@ -136,9 +136,9 @@ class TerminalSessionManager @Inject constructor(
     suspend fun startBackgroundCommand(command: String, title: String? = null): String {
         ensureContainer()
         val id = nextId()
-        // 用 sh -c 跑用户命令，结束后再 exec sh 保活；TERM 等环境由 proot env 提供。
+        // 用 sh -c 跑用户命令，结束后再 exec 默认 shell 保活；TERM 等环境由 proot env 提供。
         val shellCommand = "cd /workspace 2>/dev/null; export ENV=/etc/profile; " +
-            "$command; echo \"[command exited: \$?]\"; exec /bin/sh"
+            "$command; echo \"[command exited: \$?]\"; exec ${containerEngine.defaultShell()}"
         val session = buildSession(shellCommand)
         addTab(
             TerminalTab(
@@ -236,7 +236,7 @@ class TerminalSessionManager @Inject constructor(
         val old = tab(id) ?: return
         runCatching { old.session.finishIfRunning() }
         ensureContainer()
-        val session = buildSession("cd /workspace 2>/dev/null; export ENV=/etc/profile; exec /bin/sh")
+        val session = buildSession("cd /workspace 2>/dev/null; export ENV=/etc/profile; exec ${containerEngine.defaultShell()}")
         val newTab = TerminalTab(
             id = old.id,
             title = old.title,

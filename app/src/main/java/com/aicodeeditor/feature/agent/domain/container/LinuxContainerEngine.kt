@@ -88,17 +88,19 @@ class LinuxContainerEngine @Inject constructor(
 
         /**
          * 容器首次初始化时自动安装的基础包清单（Alpine 3.21 的 `python3` 即 3.12.x）。
-         * 包含：python3、git、pip（py3-pip）、nodejs、npm。用 `--no-cache` 避免 apk 缓存撑大 rootfs。
+         * 包含：python3、git、pip（py3-pip）、nodejs、npm、bash、curl。用 `--no-cache` 避免 apk 缓存撑大 rootfs。
+         * bash：作为默认交互/命令 shell（见 [defaultShell]）；装好后比 busybox ash 更接近桌面习惯。
+         * curl：常用下载工具，skill 脚本与 AI 联网拉取常依赖。
          * 改清单时同步 +1 [PROVISION_VERSION] 触发重装。
          */
-        private const val PROVISION_PACKAGES = "python3 git py3-pip nodejs npm"
+        private const val PROVISION_PACKAGES = "python3 git py3-pip nodejs npm bash curl"
 
         /**
          * 基础包配置版本。改 [PROVISION_PACKAGES] 或配置逻辑时 +1，触发在设备上重新 `apk add`。
          * 独立于 [ContainerInstaller] 的 rootfs INSTALL_VERSION：rootfs 版本升级会删 rootfs
          * （连带清掉本标记），故新 rootfs 必然重跑配置；同 rootfs 下改包清单则靠本版本号触发。
          */
-        private const val PROVISION_VERSION = "py3.12-pip-node-v1"
+        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-v1"
 
         /** `apk add` 下载基础包的超时（毫秒）：首次配置需联网拉包，给足时间。 */
         private const val PROVISION_TIMEOUT_MS = 600_000L
@@ -346,10 +348,20 @@ class LinuxContainerEngine @Inject constructor(
     fun isContainerInstalled(): Boolean = containerInstaller.isInstalled()
 
     /** 基础包是否已按当前 [PROVISION_VERSION] 配置完成。 */
-    private fun isProvisioned(): Boolean {
+    fun isProvisioned(): Boolean {
         val marker = provisionMarker
         return marker.exists() && marker.readText().trim() == PROVISION_VERSION
     }
+
+    /**
+     * 容器默认命令 shell：基础包（含 bash）配置完成则用 `/bin/bash`，否则回退 minirootfs 自带的 `/bin/sh`（busybox ash）。
+     *
+     * 之所以条件选择而非无脑用 bash：`/bin/sh` 是 minirootfs 自带、永远在；bash 只有 provisioning 成功后才存在。
+     * provisioning 流程本身（[provisionIfNeeded]）与所有命令入口都经 [buildProotInvocation] 用本方法构造的 shell 跑——
+     * 装机期间 [isProvisioned] 为 false，自动回退 `/bin/sh` 保证不破坏装机；装机失败也回退 `/bin/sh` 保留兜底能力，
+     * 避免出现「bash 没装上 → 整个容器命令全废」的脆弱状态。
+     */
+    fun defaultShell(): String = if (isProvisioned()) "/bin/bash" else "/bin/sh"
 
     /**
      * 幂等地确保容器可用：先解压 rootfs/proot（首次耗时），再配置基础包 python3/git/pip/node/npm（首次需联网）。
@@ -431,7 +443,8 @@ class LinuxContainerEngine @Inject constructor(
      */
     fun buildProotInvocation(command: String, projectPath: String?): ProotInvocation {
         val argv = buildBaseProotArgv(projectPath)
-        argv.add("/bin/sh")
+        // 用 [defaultShell]：bash 装好后 AI 命令与终端会话都走 bash；装机期间/失败回退 /bin/sh。
+        argv.add(defaultShell())
         argv.add("-c")
         argv.add(command)
         return ProotInvocation(argv, buildContainerEnv())
