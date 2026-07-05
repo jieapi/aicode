@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Add
@@ -67,6 +68,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,12 +139,12 @@ fun ProviderEditorScreen(
     )
 
     Scaffold(
-        containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(if (initialProvider == null) "添加服务商" else "编辑服务商") },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
+                    containerColor = MaterialTheme.colorScheme.background,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 navigationIcon = {
@@ -183,7 +185,7 @@ fun ProviderEditorScreen(
         },
         bottomBar = {
             NavigationBar(
-                containerColor = androidx.compose.ui.graphics.Color(0xFFFAFAFA),
+                containerColor = MaterialTheme.colorScheme.background,
                 tonalElevation = 0.dp
             ) {
                 NavigationBarItem(
@@ -193,7 +195,7 @@ fun ProviderEditorScreen(
                     onClick = { selectedTab = 0 }
                 )
                 NavigationBarItem(
-                    icon = { Icon(FeatherIcons.Grid, contentDescription = "模型") },
+                    icon = { Icon(FeatherIcons.Cpu, contentDescription = "模型") },
                     label = { Text("模型") },
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 }
@@ -321,7 +323,6 @@ fun ProviderEditorScreen(
                         models.forEach { model ->
                             ProviderModelRow(
                                 model = model,
-                                provider = currentConfig(),
                                 testing = model in testing,
                                 result = testResults[model],
                                 onTest = { viewModel.testModel(currentConfig(), model) },
@@ -393,6 +394,7 @@ private fun FetchModelsDialog(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
+    val collapsedBrands = remember { mutableStateMapOf<String, Boolean>() }
     
     LaunchedEffect(Unit) {
         // Wait for bottom sheet animation to smooth out before firing network request
@@ -406,7 +408,7 @@ private fun FetchModelsDialog(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = androidx.compose.ui.graphics.Color.White,
+        containerColor = MaterialTheme.colorScheme.surface,
         dragHandle = null
     ) {
         Column(
@@ -451,7 +453,7 @@ private fun FetchModelsDialog(
                         if (newOnes.isEmpty()) {
                             Text("没有匹配的模型", style = MaterialTheme.typography.bodyMedium)
                         } else {
-                            // 按品牌分组，使用品牌 logo 作为分类图标
+                            // 按品牌分组，分类 header 可折叠
                             val grouped = newOnes.groupBy { m -> modelBrandKey(m) }
                                 .toSortedMap(compareBy { brandDisplayName(it) })
 
@@ -461,17 +463,36 @@ private fun FetchModelsDialog(
                             ) {
                                 grouped.forEach { (brandKey, models) ->
                                     item(key = "header_$brandKey") {
+                                        val expanded = collapsedBrands[brandKey] != true
+                                        val brandName = brandDisplayName(brandKey)
                                         Row(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = Spacing.sm),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 44.dp)
+                                                .clickable { collapsedBrands[brandKey] = expanded }
+                                                .padding(horizontal = Spacing.xs, vertical = Spacing.sm),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            BrandLogoIcon(brandKey = brandKey, size = 18.dp)
-                                            Spacer(Modifier.width(Spacing.sm))
-                                            Text(brandDisplayName(brandKey), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(
+                                                "$brandName (${models.size})",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Icon(
+                                                imageVector = if (expanded) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowRight,
+                                                contentDescription = if (expanded) "折叠$brandName" else "展开$brandName",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
                                         }
                                     }
-                                    items(models, key = { "${brandKey}_$it" }) { m ->
-                                        FetchModelRow(model = m, onAdd = { onAddModel(m) })
+                                    if (collapsedBrands[brandKey] != true) {
+                                        items(models, key = { "${brandKey}_$it" }) { m ->
+                                            FetchModelRow(model = m, onAdd = { onAddModel(m) })
+                                        }
                                     }
                                 }
                             }
@@ -509,7 +530,7 @@ private fun FetchModelRow(model: String, onAdd: () -> Unit) {
             }
         }
         IconButton(onClick = onAdd, modifier = Modifier.size(32.dp)) {
-            Icon(FeatherIcons.Plus, contentDescription = "添加", tint = androidx.compose.ui.graphics.Color(0xFF424242))
+            Icon(FeatherIcons.Plus, contentDescription = "添加", tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -530,7 +551,7 @@ private fun ModelTag(text: String? = null, icon: androidx.compose.ui.graphics.ve
                     icon,
                     contentDescription = null,
                     modifier = Modifier.size(12.dp),
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242))
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (icon != null && text != null) Spacer(Modifier.width(4.dp))
             if (text != null) {
@@ -547,7 +568,6 @@ private fun ModelTag(text: String? = null, icon: androidx.compose.ui.graphics.ve
 @Composable
 internal fun ProviderModelRow(
     model: String,
-    provider: AIProviderConfig?,
     testing: Boolean,
     result: ModelTestResult?,
     onTest: () -> Unit,
@@ -559,12 +579,7 @@ internal fun ProviderModelRow(
             .padding(horizontal = Spacing.xs, vertical = Spacing.sm)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Left Icon — 优先使用 provider 级别 logo，回退到模型名称匹配
-            if (provider != null) {
-                ProviderLogoIcon(provider = provider, size = 24.dp)
-            } else {
-                ModelLogoIcon(modelName = model, size = 24.dp)
-            }
+            ModelLogoIcon(modelName = model, size = 24.dp)
             Spacer(Modifier.width(Spacing.md))
 
             // Center Content (Name & Tags)
@@ -598,7 +613,7 @@ internal fun ProviderModelRow(
                 Icon(
                     FeatherIcons.X,
                     contentDescription = "删除",
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -613,7 +628,7 @@ internal fun ProviderModelRow(
                 Icon(
                     if (r.success) FeatherIcons.Check else FeatherIcons.AlertCircle,
                     contentDescription = null,
-                    tint = androidx.compose.ui.graphics.Color(0xFF424242),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(Modifier.width(Spacing.xs))
