@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.DrawerValue
@@ -18,11 +19,14 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Surface
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -37,6 +41,8 @@ import com.aicodeeditor.feature.agent.presentation.component.ChatDrawerContent
 import com.aicodeeditor.feature.git.presentation.GitViewModel
 import com.aicodeeditor.feature.git.presentation.component.GitScreen
 import com.aicodeeditor.feature.settings.data.repository.KeepaliveSettingsRepository
+import com.aicodeeditor.feature.settings.data.repository.AppThemeMode
+import com.aicodeeditor.feature.settings.data.repository.ThemeSettingsRepository
 import com.aicodeeditor.feature.settings.presentation.SettingsViewModel
 import com.aicodeeditor.feature.settings.presentation.component.SettingsScreen
 import com.aicodeeditor.feature.terminal.domain.TerminalKeepaliveService
@@ -54,6 +60,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var keepaliveSettings: KeepaliveSettingsRepository
 
+    @Inject
+    lateinit var themeSettings: ThemeSettingsRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // 绘制到系统状态栏/导航栏之下，让应用背景与系统栏融为一体（消除割裂的色块）。
         enableEdgeToEdge()
@@ -65,7 +74,21 @@ class MainActivity : ComponentActivity() {
             window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         }
         setContent {
-            AIEditorTheme {
+            val themeMode by themeSettings.themeModeFlow.collectAsStateWithLifecycle(initialValue = AppThemeMode.AUTO)
+            val systemDarkTheme = isSystemInDarkTheme()
+            val darkTheme = when (themeMode) {
+                AppThemeMode.AUTO -> systemDarkTheme
+                AppThemeMode.DARK -> true
+                AppThemeMode.LIGHT -> false
+            }
+            val view = LocalView.current
+            SideEffect {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !darkTheme
+                controller.isAppearanceLightNavigationBars = !darkTheme
+            }
+
+            AIEditorTheme(darkTheme = darkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -134,7 +157,7 @@ fun AppNavigation() {
         drawerContent = {
             ModalDrawerSheet(
                 drawerShape = RectangleShape,
-                drawerContainerColor = androidx.compose.ui.graphics.Color.White,
+                drawerContainerColor = MaterialTheme.colorScheme.surface,
                 drawerTonalElevation = 0.dp,
                 modifier = Modifier.width(300.dp)
             ) {
