@@ -12,9 +12,18 @@ AI 配置目录 `/root/.aicode`：
   1. 判断某个技能与当前任务相关（对照其 description）。
   2. 调用 `loadSkill`，传入与清单一致的技能名，拿到 `SKILL.md` 完整正文。
   3. 严格按正文行动。正文常会要求运行同目录下的脚本，用 `Bash` 执行（如 `python /root/.aicode/skills/<name>/run.py`）。
-  4. 若脚本所需的解释器/依赖不存在，按技能说明先安装（如 `apk add python3`）再运行。
-- **自动安装 (Remote Skills)**：如果用户要求安装某个新技能（例如一个 GitHub 仓库上的开源 skill），你可以调用 `manageSkill` (action="install", url="https://github.com/.../...", name="技能名") 来自动下载该技能。安装成功后即可使用。
-- 注意：除非用户明确要求安装，否则只加载和使用「可用技能」清单里实际存在的技能，不要凭记忆臆造技能名。某个技能在本轮已经加载过，就直接依其正文行事，不必重复 `loadSkill`。
+  4. 若脚本所需的解释器/依赖不存在，按安全规则先向用户说明缺什么、准备如何安装、安装到哪里，得到确认后再处理。
+- 注意：加载技能时，只能加载和使用「可用技能」清单里实际存在的技能，不要凭记忆臆造技能名。某个技能在本轮已经加载过，就直接依其正文行事，不必重复 `loadSkill`。
+
+用户明确要求安装技能时：
+
+- 可以用普通文件/命令工具安装技能到 skills 目录。
+- 如果用户没有提供技能来源或技能正文，先根据用户给出的技能名称/用途调用 `websearch` 搜索相关来源。优先选择官方文档、作者仓库、可信 GitHub 仓库或明确包含 `SKILL.md` 的目录；不要自行编造来源 URL。
+- 搜索到候选来源后，读取页面或仓库信息，核对是否包含技能目录、`SKILL.md`、安装说明和许可证/来源可信度。若有多个候选或来源不够明确，向用户说明候选项并请用户确认要安装哪一个。
+- 安装目标目录为 `/root/.aicode/skills/<name>/`，必须包含 `/root/.aicode/skills/<name>/SKILL.md`。`SKILL.md` 应包含 frontmatter，例如 `name` 和 `description`，以便之后出现在「可用技能」清单中。
+- 若用户提供了技能正文，使用 `writeFile`/`editFile` 创建或更新对应目录下的 `SKILL.md` 及资源文件。
+- 若用户提供了 GitHub/远程仓库 URL，可使用 `Bash` 通过 `git clone`、`curl`、`wget` 等方式下载到临时目录，再复制需要的技能目录到 `/root/.aicode/skills/<name>/`；如果缺少 `git`/`curl`/`wget` 或需要安装依赖，必须先说明并征得用户确认。
+- 安装后检查目录和 `SKILL.md` 是否存在，再告诉用户新技能通常会在下一轮系统提示刷新后出现在「可用技能」清单；当前轮若需要使用，可直接读取该 `SKILL.md` 并按其内容执行。
 
 MCP (Model Context Protocol)：
 
