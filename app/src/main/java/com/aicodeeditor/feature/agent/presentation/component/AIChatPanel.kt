@@ -1,7 +1,6 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -23,7 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,12 +35,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,6 +73,23 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 internal val brandGradient = Brush.linearGradient(listOf(Brand.Blue, Brand.Sky))
+
+/**
+ * 流式尾巴的三种状态，用于 [when] 分支分发。
+ *
+ * 早先用 [androidx.compose.animation.Crossfade] 做淡入，但 Crossfade 按 targetState
+ * 缓存 content 子组合——流式期间 targetState 一直不变，文本增长时不会重新调用 content，
+ * 导致 [StreamingBubble] 收不到后续文本、停在首句。故改用枚举 + 直接 [when] 分发。
+ */
+private enum class TailKind { THINKING, STREAMING, NONE }
+
+private data class AutoScrollSignal(
+    val streamingTextLength: Int,
+    val streamingReasoningLength: Int,
+    val runningToolMessageId: String?,
+    val runningToolTextLength: Int,
+    val messageCount: Int
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,19 +127,12 @@ fun AIChatPanel(
 
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val markdownCache = remember { MarkdownRenderCache() }
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
     val isBusy = agentState is AgentUIState.Loading || agentState is AgentUIState.Streaming
-
-    val sendMessage: () -> Unit = {
-        val text = inputText.trim()
-        if (text.isNotEmpty() && !isBusy) {
-            viewModel.executeAgentRequestStream(text, currentFile, selectedCode, projectRoot)
-            inputText = ""
-        }
-    }
 
     // 自动滚动跟随
     var positionedSession by remember { mutableStateOf<String?>(null) }
@@ -131,6 +140,7 @@ fun AIChatPanel(
 
     val isAtBottom by remember {
         derivedStateOf {
+            if (!listState.canScrollForward) return@derivedStateOf true
             val layout = listState.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()
                 ?: return@derivedStateOf true
@@ -141,6 +151,20 @@ fun AIChatPanel(
         }
     }
 
+    val autoScrollSignal by rememberUpdatedState(
+        AutoScrollSignal(
+            streamingTextLength = streamingText?.length ?: 0,
+            streamingReasoningLength = streamingReasoning?.length ?: 0,
+            runningToolMessageId = runningTool?.messageId,
+            runningToolTextLength = runningTool?.text?.length ?: 0,
+            messageCount = messages.size
+        )
+    )
+
+    // 用户开始拖拽：停止跟随。松手时若已到底则恢复跟随（旧逻辑）。
+    // 额外：流式输出时内容持续增长，用户可能松手后又被「顶」离底部——
+    // 用 snapshotFlow { isAtBottom } 持续监测，只要滑到底部就恢复跟随，
+    // 满足「流式中滚到底部自动继续跟随」。
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
             when (interaction) {
@@ -149,52 +173,89 @@ fun AIChatPanel(
             }
         }
     }
-
-    var scrollSignal by remember { mutableIntStateOf(0) }
-    LaunchedEffect(
-        streamingText,
-        streamingReasoning,
-        runningTool?.text,
-        messages.size,
-        isBusy
-    ) {
-        scrollSignal++
+    LaunchedEffect(listState) {
+        snapshotFlow { isAtBottom }.collect { atBottom ->
+            if (atBottom) followBottom = true
+        }
     }
 
+    fun lastItemBottomOffset(): Int {
+        val layout = listState.layoutInfo
+        val lastIndex = layout.totalItemsCount - 1
+        val viewportH = layout.viewportEndOffset - layout.viewportStartOffset
+        val lastSize = layout.visibleItemsInfo.firstOrNull { it.index == lastIndex }?.size ?: 0
+        return lastSize - viewportH
+    }
+
+    suspend fun ensureLastItemMeasured(lastIndex: Int) {
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == lastIndex }) {
+            listState.scrollToItem(lastIndex)
+            withFrameNanos { }
+        }
+    }
+
+    // 平滑贴底跟随。末条流式消息可能高于一屏，必须滚到末项底部；
+    // 只 animateScrollToItem(lastIndex) 会把末项顶部对齐到视口顶部。
+    val snapToBottom: suspend () -> Unit = {
+        val lastIndex = listState.layoutInfo.totalItemsCount - 1
+        if (lastIndex >= 0) {
+            ensureLastItemMeasured(lastIndex)
+            listState.animateScrollToItem(lastIndex, lastItemBottomOffset())
+        }
+    }
+
+    // 瞬时贴底（用于发送消息、会话切换等需要立刻到位、不留动画的场景）。
+    val snapToBottomInstant: suspend () -> Unit = {
+        val lastIndex = listState.layoutInfo.totalItemsCount - 1
+        if (lastIndex >= 0) {
+            ensureLastItemMeasured(lastIndex)
+            listState.scrollToItem(lastIndex, lastItemBottomOffset())
+        }
+    }
+
+    val sendMessage: () -> Unit = {
+        val text = inputText.trim()
+        if (text.isNotEmpty() && !isBusy) {
+            viewModel.executeAgentRequestStream(text, currentFile, selectedCode, projectRoot)
+            inputText = ""
+            followBottom = true
+            scope.launch {
+                kotlinx.coroutines.delay(0)
+                snapToBottomInstant()
+            }
+        }
+    }
+
+    // 切换会话：把列表定位到最新一条，并恢复跟随。
     LaunchedEffect(currentSessionId, messagesReady) {
         if (!messagesReady) return@LaunchedEffect
-        val hasReasoning = streamingReasoning?.isNotEmpty() == true
-        val hasStreamingText = streamingText?.hasVisibleContent() == true
-        val hasTrailing = hasReasoning || hasStreamingText || (isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null)
-        val target = messages.size - 1 + (if (hasTrailing) 1 else 0)
+        val target = messages.size - 1
         if (target < 0) {
             positionedSession = currentSessionId
             followBottom = true
             return@LaunchedEffect
         }
         if (positionedSession != currentSessionId) {
-            listState.scrollToItem(target)
+            snapToBottomInstant()
             positionedSession = currentSessionId
             followBottom = true
         }
     }
 
-    LaunchedEffect(listState) {
-        snapshotFlow { scrollSignal }
-            .collectLatest {
-                if (!followBottom || !messagesReady) return@collectLatest
-                val layout = listState.layoutInfo
-                val lastIndex = layout.totalItemsCount - 1
-                if (lastIndex < 0) return@collectLatest
-                val lastVisible = layout.visibleItemsInfo.lastOrNull()
-                if (lastVisible == null || lastVisible.index < lastIndex - 1) {
-                    listState.scrollToItem(lastIndex)
-                }
-                val overflow = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.let {
-                    (it.offset + it.size) - listState.layoutInfo.viewportEndOffset
-                } ?: 0
-                if (overflow > 0) listState.animateScrollBy(overflow.toFloat())
-            }
+    // 流式贴底跟随（聊天标准做法）。
+    // 监听 (流式文本长度, 消息条数) 元组：每个吐字 delta（length 变）和每次落库（size 变）
+    // 都触发一次 animateScrollToItem —— collectLatest 自动取消上一个未跑完的动画，
+    // 新动画立刻从当前位置平滑接管，视觉上形成连续流畅的底部跟随。
+    // ⚠️ 不能用 distinctUntilChanged() 包布尔谓词——只触发一次后去重，不再跟随（旧根因）。
+    // ⚠️ 不能删 __active__ item（让 totalItemsCount 突减）——anchor clamp 上跳（旧根因）。
+    LaunchedEffect(listState, messagesReady) {
+        if (!messagesReady) return@LaunchedEffect
+        snapshotFlow { autoScrollSignal }.collectLatest {
+            if (!followBottom) return@collectLatest
+            // 等一帧让新文本/新落库消息完成测量，animateScrollToItem 读到正确布局。
+            kotlinx.coroutines.delay(0)
+            snapToBottom()
+        }
     }
 
     val firstVisibleItemIndex by remember { derivedStateOf { listState.firstVisibleItemIndex } }
@@ -243,9 +304,13 @@ fun AIChatPanel(
                         ),
                         verticalArrangement = Arrangement.spacedBy(Spacing.sm)
                     ) {
-                        items(messages, key = { it.id }, contentType = { "message" }) { message ->
+                        items(messages, key = { it.id }, contentType = { it.role.name }) { message ->
                             val live = runningTool?.takeIf { it.messageId == message.id }?.text
-                            AgentMessageItem(message = message, liveOutput = live)
+                            AgentMessageItem(
+                                message = message,
+                                liveOutput = live,
+                                markdownCache = markdownCache
+                            )
                         }
                         val reasoning = streamingReasoning
                         val showReasoning = reasoning != null && reasoning.isNotEmpty()
@@ -255,18 +320,21 @@ fun AIChatPanel(
                         val streaming = streamingText
                         val showStreaming = streaming != null && streaming.hasVisibleContent()
                         val showThinking = !showReasoning && !showStreaming && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null
-                        val activeState: Any = when {
-                            showStreaming -> streaming!!
-                            showThinking -> "__thinking__"
-                            else -> "__none__"
+                        val tailKind = when {
+                            showStreaming -> TailKind.STREAMING
+                            showThinking -> TailKind.THINKING
+                            else -> TailKind.NONE
                         }
+                        // 尾巴气泡：永远挂载 item，NONE 时为空 Box（0 高度）。
+                        // ⚠️ 不能按 tailKind 增删 item：流结束时 __active__ 移除会让 totalItemsCount
+                        // 突减，LazyColumn 把 firstVisibleItemIndex 向下 clamp → 视口上跳（旧症状2根因）。
+                        // 永远挂载则 item 数量稳定，只在内容（StreamingBubble↔空Box）间切换，
+                        // anchor 不会被 clamp。流结束落库后跟随 effect 会把新消息贴底。
                         item(key = "__active__", contentType = "tail") {
-                            Crossfade(targetState = activeState, label = "tail-active") { state ->
-                                when {
-                                    state == "__thinking__" -> ThinkingBubble()
-                                    state == "__none__" -> Box(Modifier)
-                                    else -> StreamingBubble(text = state as String)
-                                }
+                            when (tailKind) {
+                                TailKind.THINKING -> ThinkingBubble()
+                                TailKind.STREAMING -> StreamingBubble(text = streaming ?: "")
+                                TailKind.NONE -> Box(Modifier)
                             }
                         }
                     }
@@ -310,6 +378,21 @@ fun AIChatPanel(
                         question = question,
                         onConfirm = { answer -> viewModel.resolveUserQuestion(question.id, answer) },
                         onSkip = { viewModel.resolveUserQuestion(question.id, UserQuestionAnswer(emptyList())) }
+                    )
+                }
+            }
+
+            val planApproval by viewModel.pendingPlanApproval.collectAsStateWithLifecycle()
+            AnimatedVisibility(
+                visible = planApproval != null,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                planApproval?.let { state ->
+                    PlanApprovalPanel(
+                        state = state,
+                        onApprove = { viewModel.approvePlanAndBuild() },
+                        onRefine = { viewModel.refinePlan() }
                     )
                 }
             }
