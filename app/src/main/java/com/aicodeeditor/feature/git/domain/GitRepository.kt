@@ -7,6 +7,8 @@ import com.aicodeeditor.feature.git.domain.model.GitCommit
 import com.aicodeeditor.feature.git.domain.model.GitFileChange
 import com.aicodeeditor.feature.git.domain.model.GitStatus
 import com.aicodeeditor.feature.workspace.data.repository.WorkspaceRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -127,13 +129,17 @@ class GitRepository @Inject constructor(
      */
     suspend fun commitFiles(hash: String): List<GitFileChange> {
         val raw = git("diff-tree", "--no-commit-id", "-r", "--root", "--name-status", "--no-renames", hash)
-        return raw.split('\n').mapNotNull { line ->
-            val l = line.removeSuffix("\r").trim()
-            if (l.isBlank() || '\t' !in l) null
-            else {
-                val (status, path) = l.split('\t', limit = 2)
-                GitFileChange(path.trim(), status.trim(), staged = false)
-            }
+        return withContext(Dispatchers.Default) {
+            raw.lineSequence().mapNotNull { line ->
+                val l = line.removeSuffix("\r").trim()
+                val tab = l.indexOf('\t')
+                if (l.isBlank() || tab < 0) null
+                else {
+                    val status = l.substring(0, tab).trim()
+                    val path = l.substring(tab + 1).trim()
+                    GitFileChange(path, status, staged = false)
+                }
+            }.toList()
         }
     }
 

@@ -3,7 +3,9 @@ package com.aicodeeditor.feature.git.presentation.component
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,22 +18,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.CallSplit
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.CloudDownload
-import androidx.compose.material.icons.outlined.CloudUpload
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.InsertDriveFile
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -39,6 +28,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -192,46 +182,25 @@ private fun StatusTab(
     val clean = s == null || (s.staged.isEmpty() && s.unstaged.isEmpty() && s.untracked.isEmpty())
 
     Column(Modifier.fillMaxSize()) {
-        // 顶部：分支与领先/落后。
-        Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
-            Row(modifier = Modifier.padding(Spacing.md), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = s?.branch ?: "(无分支)",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                if (s != null && (s.ahead > 0 || s.behind > 0)) {
-                    Spacer(Modifier.width(Spacing.md))
-                    Text(
-                        text = buildString {
-                            if (s.ahead > 0) append("↑${s.ahead}")
-                            if (s.behind > 0) { if (isNotEmpty()) append(' '); append("↓${s.behind}") }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        // 底部操作栏。
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(Spacing.sm),
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
-            ActionButton("全部暂存", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
-            ActionButton("提交", FeatherIcons.Check, enabled = !busy && s?.staged?.isNotEmpty() == true, onClick = onCommit, modifier = Modifier.weight(1f))
-            ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
-            ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
-        }
+        StatusOverview(status = s, clean = clean)
+        StatusActionsBar(
+            busy = busy,
+            hasStagedChanges = s?.staged?.isNotEmpty() == true,
+            onStageAll = onStageAll,
+            onCommit = onCommit,
+            onPull = onPull,
+            onPush = onPush
+        )
 
         HorizontalDivider()
 
         if (clean) {
             EmptyState("工作区干净，无改动")
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = Spacing.xl)
+            ) {
                 if (s!!.staged.isNotEmpty()) {
                     item { SectionHeader("已暂存 (${s.staged.size})") }
                     items(s.staged, key = { "s-${it.path}" }) { f ->
@@ -262,6 +231,139 @@ private fun StatusTab(
 }
 
 @Composable
+private fun StatusOverview(status: GitStatus?, clean: Boolean) {
+    val staged = status?.staged?.size ?: 0
+    val modified = status?.unstaged?.size ?: 0
+    val untracked = status?.untracked?.size ?: 0
+
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(Radius.sm),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            FeatherIcons.GitBranch,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(Spacing.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (clean) "工作区干净" else "工作区有改动",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = status?.branch ?: "(无分支)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (status != null && (status.ahead > 0 || status.behind > 0)) {
+                    Spacer(Modifier.width(Spacing.sm))
+                    SyncPill(ahead = status.ahead, behind = status.behind)
+                }
+            }
+
+            Spacer(Modifier.height(Spacing.md))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                StatusMetric("已暂存", staged, MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
+                StatusMetric("已修改", modified, Color(0xFFD97706), Modifier.weight(1f))
+                StatusMetric("未跟踪", untracked, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncPill(ahead: Int, behind: Int) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(Radius.pill)
+    ) {
+        Text(
+            text = buildString {
+                if (ahead > 0) append("↑$ahead")
+                if (behind > 0) {
+                    if (isNotEmpty()) append("  ")
+                    append("↓$behind")
+                }
+            },
+            style = MaterialTheme.typography.labelMedium,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.xs)
+        )
+    }
+}
+
+@Composable
+private fun StatusMetric(label: String, count: Int, color: Color, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(Radius.sm),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.titleMedium,
+                color = color,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusActionsBar(
+    busy: Boolean,
+    hasStagedChanges: Boolean,
+    onStageAll: () -> Unit,
+    onCommit: () -> Unit,
+    onPull: () -> Unit,
+    onPush: () -> Unit
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
+        if (maxWidth < 420.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = !busy && hasStagedChanges, onClick = onCommit, modifier = Modifier.fillMaxWidth())
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
+                    ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
+                    ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
+                }
+            }
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = !busy && hasStagedChanges, onClick = onCommit, modifier = Modifier.weight(1.4f))
+                ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
+                ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
+                ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
 private fun BranchesTab(branches: List<GitBranch>) {
     if (branches.isEmpty()) {
         EmptyState("暂无分支")
@@ -270,17 +372,69 @@ private fun BranchesTab(branches: List<GitBranch>) {
     // 折叠状态：key = 节点完整路径，value = 是否展开；缺省视为展开。
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     val tree = remember(branches) { buildBranchTree(branches) }
+    val currentBranch = branches.firstOrNull { it.current }?.name ?: "未检出分支"
+    val localCount = branches.count { !it.remote }
+    val remoteCount = branches.count { it.remote }
 
-    LazyColumn(Modifier.fillMaxSize()) {
-        item {
-            Text(
-                text = "共 ${branches.size} 个分支",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.sm)
-            )
-        }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = Spacing.xl)
+    ) {
+        item { BranchesOverview(currentBranch, localCount, remoteCount) }
+        item { SectionHeader("分支列表 (${branches.size})") }
         tree.forEach { node -> renderBranchNode(node, depth = 0, expanded) }
+    }
+}
+
+@Composable
+private fun BranchesOverview(
+    currentBranch: String,
+    localCount: Int,
+    remoteCount: Int
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(Radius.sm),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            FeatherIcons.GitBranch,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(Spacing.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "当前分支",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = currentBranch,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(Spacing.md))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                StatusMetric("本地分支", localCount, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                StatusMetric("远程分支", remoteCount, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                StatusMetric("全部", localCount + remoteCount, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
+            }
+        }
     }
 }
 
@@ -313,61 +467,80 @@ private fun BranchRow(
     onToggle: () -> Unit
 ) {
     val isCurrent = node.branch?.current == true
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = Spacing.lg + (depth * 16).dp, end = Spacing.lg)
-            .padding(vertical = Spacing.xs)
-            .let { if (isFolder) it.clickable(onClick = onToggle) else it },
-        verticalAlignment = Alignment.CenterVertically
+    val contentColor = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    Surface(
+        color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        // 展开箭头占位（叶子用等宽占位对齐）。
-        if (isFolder) {
-            Icon(
-                imageVector = if (isOpen) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
-                contentDescription = if (isOpen) "折叠" else "展开",
-                modifier = Modifier.size(18.dp),
-                tint = androidx.compose.ui.graphics.Color(0xFF424242))
-        } else {
-            Spacer(Modifier.size(18.dp))
-        }
-        Spacer(Modifier.width(Spacing.xs))
-        // 当前分支圆点。
-        Text(
-            text = if (isCurrent) "●" else " ",
-            color = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.width(Spacing.xs))
-        Icon(
-            imageVector = if (isFolder) {
-                if (isOpen) FeatherIcons.Folder else FeatherIcons.Folder
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = Spacing.lg + (depth * 16).dp, end = Spacing.lg)
+                .height(48.dp)
+                .let { if (isFolder) it.clickable(onClick = onToggle) else it },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (isFolder) {
+                Icon(
+                    imageVector = if (isOpen) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+                    contentDescription = if (isOpen) "折叠" else "展开",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
-                FeatherIcons.GitBranch
-            },
-            contentDescription = null,
-            modifier = Modifier.size(18.dp),
-            tint = androidx.compose.ui.graphics.Color(0xFF424242))
-        Spacer(Modifier.width(Spacing.sm))
-        Text(
-            text = node.segment,
-            style = MaterialTheme.typography.bodyLarge,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        when {
-            isFolder -> Text(
-                text = "${countBranchLeaves(node)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                Spacer(Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(Spacing.xs))
+            Icon(
+                imageVector = if (isFolder) FeatherIcons.Folder else FeatherIcons.GitBranch,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
-            node.branch?.remote == true -> StatusChip("远程")
+            Spacer(Modifier.width(Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = node.segment,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (isCurrent) {
+                    Text(
+                        text = "当前检出",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1
+                    )
+                }
+            }
+            when {
+                isFolder -> BranchPill("${countBranchLeaves(node)}")
+                node.branch?.remote == true -> BranchPill("远程")
+                isCurrent -> BranchPill("当前")
+            }
         }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+private fun BranchPill(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(Radius.pill)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
+            maxLines = 1
+        )
+    }
 }
 
 /**
@@ -431,188 +604,273 @@ private fun LogTab(
         EmptyState("暂无提交记录")
         return
     }
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(commits, key = { it.hash }) { c ->
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = Spacing.xl)
+    ) {
+        item { LogOverview(commits = commits, expandedCount = expandedCommits.size) }
+        item { SectionHeader("提交记录 (${commits.size})") }
+        commits.forEach { c ->
             val isExpanded = c.hash in expandedCommits
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onToggleCommit(c.hash) }
-            ) {
-                Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (isExpanded) FeatherIcons.ChevronDown
-                            else FeatherIcons.ChevronRight,
-                            contentDescription = if (isExpanded) "折叠" else "展开",
-                            modifier = Modifier.size(18.dp),
-                            tint = androidx.compose.ui.graphics.Color(0xFF424242))
-                        Spacer(Modifier.width(Spacing.xs))
-                        Text(
-                            text = c.shortHash,
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Spacer(Modifier.width(Spacing.md))
-                        Text(
-                            text = c.date,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (isExpanded) {
-                            Spacer(Modifier.width(Spacing.sm))
-                            val files = commitFiles[c.hash]
-                            val count = files?.size
-                            Text(
-                                text = when {
-                                    loadingCommit == c.hash && files == null -> "加载中…"
-                                    count != null -> "$count 个文件"
-                                    else -> ""
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+            item(key = "commit-${c.hash}") {
+                CommitRow(
+                    commit = c,
+                    isExpanded = isExpanded,
+                    onToggle = { onToggleCommit(c.hash) }
+                )
+            }
+            if (isExpanded) {
+                val files = commitFiles[c.hash]
+                when {
+                    loadingCommit == c.hash && files == null -> {
+                        item(key = "loading-${c.hash}") { LoadingFilesRow() }
                     }
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = c.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = c.author,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    if (isExpanded) {
-                        val files = commitFiles[c.hash]
-                        when {
-                            loadingCommit == c.hash && files == null -> {
-                                Row(
-                                    modifier = Modifier.padding(top = Spacing.sm),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                    Spacer(Modifier.width(Spacing.sm))
-                                    Text(
-                                        text = "正在加载改动文件…",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            files == null -> Unit
-                            files.isEmpty() -> Text(
-                                text = "该提交无文件改动",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = Spacing.sm)
-                            )
-                            else -> CommitFileTree(files, modifier = Modifier.padding(top = Spacing.sm))
+                    files == null -> Unit
+                    files.isEmpty() -> {
+                        item(key = "empty-${c.hash}") { EmptyCommitFilesRow() }
+                    }
+                    else -> {
+                        item(key = "summary-${c.hash}") {
+                            CommitFilesSummary(files.size)
+                        }
+                        items(
+                            items = files,
+                            key = { f -> "file-${c.hash}-${f.statusCode}-${f.path}" }
+                        ) { file ->
+                            CommitFileRow(file)
                         }
                     }
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
 
-/**
- * 提交改动文件树。按路径分隔符 `/` 分层，文件夹恒展开（与分支树不同——这里只关心快速浏览改动范围）。
- */
 @Composable
-private fun CommitFileTree(files: List<GitFileChange>, modifier: Modifier = Modifier) {
-    val tree = remember(files) { buildFileTree(files) }
-    Column(modifier = modifier.fillMaxWidth()) {
-        tree.forEach { node -> FileNodeRow(node, depth = 1) }
-    }
-}
+private fun LogOverview(commits: List<GitCommit>, expandedCount: Int) {
+    val latest = commits.first()
+    Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(Radius.sm),
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            FeatherIcons.File,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(Spacing.md))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "最新提交",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = latest.message,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
 
-@Composable
-private fun FileNodeRow(node: FileTreeNode, depth: Int) {
-    val isFolder = node.children.isNotEmpty()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = (depth * 14).dp, end = 0.dp)
-            .padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = if (isFolder) FeatherIcons.Folder else FeatherIcons.File,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp),
-            tint = androidx.compose.ui.graphics.Color(0xFF424242))
-        Spacer(Modifier.width(Spacing.xs))
-        Text(
-            text = node.segment,
-            style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        val f = node.file
-        if (f != null) StatusChip(f.statusCode)
-    }
-    if (isFolder) node.children.forEach { FileNodeRow(it, depth + 1) }
-}
+            Spacer(Modifier.height(Spacing.md))
 
-/** 文件树节点：中间段为虚拟文件夹（file 可空），叶子段承载 [GitFileChange]。 */
-private data class FileTreeNode(
-    val segment: String,
-    val fullPath: String,
-    var file: GitFileChange? = null,
-    val children: MutableList<FileTreeNode> = mutableListOf()
-)
-
-/** 按 `/` 切分路径构建层级树，同层字典序排序。 */
-private fun buildFileTree(files: List<GitFileChange>): List<FileTreeNode> {
-    val root = FileTreeNode("", "", null)
-    for (f in files.sortedBy { it.path }) {
-        val parts = f.path.split('/')
-        var cur = root
-        val path = StringBuilder()
-        parts.forEachIndexed { i, part ->
-            if (path.isNotEmpty()) path.append('/')
-            path.append(part)
-            val isLeaf = i == parts.lastIndex
-            val existing = cur.children.find { it.segment == part }
-            cur = if (existing == null) {
-                FileTreeNode(part, path.toString(), if (isLeaf) f else null).also { cur.children.add(it) }
-            } else {
-                if (isLeaf) existing.file = f
-                existing
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                StatusMetric("最近提交", commits.size, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                StatusMetric("已展开", expandedCount, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                DateMetric(latest.date, Modifier.weight(1f))
             }
         }
     }
-    sortFileTree(root)
-    return root.children
 }
 
-private fun sortFileTree(node: FileTreeNode) {
-    node.children.sortBy { it.segment.lowercase() }
-    node.children.forEach(::sortFileTree)
+@Composable
+private fun DateMetric(date: String, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(Radius.sm),
+        modifier = modifier
+    ) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
+            Text(
+                text = "最新日期",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+            Text(
+                text = date,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun CommitRow(
+    commit: GitCommit,
+    isExpanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Surface(
+        color = if (isExpanded) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(horizontal = Spacing.lg, vertical = Spacing.md)
+        ) {
+            Row(verticalAlignment = Alignment.Top) {
+                Icon(
+                    imageVector = if (isExpanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+                    contentDescription = if (isExpanded) "折叠" else "展开",
+                    modifier = Modifier.size(20.dp).padding(top = 2.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(Spacing.sm))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = commit.message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(Spacing.xs))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BranchPill(commit.shortHash)
+                        Spacer(Modifier.width(Spacing.sm))
+                        Text(
+                            text = commit.author,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text(
+                        text = commit.date,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+private fun CommitFilesSummary(count: Int) {
+    Text(
+        text = "$count 个文件改动",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.xs)
+    )
+}
+
+@Composable
+private fun EmptyCommitFilesRow() {
+    Text(
+        text = "该提交无文件改动",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm)
+    )
+}
+
+@Composable
+private fun LoadingFilesRow() {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(14.dp),
+            strokeWidth = 2.dp
+        )
+        Spacer(Modifier.width(Spacing.sm))
+        Text(
+            text = "正在加载改动文件...",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun CommitFileRow(file: GitFileChange) {
+    val fileName = file.path.substringAfterLast('/')
+    val directory = file.path.substringBeforeLast('/', missingDelimiterValue = "")
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.xs, bottom = Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatusChip(file.statusCode)
+            Spacer(Modifier.width(Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = fileName,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (directory.isNotEmpty()) {
+                    Text(
+                        text = directory,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outlineVariant,
+            modifier = Modifier.padding(start = 104.dp)
+        )
+    }
 }
 
 @Composable
 private fun SectionHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.sm)
-    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = Spacing.lg, top = Spacing.lg, end = Spacing.lg, bottom = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+    }
 }
 
 @Composable
@@ -623,24 +881,49 @@ private fun FileRow(
     onAction: () -> Unit,
     enabled: Boolean
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.xs),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        StatusChip(file.statusCode)
-        Spacer(Modifier.width(Spacing.md))
-        Text(
-            text = file.path,
-            style = MaterialTheme.typography.bodyMedium,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        IconButton(onClick = onAction, enabled = enabled) {
-            Icon(actionIcon, contentDescription = actionDesc, tint = androidx.compose.ui.graphics.Color(0xFF424242))
+    val fileName = file.path.substringAfterLast('/')
+    val directory = file.path.substringBeforeLast('/', missingDelimiterValue = "")
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            StatusChip(file.statusCode)
+            Spacer(Modifier.width(Spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = fileName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (directory.isNotEmpty()) {
+                    Text(
+                        text = directory,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Spacer(Modifier.width(Spacing.sm))
+            IconButton(onClick = onAction, enabled = enabled) {
+                Icon(
+                    actionIcon,
+                    contentDescription = actionDesc,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outlineVariant,
+            modifier = Modifier.padding(start = 60.dp)
+        )
     }
 }
 
@@ -686,12 +969,40 @@ private fun ActionButton(
     icon: ImageVector,
     enabled: Boolean,
     onClick: () -> Unit,
+    prominent: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    FilledTonalButton(onClick = onClick, enabled = enabled, modifier = modifier) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(Spacing.xs))
-        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    if (prominent) {
+        FilledTonalButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = modifier.height(48.dp),
+            shape = RoundedCornerShape(Radius.sm),
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ),
+            contentPadding = PaddingValues(horizontal = Spacing.md)
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp))
+            Spacer(Modifier.width(Spacing.xs))
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = modifier.height(48.dp),
+            shape = RoundedCornerShape(Radius.sm),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ),
+            contentPadding = PaddingValues(horizontal = Spacing.sm)
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(Spacing.xs))
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
