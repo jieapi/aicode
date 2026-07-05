@@ -21,7 +21,7 @@ import javax.inject.Inject
 /**
  * 取出 JSON 字符串参数的「真实内容」。
  *
- * ⚠️ 不能用 `toString().removeSurrounding("\"")`：[toString] 返回 JSON 序列化形式（外层带引号、
+ * 注意：不能用 `toString().removeSurrounding("\"")`：[toString] 返回 JSON 序列化形式（外层带引号、
  * 内部引号被转义成 `\"`），剥掉外层引号后内部仍是字面 `\"`，会把 `echo "*.vue"` 变成
  * `echo \"*.vue\"` 导致 shell 把引号当字面输出。必须用 [jsonPrimitive]/[contentOrNull] 取解码后内容。
  */

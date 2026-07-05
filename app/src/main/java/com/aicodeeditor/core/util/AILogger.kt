@@ -63,7 +63,7 @@ object AILogger {
         val n = counter(sessionId).incrementAndGet()
         val text = buildString {
             append('\n').append("=".repeat(78)).append('\n')
-            append(now()).append("  ▶ REQUEST #").append(n)
+            append(now()).append("  REQUEST #").append(n)
             append("   [").append(provider).append(" / ").append(model).append("]\n")
             append(method).append(' ').append(url).append('\n')
             append("--- request body ---\n")
@@ -75,7 +75,7 @@ object AILogger {
     /** 记录一次非流式响应对象（用 Gson 序列化为 JSON）。 */
     fun logResponse(sessionId: String?, provider: String, body: Any?) {
         val text = buildString {
-            append(now()).append("  ◀ RESPONSE #").append(counter(sessionId).get())
+            append(now()).append("  RESPONSE #").append(counter(sessionId).get())
             append("   [").append(provider).append("]\n")
             append("--- response body ---\n")
             append(stringify(body)).append('\n')
@@ -86,7 +86,7 @@ object AILogger {
     /** 记录一次流式响应的原始 SSE 文本（由调用方按行累积后整体传入）。 */
     fun logResponseStream(sessionId: String?, provider: String, raw: String) {
         val text = buildString {
-            append(now()).append("  ◀ RESPONSE #").append(counter(sessionId).get())
+            append(now()).append("  RESPONSE #").append(counter(sessionId).get())
             append("   [").append(provider).append(" / stream]\n")
             append("--- raw SSE ---\n")
             append(raw.ifBlank { "(空响应)" })
@@ -98,7 +98,7 @@ object AILogger {
     /** 记录一次请求失败（取消不算失败，不应走到这里）。 */
     fun logError(sessionId: String?, provider: String, throwable: Throwable) {
         val text = buildString {
-            append(now()).append("  ✖ ERROR #").append(counter(sessionId).get())
+            append(now()).append("  ERROR #").append(counter(sessionId).get())
             append("   [").append(provider).append("]\n")
             append(throwable.javaClass.name).append(": ").append(throwable.message ?: "").append('\n')
         }

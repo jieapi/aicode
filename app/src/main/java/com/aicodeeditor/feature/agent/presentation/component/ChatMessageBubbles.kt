@@ -10,7 +10,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -152,13 +152,17 @@ internal fun AgentMessageItem(
                             else -> MaterialTheme.colorScheme.onSurface
                         }
                         SelectionContainer {
-                            // 用户气泡背景为 primary（蓝色），光标默认也是蓝色会隐形；
-                            // 助手气泡背景为 surface，光标与文字同色也不明显。
-                            // 统一提供高对比度选区颜色，确保光标和选区 handles 始终可见。
-                            val selectionColors = TextSelectionColors(
-                                handleColor = Color.White,
-                                backgroundColor = Color.White.copy(alpha = 0.4f),
-                            )
+                            val selectionColors = if (isUser) {
+                                TextSelectionColors(
+                                    handleColor = MaterialTheme.colorScheme.onPrimary,
+                                    backgroundColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.28f),
+                                )
+                            } else {
+                                TextSelectionColors(
+                                    handleColor = MaterialTheme.colorScheme.primary,
+                                    backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                )
+                            }
                             CompositionLocalProvider(LocalTextSelectionColors provides selectionColors) {
                                 MarkdownContent(
                                     text = message.content.ifEmpty { "…" },
@@ -210,12 +214,12 @@ internal fun MarkdownContent(
     modifier: Modifier = Modifier,
     cache: MarkdownRenderCache? = null
 ) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     val mdColors = markdownColor(
         text = color,
         codeBackground = if (isDark) Color(0xFF152030) else Color(0xFFE8EDF3),
-        inlineCodeBackground = if (isDark) Color(0xFF1C2E44) else Color(0xFFDBEAFE),
+        inlineCodeBackground = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.22f else 0.12f),
         dividerColor = if (isDark) Color(0xFF2A3F56) else Color(0xFFCBD5E1),
         tableBackground = if (isDark) Color(0xFF152030) else Color(0xFFF1F5F9),
     )

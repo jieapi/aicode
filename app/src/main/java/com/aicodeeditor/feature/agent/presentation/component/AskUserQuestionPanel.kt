@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -40,13 +39,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.agent.domain.tool.question.PendingUserQuestion
@@ -106,7 +102,7 @@ fun AskUserQuestionPanel(
                     modifier = Modifier
                         .size(8.dp)
                         .clip(CircleShape)
-                        .background(Brand.Blue)
+                        .background(MaterialTheme.colorScheme.tertiary)
                 )
                 Spacer(Modifier.width(Spacing.sm))
                 Text(
@@ -146,39 +142,29 @@ fun AskUserQuestionPanel(
 
             // 底部按钮行
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                TextButton(
+                AgentActionButton(
+                    text = "跳过",
                     onClick = onSkip,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("跳过", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(Radius.sm))
-                        .background(brandGradient)
-                        .clickable {
-                            val answers = question.questions.mapIndexed { i, q ->
-                                val sel = selectedMap[i] ?: emptyList<String>()
-                                val custom = customTexts[i]?.takeIf { it.isNotBlank() && OTHER_LABEL in sel }
-                                SingleAnswer(
-                                    question = q.question,
-                                    selected = sel.filter { it != OTHER_LABEL },
-                                    customText = custom
-                                )
-                            }
-                            onConfirm(UserQuestionAnswer(answers))
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Neutral
+                )
+                AgentActionButton(
+                    text = "确认",
+                    onClick = {
+                        val answers = question.questions.mapIndexed { i, q ->
+                            val sel = selectedMap[i] ?: emptyList<String>()
+                            val custom = customTexts[i]?.takeIf { it.isNotBlank() && OTHER_LABEL in sel }
+                            SingleAnswer(
+                                question = q.question,
+                                selected = sel.filter { it != OTHER_LABEL },
+                                customText = custom
+                            )
                         }
-                        .padding(vertical = Spacing.sm + 2.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "确认",
-                        color = Color.White,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
-                    )
-                }
+                        onConfirm(UserQuestionAnswer(answers))
+                    },
+                    modifier = Modifier.weight(1f),
+                    tone = AgentActionTone.Success
+                )
             }
         }
     }

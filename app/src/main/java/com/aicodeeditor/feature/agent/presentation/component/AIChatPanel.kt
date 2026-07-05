@@ -246,8 +246,8 @@ fun AIChatPanel(
     // 监听 (流式文本长度, 消息条数) 元组：每个吐字 delta（length 变）和每次落库（size 变）
     // 都触发一次 animateScrollToItem —— collectLatest 自动取消上一个未跑完的动画，
     // 新动画立刻从当前位置平滑接管，视觉上形成连续流畅的底部跟随。
-    // ⚠️ 不能用 distinctUntilChanged() 包布尔谓词——只触发一次后去重，不再跟随（旧根因）。
-    // ⚠️ 不能删 __active__ item（让 totalItemsCount 突减）——anchor clamp 上跳（旧根因）。
+    // 注意：不能用 distinctUntilChanged() 包布尔谓词，只触发一次后去重，不再跟随（旧根因）。
+    // 注意：不能删 __active__ item（让 totalItemsCount 突减），anchor clamp 上跳（旧根因）。
     LaunchedEffect(listState, messagesReady) {
         if (!messagesReady) return@LaunchedEffect
         snapshotFlow { autoScrollSignal }.collectLatest {
@@ -266,7 +266,7 @@ fun AIChatPanel(
     }
 
     Scaffold(
-        containerColor = Color.White,
+        containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ChatHeader(
@@ -326,9 +326,9 @@ fun AIChatPanel(
                             else -> TailKind.NONE
                         }
                         // 尾巴气泡：永远挂载 item，NONE 时为空 Box（0 高度）。
-                        // ⚠️ 不能按 tailKind 增删 item：流结束时 __active__ 移除会让 totalItemsCount
+                        // 注意：不能按 tailKind 增删 item；流结束时 __active__ 移除会让 totalItemsCount
                         // 突减，LazyColumn 把 firstVisibleItemIndex 向下 clamp → 视口上跳（旧症状2根因）。
-                        // 永远挂载则 item 数量稳定，只在内容（StreamingBubble↔空Box）间切换，
+                        // 永远挂载则 item 数量稳定，只在 StreamingBubble 和空 Box 间切换，
                         // anchor 不会被 clamp。流结束落库后跟随 effect 会把新消息贴底。
                         item(key = "__active__", contentType = "tail") {
                             when (tailKind) {
@@ -434,7 +434,7 @@ internal fun ChatHeader(
     onToggleMode: (AgentMode) -> Unit
 ) {
     Surface(
-        color = Color.White
+        color = MaterialTheme.colorScheme.background
     ) {
         Column(
             modifier = Modifier
@@ -451,7 +451,7 @@ internal fun ChatHeader(
                     Icon(
                         FeatherIcons.Menu,
                         contentDescription = "打开侧边栏",
-                        tint = Brand.IconGray)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -473,19 +473,19 @@ internal fun ChatHeader(
                     Icon(
                         FeatherIcons.Plus,
                         contentDescription = "新建会话",
-                        tint = Brand.IconGray)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onNavigateToGit) {
                     Icon(
                         FeatherIcons.GitBranch,
                         contentDescription = "打开版本控制",
-                        tint = Brand.IconGray)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = onNavigateToTerminal) {
                     Icon(
                         FeatherIcons.Terminal,
                         contentDescription = "打开终端",
-                        tint = Brand.IconGray)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -504,7 +504,7 @@ internal fun BrandMark(size: androidx.compose.ui.unit.Dp, iconSize: androidx.com
         Icon(
             FeatherIcons.Star,
             contentDescription = null,
-            tint = Brand.IconGray,
+            tint = MaterialTheme.colorScheme.onPrimary,
             modifier = Modifier.size(iconSize)
         )
     }
