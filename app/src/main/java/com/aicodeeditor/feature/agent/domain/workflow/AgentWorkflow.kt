@@ -43,6 +43,12 @@ sealed class AgentEvent {
     /** 网络请求正在重试（首字节前失败触发自动重试）。仅用于 UI 实时展示，不落库。 */
     data class Retrying(val attempt: Int, val maxRetries: Int) : AgentEvent()
 
+    /** 正在进行上下文压缩。仅用于 UI 实时展示，不落库。 */
+    data class CompactionStarted(val estimatedTokens: Int) : AgentEvent()
+
+    /** 上下文压缩流程已结束（成功或失败）。仅用于 UI 实时展示，不落库。 */
+    object CompactionFinished : AgentEvent()
+
     /** 整个流程因错误终止（如流式请求被网络中断、达到迭代上限）。与 [Completed] 区别：携带错误，UI 应展示错误而非成功。 */
     data class Failed(val error: String) : AgentEvent()
 

@@ -66,6 +66,14 @@ internal fun parseTodoResult(content: String): ParsedTodoResult? {
         // 先剥掉 Success(data=...) / Error(...) 外壳
         val s = content.withoutToolStatusPrefix()
         val jsonStr = when {
+            s.startsWith("{") -> {
+                val outer = Json.parseToJsonElement(s).jsonObject
+                if (outer["status"]?.jsonPrimitive?.contentOrNull in setOf("success", "partial")) {
+                    outer["data"]?.toString() ?: s
+                } else {
+                    s
+                }
+            }
             s.startsWith("Success(data=") -> s.removePrefix("Success(data=").removeSuffix(")")
             s.startsWith("Partial(data=") -> {
                 val inner = s.removePrefix("Partial(data=")

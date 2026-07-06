@@ -26,6 +26,8 @@ import javax.inject.Singleton
  * 每个标签有稳定且对 AI 友好的唯一 id（`term-N`）。AI 可凭 id：
  *  - [startBackgroundCommand] 把 `npm run dev` 之类挂后台并拿到 id；
  *  - [sendInput] 按 id 持续发命令；
+ *  - [writeBytesToTab] 按 id 发送控制字符（如 Ctrl-C=0x03）；
+ *  - [closeTab] 按 id 关闭并销毁会话；
  *  - [getTabOutput] 按 id 读终端内容（emulator 屏幕缓冲）。
  *
  * 所有可变状态读写都在主线程（UI 事件、AI 工作流派发到主线程的调用），不额外加锁。
@@ -160,9 +162,22 @@ class TerminalSessionManager @Inject constructor(
 
     /** 按 id 向标签发送输入并回车执行（AI 持续发命令的入口）。返回是否命中标签。 */
     fun sendInput(id: String, input: String, appendNewline: Boolean = true): Boolean {
-        val tab = tab(id) ?: return false
         val text = if (appendNewline && !input.endsWith("\n")) input + "\n" else input
+        return writeToTab(id, text)
+    }
+
+    /** 按 id 向标签写入原始文本，不自动追加回车。 */
+    fun writeToTab(id: String, text: String): Boolean {
+        val tab = tab(id) ?: return false
         writeToSession(tab.session, text)
+        return true
+    }
+
+    /** 按 id 向标签写入原始字节（控制字符，如 Ctrl-C=0x03）。 */
+    fun writeBytesToTab(id: String, vararg bytes: Int): Boolean {
+        val tab = tab(id) ?: return false
+        val arr = ByteArray(bytes.size) { bytes[it].toByte() }
+        tab.session.write(arr, 0, arr.size)
         return true
     }
 
@@ -213,9 +228,9 @@ class TerminalSessionManager @Inject constructor(
         if (_tabs.value.any { it.id == id }) _activeTabId.value = id
     }
 
-    /** 关闭并销毁标签（用户主动关 / AI stop）。从列表移除并杀会话。 */
-    fun closeTab(id: String) {
-        val tab = tab(id) ?: return
+    /** 关闭并销毁标签（用户主动关 / AI close）。从列表移除并杀会话。 */
+    fun closeTab(id: String): Boolean {
+        val tab = tab(id) ?: return false
         runCatching { tab.session.finishIfRunning() }
         tab.view = null
         val remaining = _tabs.value.filterNot { it.id == id }
@@ -229,6 +244,7 @@ class TerminalSessionManager @Inject constructor(
             stopKeepaliveService()
         }
         FileLogger.i(TAG, "关闭终端标签 $id")
+        return true
     }
 
     /** 重连：重建该标签的交互会话（仅对交互标签有意义）。 */

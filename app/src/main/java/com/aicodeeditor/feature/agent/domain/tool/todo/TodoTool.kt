@@ -8,6 +8,7 @@ import com.aicodeeditor.feature.agent.domain.model.TodoStatus
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.serialization.json.JsonElement
@@ -48,6 +49,7 @@ class TodoTool @Inject constructor(
         "完成时标记 completed。帮助你和用户同步追踪进度。"
 
     override val permissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
+    override val capabilities = setOf(ToolCapability.MODIFY_TODO_STATE)
 
     /** todos 数组中单个待办项的 JSON Schema */
     private val todoItemSchema: Map<String, Any> = mapOf(

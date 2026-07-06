@@ -5,7 +5,11 @@ import com.aicodeeditor.feature.agent.domain.tool.ToolCall
 
 sealed class AgentMessage {
     @Serializable
-    data class UserMessage(val id: String = "", val content: String) : AgentMessage()
+    data class UserMessage(
+        val id: String = "",
+        val content: String,
+        val images: List<AgentImage> = emptyList()
+    ) : AgentMessage()
 
     @Serializable
     data class AssistantMessage(
@@ -20,9 +24,20 @@ sealed class AgentMessage {
     data class ToolResultMessage(
         val id: String = "",
         val toolName: String,
-        val result: String
+        val result: String,
+        val images: List<AgentImage> = emptyList()
     ) : AgentMessage()
 }
+
+@Serializable
+data class AgentImage(
+    val mimeType: String,
+    val base64Data: String,
+    val path: String = ""
+)
+
+const val CONTEXT_COMPACTION_MARKER = "What did we do so far?"
+const val CONTEXT_SUMMARY_LEGACY_PREFIX = "【系统提示：早期的对话已被压缩，以下是之前的核心状态摘要】"
 
 val AgentMessage.id: String
     get() = when (this) {
@@ -37,6 +52,7 @@ data class AgentContext(
     val projectRoot: String,
     val language: String?,
     val history: List<AgentMessage> = emptyList(),
+    val inputImages: List<AgentImage> = emptyList(),
     /** 当前会话 id：用于把本轮所有 AI 请求/响应落到该会话的日志文件（[com.aicodeeditor.core.util.AILogger]）。 */
     val sessionId: String? = null,
     val mode: AgentMode = AgentMode.BUILD

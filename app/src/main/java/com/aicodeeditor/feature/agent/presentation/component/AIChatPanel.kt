@@ -1,5 +1,11 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -47,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,8 +62,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
+import com.aicodeeditor.feature.agent.domain.model.AgentImage
 import com.aicodeeditor.feature.agent.domain.model.AgentMode
 import com.aicodeeditor.feature.agent.domain.tool.question.UserQuestionAnswer
+import com.aicodeeditor.feature.agent.presentation.AgentAttachment
 import com.aicodeeditor.feature.agent.presentation.AgentUIState
 import com.aicodeeditor.feature.agent.presentation.AIAgentViewModel
 import com.aicodeeditor.feature.agent.presentation.hasVisibleContent
@@ -69,10 +78,15 @@ import compose.icons.feathericons.Menu
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.Star
 import compose.icons.feathericons.Terminal
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.Base64
 
 internal val brandGradient = Brush.linearGradient(listOf(Brand.Blue, Brand.Sky))
+private const val REASONING_SCROLL_BUCKET_CHARS = 120
 
 /**
  * 流式尾巴的三种状态，用于 [when] 分支分发。
@@ -81,15 +95,150 @@ internal val brandGradient = Brush.linearGradient(listOf(Brand.Blue, Brand.Sky))
  * 缓存 content 子组合——流式期间 targetState 一直不变，文本增长时不会重新调用 content，
  * 导致 [StreamingBubble] 收不到后续文本、停在首句。故改用枚举 + 直接 [when] 分发。
  */
-private enum class TailKind { THINKING, STREAMING, NONE }
+private enum class TailKind { THINKING, STREAMING, COMPACTING, NONE }
 
 private data class AutoScrollSignal(
     val streamingTextLength: Int,
-    val streamingReasoningLength: Int,
+    val streamingReasoningBucket: Int,
     val runningToolMessageId: String?,
     val runningToolTextLength: Int,
+    val isCompacting: Boolean,
     val messageCount: Int
 )
+
+private fun reasoningScrollBucket(text: String?): Int =
+    text?.length?.let { (it / REASONING_SCROLL_BUCKET_CHARS) + 1 } ?: 0
+
+private data class UploadedWorkspaceFile(
+    val fileName: String,
+    val containerPath: String,
+    val localPath: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val image: AgentImage? = null
+)
+
+internal data class PendingUploadAttachment(
+    val fileName: String,
+    val containerPath: String,
+    val localPath: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val image: AgentImage? = null,
+)
+
+internal val PendingUploadAttachment.isImage: Boolean
+    get() = image != null
+
+private fun List<PendingUploadAttachment>.toAttachmentText(): String {
+    if (isEmpty()) return ""
+    return buildString {
+        append("附件：")
+        this@toAttachmentText.forEach { attachment ->
+            append('\n')
+            append("- ")
+            append(attachment.fileName)
+            append("：")
+            append(attachment.containerPath)
+        }
+    }
+}
+
+private fun appendAttachmentsToRequest(
+    request: String,
+    attachments: List<PendingUploadAttachment>
+): String {
+    val attachmentText = attachments.toAttachmentText()
+    if (attachmentText.isBlank()) return request
+    if (request.isBlank()) return attachmentText
+    return request.trimEnd() + "\n\n" + attachmentText
+}
+
+private fun UploadedWorkspaceFile.toPendingAttachment(): PendingUploadAttachment =
+    PendingUploadAttachment(
+        fileName = fileName,
+        containerPath = containerPath,
+        localPath = localPath,
+        mimeType = mimeType,
+        sizeBytes = sizeBytes,
+        image = image
+    )
+
+private fun PendingUploadAttachment.toAgentAttachment(): AgentAttachment =
+    AgentAttachment(
+        fileName = fileName,
+        containerPath = containerPath,
+        localPath = localPath,
+        mimeType = mimeType,
+        sizeBytes = sizeBytes,
+        isImage = isImage
+    )
+
+private fun List<PendingUploadAttachment>.toAgentAttachments(): List<AgentAttachment> =
+    map { it.toAgentAttachment() }
+
+private fun PendingUploadAttachment.toAgentImage(): AgentImage? = image
+
+private fun List<PendingUploadAttachment>.toAgentImages(): List<AgentImage> =
+    mapNotNull { it.toAgentImage() }
+
+private fun maxAttachmentMessage(max: Int): String = "最多可同时发送 $max 个附件"
+
+private fun uploadSuccessMessage(count: Int): String = "已上传 $count 个附件"
+
+private fun partialUploadMessage(count: Int): String = "已上传 $count 个附件，部分附件未加入"
+
+private fun selectedAttachments(
+    uris: List<Uri>,
+    currentCount: Int
+): List<Uri> = uris.take((MAX_PENDING_ATTACHMENTS - currentCount).coerceAtLeast(0))
+
+private fun hasAttachmentSlots(currentCount: Int): Boolean =
+    currentCount < MAX_PENDING_ATTACHMENTS
+
+private fun remainingAttachmentSlots(currentCount: Int): Int =
+    (MAX_PENDING_ATTACHMENTS - currentCount).coerceAtLeast(0)
+
+private fun imageLimitError(): String =
+    "图片超过 ${formatBytes(MAX_IMAGE_UPLOAD_BYTES)}，请压缩后重试"
+
+private fun attachmentsRoot(workspace: File): File =
+    File(File(workspace, ".aicode"), "attachments").apply { mkdirs() }
+
+private fun workspaceContainerPath(relativePath: String): String =
+    "/workspace/$relativePath"
+
+private fun attachmentRelativePath(workspace: File, target: File): String =
+    target.relativeTo(workspace).invariantSeparatorsPath
+
+private fun pickedFileToastPath(path: String): String = "已上传到 $path"
+
+private fun emptyWorkspaceMessage(): String = "请先选择工作区"
+
+private fun unreadableFileMessage(): String = "无法读取所选文件"
+
+private fun unavailableWorkspaceMessage(): String = "工作区不可用"
+
+private fun uploadFallbackError(): String = "上传失败"
+
+private fun unsupportedImageTypeError(): String = "无法识别图片类型，仅支持 jpg/png/gif/webp"
+
+private fun uploadFileName(context: Context, uri: Uri): String =
+    context.displayName(uri).ifBlank { "upload" }
+
+private fun safeUploadFileName(context: Context, uri: Uri): String =
+    sanitizeUploadFileName(uploadFileName(context, uri))
+
+private fun imageMimeType(context: Context, uri: Uri, fileName: String): String =
+    resolveImageMimeType(context, uri, fileName)
+
+private fun fileMimeType(context: Context, uri: Uri, fileName: String): String =
+    context.contentResolver.getType(uri)?.lowercase()
+        ?: when (fileName.substringAfterLast('.', "").lowercase()) {
+            "txt", "md", "kt", "java", "js", "ts", "json", "xml", "html", "css", "py", "sh", "gradle", "kts" -> "text/plain"
+            "pdf" -> "application/pdf"
+            else -> "application/octet-stream"
+        }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,24 +264,86 @@ fun AIChatPanel(
     val sessionTitle = sessions.find { it.id == currentSessionId }?.title?.takeIf { it.isNotBlank() } ?: "新会话"
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
+    val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
     val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
     val pendingQuestion by viewModel.pendingUserQuestion.collectAsStateWithLifecycle()
     val activeProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
     val providers = (settingsViewModel?.providers?.collectAsStateWithLifecycle()?.value ?: emptyList()).filter { it.isEnabled }
+    val modelMetadata = settingsViewModel?.modelMetadata?.collectAsStateWithLifecycle()?.value.orEmpty()
     val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     val projectRoot = currentWorkspace?.path ?: ""
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
+    var pendingAttachments by remember { mutableStateOf<List<PendingUploadAttachment>>(emptyList()) }
     val listState = rememberLazyListState()
     val markdownCache = remember { MarkdownRenderCache() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
 
     val isBusy = agentState is AgentUIState.Loading || agentState is AgentUIState.Streaming
+    val activeModel = activeProvider?.effectiveModel.orEmpty()
+    val activeModelMetadata = modelMetadata[activeModel]
+    val canUploadFiles = projectRoot.isNotBlank() && activeModelMetadata?.supportsTools == true
+    val canUploadImages = projectRoot.isNotBlank() && activeModelMetadata?.supportsVision == true
+
+    LaunchedEffect(activeProvider?.type, activeModel) {
+        val provider = activeProvider ?: return@LaunchedEffect
+        if (activeModel.isNotBlank()) {
+            settingsViewModel?.resolveModelMetadata(provider.type, listOf(activeModel))
+        }
+    }
+
+    fun removePendingAttachment(index: Int) {
+        pendingAttachments = pendingAttachments.filterIndexed { i, _ -> i != index }
+    }
+
+    fun handlePickedAttachments(uris: List<Uri>, images: Boolean) {
+        if (uris.isEmpty()) return
+        if (projectRoot.isBlank()) {
+            Toast.makeText(context, emptyWorkspaceMessage(), Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!hasAttachmentSlots(pendingAttachments.size)) {
+            Toast.makeText(context, maxAttachmentMessage(MAX_PENDING_ATTACHMENTS), Toast.LENGTH_SHORT).show()
+            return
+        }
+        val selected = selectedAttachments(uris, pendingAttachments.size)
+        scope.launch {
+            var successCount = 0
+            val failures = mutableListOf<String>()
+            selected.forEach { uri ->
+                runCatching {
+                    copyUriToWorkspace(context, uri, projectRoot, includeImageData = images)
+                }.onSuccess { uploaded ->
+                    pendingAttachments = pendingAttachments + uploaded.toPendingAttachment()
+                    successCount += 1
+                }.onFailure { error ->
+                    failures += (error.message ?: uploadFallbackError())
+                }
+            }
+
+            when {
+                successCount > 0 && failures.isEmpty() && uris.size <= remainingAttachmentSlots(pendingAttachments.size - successCount) ->
+                    Toast.makeText(context, uploadSuccessMessage(successCount), Toast.LENGTH_SHORT).show()
+                successCount > 0 ->
+                    Toast.makeText(context, partialUploadMessage(successCount), Toast.LENGTH_LONG).show()
+                failures.isNotEmpty() ->
+                    Toast.makeText(context, failures.first(), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        handlePickedAttachments(uris, images = false)
+    }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        handlePickedAttachments(uris, images = true)
+    }
 
     // 自动滚动跟随
     var positionedSession by remember { mutableStateOf<String?>(null) }
@@ -154,9 +365,10 @@ fun AIChatPanel(
     val autoScrollSignal by rememberUpdatedState(
         AutoScrollSignal(
             streamingTextLength = streamingText?.length ?: 0,
-            streamingReasoningLength = streamingReasoning?.length ?: 0,
+            streamingReasoningBucket = reasoningScrollBucket(streamingReasoning),
             runningToolMessageId = runningTool?.messageId,
             runningToolTextLength = runningTool?.text?.length ?: 0,
+            isCompacting = isCompacting,
             messageCount = messages.size
         )
     )
@@ -215,9 +427,21 @@ fun AIChatPanel(
 
     val sendMessage: () -> Unit = {
         val text = inputText.trim()
-        if (text.isNotEmpty() && !isBusy) {
-            viewModel.executeAgentRequestStream(text, currentFile, selectedCode, projectRoot)
+        if ((text.isNotEmpty() || pendingAttachments.isNotEmpty()) && !isBusy) {
+            val attachments = pendingAttachments
+            val modelRequest = appendAttachmentsToRequest(text, attachments)
+            val images = attachments.toAgentImages()
+            viewModel.executeAgentRequestStream(
+                request = text,
+                modelRequest = modelRequest,
+                currentFile = currentFile,
+                selectedCode = selectedCode,
+                projectRoot = projectRoot,
+                inputImages = images,
+                inputAttachments = attachments.toAgentAttachments()
+            )
             inputText = ""
+            pendingAttachments = emptyList()
             followBottom = true
             scope.launch {
                 kotlinx.coroutines.delay(0)
@@ -315,13 +539,16 @@ fun AIChatPanel(
                         val reasoning = streamingReasoning
                         val showReasoning = reasoning != null && reasoning.isNotEmpty()
                         if (showReasoning) {
-                            item(key = "__reasoning__", contentType = "tail") { ReasoningBubble(text = reasoning!!) }
+                            item(key = "__reasoning__", contentType = "tail") {
+                                ReasoningBubble(text = reasoning!!, streaming = true)
+                            }
                         }
                         val streaming = streamingText
                         val showStreaming = streaming != null && streaming.hasVisibleContent()
-                        val showThinking = !showReasoning && !showStreaming && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null
+                        val showThinking = !showReasoning && !showStreaming && !isCompacting && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null
                         val tailKind = when {
                             showStreaming -> TailKind.STREAMING
+                            isCompacting -> TailKind.COMPACTING
                             showThinking -> TailKind.THINKING
                             else -> TailKind.NONE
                         }
@@ -334,6 +561,7 @@ fun AIChatPanel(
                             when (tailKind) {
                                 TailKind.THINKING -> ThinkingBubble()
                                 TailKind.STREAMING -> StreamingBubble(text = streaming ?: "")
+                                TailKind.COMPACTING -> CompactionProgressBubble()
                                 TailKind.NONE -> Box(Modifier)
                             }
                         }
@@ -416,9 +644,133 @@ fun AIChatPanel(
                 },
                 onNavigateToSettings = onNavigateToSettings,
                 currentMode = currentMode,
-                onToggleMode = { viewModel.setSessionMode(it) }
+                onToggleMode = { viewModel.setSessionMode(it) },
+                pendingAttachments = pendingAttachments,
+                onRemoveAttachment = ::removePendingAttachment,
+                canUploadFiles = canUploadFiles,
+                canUploadImages = canUploadImages,
+                onUploadFile = { filePicker.launch(arrayOf("*/*")) },
+                onUploadImage = { imagePicker.launch(arrayOf("image/*")) }
             )
         }
+    }
+}
+
+private suspend fun copyUriToWorkspace(
+    context: Context,
+    uri: Uri,
+    workspacePath: String,
+    includeImageData: Boolean = false
+): UploadedWorkspaceFile = withContext(Dispatchers.IO) {
+    val workspace = File(workspacePath)
+    require(workspace.isDirectory) { unavailableWorkspaceMessage() }
+
+    val uploadsDir = attachmentsRoot(workspace)
+    val target = uniqueUploadFile(uploadsDir, safeUploadFileName(context, uri))
+
+    val input = context.contentResolver.openInputStream(uri) ?: error(unreadableFileMessage())
+    input.use { source ->
+        target.outputStream().use { output ->
+            source.copyTo(output)
+        }
+    }
+
+    val relativePath = attachmentRelativePath(workspace, target)
+    val mimeType = if (includeImageData) {
+        runCatching { imageMimeType(context, uri, target.name) }
+            .getOrElse { error ->
+                runCatching { target.delete() }
+                throw error
+            }
+    } else {
+        fileMimeType(context, uri, target.name)
+    }
+    val image = if (includeImageData) {
+        if (target.length() > MAX_IMAGE_UPLOAD_BYTES) {
+            runCatching { target.delete() }
+            error(imageLimitError())
+        }
+        AgentImage(
+            mimeType = mimeType,
+            base64Data = Base64.getEncoder().encodeToString(target.readBytes()),
+            path = workspaceContainerPath(relativePath)
+        )
+    } else {
+        null
+    }
+    UploadedWorkspaceFile(
+        fileName = target.name,
+        containerPath = workspaceContainerPath(relativePath),
+        localPath = target.absolutePath,
+        mimeType = mimeType,
+        sizeBytes = target.length(),
+        image = image
+    )
+}
+
+private fun Context.displayName(uri: Uri): String {
+    return contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+        val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (index >= 0 && cursor.moveToFirst()) cursor.getString(index).orEmpty() else ""
+    }.orEmpty()
+}
+
+private fun sanitizeUploadFileName(name: String): String {
+    val cleaned = name
+        .map { ch -> if (ch.code < 32 || ch in "\\/:*?\"<>|") '_' else ch }
+        .joinToString("")
+        .trim()
+        .trim('.')
+    return cleaned.ifBlank { "upload" }.take(160)
+}
+
+private fun uniqueUploadFile(dir: File, fileName: String): File {
+    var candidate = File(dir, fileName)
+    if (!candidate.exists()) return candidate
+
+    val dotIndex = fileName.lastIndexOf('.')
+    val stem = if (dotIndex > 0) fileName.substring(0, dotIndex) else fileName
+    val extension = if (dotIndex > 0) fileName.substring(dotIndex) else ""
+    var index = 1
+    while (candidate.exists()) {
+        candidate = File(dir, "$stem-$index$extension")
+        index += 1
+    }
+    return candidate
+}
+
+private fun resolveImageMimeType(context: Context, uri: Uri, fileName: String): String {
+    val mime = context.contentResolver.getType(uri)?.lowercase()
+    if (mime in SUPPORTED_IMAGE_MIME_TYPES) return mime!!
+
+    val byExtension = when (fileName.substringAfterLast('.', "").lowercase()) {
+        "jpg", "jpeg" -> "image/jpeg"
+        "png" -> "image/png"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        else -> null
+    }
+    if (byExtension != null) return byExtension
+    error(unsupportedImageTypeError())
+}
+
+private val SUPPORTED_IMAGE_MIME_TYPES = setOf(
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp"
+)
+
+private const val MAX_IMAGE_UPLOAD_BYTES = 5L * 1024 * 1024
+private const val MAX_PENDING_ATTACHMENTS = 8
+
+internal fun formatBytes(bytes: Long): String {
+    val kb = 1024.0
+    val mb = kb * 1024.0
+    return when {
+        bytes >= mb -> String.format(java.util.Locale.US, "%.1f MB", bytes / mb)
+        bytes >= kb -> String.format(java.util.Locale.US, "%.0f KB", bytes / kb)
+        else -> "$bytes B"
     }
 }
 

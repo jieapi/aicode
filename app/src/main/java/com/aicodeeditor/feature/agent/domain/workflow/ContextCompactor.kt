@@ -4,29 +4,28 @@ import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
 import com.aicodeeditor.feature.agent.data.local.entity.AgentMessageEntity
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
+import com.aicodeeditor.feature.agent.domain.model.CONTEXT_COMPACTION_MARKER
+import com.aicodeeditor.feature.agent.domain.model.CONTEXT_SUMMARY_LEGACY_PREFIX
 import com.aicodeeditor.feature.agent.domain.model.id
 import com.aicodeeditor.feature.agent.domain.provider.AIProvider
 import com.aicodeeditor.feature.agent.presentation.MessageRole
+import com.aicodeeditor.feature.settings.data.remote.ModelMetadataService
+import com.aicodeeditor.feature.settings.domain.model.ModelContextPolicy
+import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class ContextCompactor @Inject constructor(
-    private val agentMessageDao: AgentMessageDao
+    private val agentMessageDao: AgentMessageDao,
+    private val modelMetadataService: ModelMetadataService
 ) {
 
     private companion object {
         const val TAG = "ContextCompactor"
 
-        // 估算：通常一个 Token 约等于 3-4 个英文字符或 1-2 个中文字符。
-        // 这里为了简单，我们用字符数作为硬截断指标。
-        // 假设模型支持至少 100k Token，大概是 30 万字符。
-        // 我们设定软阈值为 150_000 字符。
-        const val CHAR_THRESHOLD = 150_000
-
-        // 压缩后保留的尾部最新消息的最小数量，防止把刚发生的对话也截断了
-        const val MIN_TAIL_MESSAGES = 10
+        const val TOOL_OUTPUT_MAX_CHARS = 2_000
     }
 
     /**
@@ -47,29 +46,20 @@ class ContextCompactor @Inject constructor(
         sessionId: String? = null,
         onEvent: suspend (AgentEvent) -> Unit = {}
     ): List<AgentMessage> {
-        val totalChars = messages.sumOf {
-            when (it) {
-                is AgentMessage.UserMessage -> it.content.length
-                is AgentMessage.AssistantMessage -> it.content.length
-                is AgentMessage.ToolResultMessage -> it.result.length
-            }
-        }
-        if (totalChars < CHAR_THRESHOLD || messages.size <= MIN_TAIL_MESSAGES) {
+        val totalTokens = estimateTokens(messages)
+        val metadata = modelMetadataService.resolve(inferProviderType(aiProvider), aiProvider.model)
+        val usableTokens = ModelContextPolicy.usableInputTokens(metadata)
+        if (totalTokens < usableTokens || messages.size <= 2) {
             return messages.toList()
         }
 
-        FileLogger.i(TAG, "上下文达到 $totalChars 字符，触发压缩机制。")
-        val callId = UUID.randomUUID().toString().take(8)
-        onEvent(AgentEvent.ToolCallStarted(
-            id = callId,
-            toolName = "context_compactor",
-            argsPreview = "{\n  \"action\": \"compress_history\",\n  \"reason\": \"上下文超过阈值 ($totalChars 字符)，触发自动清理以防止内存与 Token 溢出\"\n}"
-        ))
+        FileLogger.i(TAG, "上下文约 $totalTokens tokens，超过可用窗口 $usableTokens/${metadata.contextTokens}，触发压缩机制。")
+        onEvent(AgentEvent.CompactionStarted(totalTokens))
 
         // 拆分 Head（需要压缩的老数据）和 Tail（保留的新数据）
-        var splitIndex = messages.size - MIN_TAIL_MESSAGES
+        var splitIndex = selectTailStartIndex(messages, usableTokens)
         if (splitIndex <= 0) {
-            onEvent(AgentEvent.ToolCallFinished(callId, "context_compactor", "不满足截断条件", false))
+            onEvent(AgentEvent.CompactionFinished)
             return messages.toList()
         }
 
@@ -80,8 +70,10 @@ class ContextCompactor @Inject constructor(
 
         val head = messages.subList(0, splitIndex)
         val tail = messages.subList(splitIndex, messages.size)
+        val previousSummary = extractPreviousSummary(messages)
+        val headForSummary = removeCompactionPairs(head)
 
-        val headContent = head.joinToString("\n\n") { msg ->
+        val headContent = headForSummary.joinToString("\n\n") { msg ->
             when (msg) {
                 is AgentMessage.UserMessage -> "[USER]:\n${msg.content}"
                 is AgentMessage.AssistantMessage -> {
@@ -91,26 +83,11 @@ class ContextCompactor @Inject constructor(
                         "$base\n[TOOL_CALLS]: $toolCallsDesc"
                     } else base
                 }
-                is AgentMessage.ToolResultMessage -> "[TOOL_RESULT (${msg.toolName})]:\n${msg.result}"
+                is AgentMessage.ToolResultMessage -> "[TOOL_RESULT (${msg.toolName})]:\n${msg.result.truncateForSummary()}"
             }
         }
 
-        val summaryPrompt = """
-            你是一个高度专业的上下文压缩引擎。以下是一段长对话的早期历史记录。
-            为了防止上下文 Token 溢出，请将这段历史压缩为一个极其精简的摘要。
-
-            你必须严格遵守以下 Markdown 结构返回：
-            ## Goal (用户最初的目标)
-            ## Progress (已经完成的核心步骤)
-            ## Key Decisions (重要的架构决定、已修改的文件路径)
-            ## Blockers/Errors (目前遗留的问题或错误)
-            ## Next Steps (接下来要做的步骤)
-
-            请直接输出摘要，不要说多余的客套话。
-
-            以下是历史记录：
-            $headContent
-        """.trimIndent()
+        val summaryPrompt = buildSummaryPrompt(previousSummary, headContent)
 
         val summaryResponse = try {
             val response = aiProvider.complete(
@@ -123,17 +100,21 @@ class ContextCompactor @Inject constructor(
             throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "压缩上下文失败", e)
-            onEvent(AgentEvent.ToolCallFinished(callId, "context_compactor", "压缩失败: ${e.message}", true))
+            onEvent(AgentEvent.CompactionFinished)
             return messages.toList() // 失败则原样返回，交由上层自行承担溢出风险
         }
 
         FileLogger.i(TAG, "上下文压缩完成，摘要长度：${summaryResponse.length}")
-        onEvent(AgentEvent.ToolCallFinished(callId, "context_compactor", summaryResponse, false))
 
+        val markerId = UUID.randomUUID().toString()
         val compactedId = UUID.randomUUID().toString()
+        val markerMessage = AgentMessage.UserMessage(
+            id = markerId,
+            content = CONTEXT_COMPACTION_MARKER
+        )
         val compactedMessage = AgentMessage.AssistantMessage(
             id = compactedId,
-            content = "【系统提示：早期的对话已被压缩，以下是之前的核心状态摘要】\n$summaryResponse",
+            content = summaryResponse,
             toolCalls = emptyList()
         )
 
@@ -149,14 +130,25 @@ class ContextCompactor @Inject constructor(
                 // 将 head 部分的消息标记为已压缩（不删除，保留数据完整性）
                 agentMessageDao.markMessagesCompactedBeforeTimestamp(sessionId, cutoffTimestamp)
 
-                // 插入摘要消息（时间戳放在 head 最后一条和 tail 第一条之间）
+                // 插入内部 compaction user marker + assistant summary，时间戳放在 head 和 tail 之间。
+                agentMessageDao.insert(
+                    AgentMessageEntity(
+                        id = markerId,
+                        sessionId = sessionId,
+                        role = MessageRole.USER.name,
+                        content = CONTEXT_COMPACTION_MARKER,
+                        timestamp = cutoffTimestamp - 2,
+                        isCompactionMarker = true
+                    )
+                )
                 agentMessageDao.insert(
                     AgentMessageEntity(
                         id = compactedId,
                         sessionId = sessionId,
                         role = MessageRole.ASSISTANT.name,
                         content = compactedMessage.content,
-                        timestamp = cutoffTimestamp - 1
+                        timestamp = cutoffTimestamp - 1,
+                        isContextSummary = true
                     )
                 )
                 FileLogger.i(TAG, "已持久化压缩结果到数据库，会话 $sessionId")
@@ -164,8 +156,10 @@ class ContextCompactor @Inject constructor(
                 FileLogger.e(TAG, "持久化压缩结果失败", e)
             }
         }
+        onEvent(AgentEvent.CompactionFinished)
 
         val newMessages = mutableListOf<AgentMessage>()
+        newMessages.add(markerMessage)
         newMessages.add(compactedMessage)
         newMessages.addAll(tail)
 
@@ -204,5 +198,157 @@ class ContextCompactor @Inject constructor(
 
         // 如果 splitIndex 指向的是一个普通消息（非 tool 相关），直接使用
         return splitIndex
+    }
+
+    private fun selectTailStartIndex(messages: List<AgentMessage>, usableTokens: Int): Int {
+        val budget = ModelContextPolicy.preserveRecentTokens(usableTokens)
+        var total = 0
+        var splitIndex = messages.size
+
+        for (index in messages.indices.reversed()) {
+            val next = estimateTokens(messages[index])
+            if (total + next > budget && splitIndex < messages.size) break
+            total += next
+            splitIndex = index
+        }
+
+        return splitIndex
+    }
+
+    private fun estimateTokens(messages: List<AgentMessage>): Int =
+        messages.sumOf { estimateTokens(it) }
+
+    private fun estimateTokens(message: AgentMessage): Int {
+        val chars = when (message) {
+            is AgentMessage.UserMessage -> message.content.length
+            is AgentMessage.AssistantMessage -> {
+                message.content.length + message.reasoning.length +
+                    message.toolCalls.sumOf { it.name.length + it.arguments.toString().length }
+            }
+            is AgentMessage.ToolResultMessage -> message.toolName.length + message.result.length
+        }
+        return ModelContextPolicy.estimateTokens(chars)
+    }
+
+    private fun inferProviderType(aiProvider: AIProvider): ProviderType {
+        val className = aiProvider::class.simpleName.orEmpty()
+        return when {
+            "Anthropic" in className -> ProviderType.ANTHROPIC
+            "Gemini" in className -> ProviderType.GEMINI
+            else -> ProviderType.OPENAI
+        }
+    }
+
+    private fun buildSummaryPrompt(previousSummary: String?, headContent: String): String {
+        val instruction = if (previousSummary.isNullOrBlank()) {
+            "请根据下面的对话历史创建一个新的锚定摘要。"
+        } else {
+            """
+                请根据下面的新对话历史更新已有锚定摘要。
+                保留仍然正确的信息，移除过时信息，并合并新事实。
+
+                <previous-summary>
+                $previousSummary
+                </previous-summary>
+            """.trimIndent()
+        }
+
+        return """
+            你是一个高度专业的上下文压缩引擎。$instruction
+
+            必须严格输出以下 Markdown 结构，保持标题顺序不变：
+            ## Goal
+            - [一句话概括用户目标]
+
+            ## Constraints & Preferences
+            - [用户约束、偏好、规格，或 "(none)"]
+
+            ## Progress
+            ### Done
+            - [已完成工作，或 "(none)"]
+
+            ### In Progress
+            - [正在进行的工作，或 "(none)"]
+
+            ### Blocked
+            - [阻塞问题，或 "(none)"]
+
+            ## Key Decisions
+            - [关键决定及原因，或 "(none)"]
+
+            ## Next Steps
+            - [接下来按顺序执行的步骤，或 "(none)"]
+
+            ## Critical Context
+            - [重要技术事实、错误、开放问题，或 "(none)"]
+
+            ## Relevant Files
+            - [文件或目录路径：相关原因，或 "(none)"]
+
+            规则：
+            - 每个章节都必须保留。
+            - 使用简短 bullet，不写客套话。
+            - 保留精确文件路径、命令、错误文本和标识符。
+            - 不要提到“摘要过程”或“上下文已压缩”。
+
+            对话历史：
+            $headContent
+        """.trimIndent()
+    }
+
+    private fun extractPreviousSummary(messages: List<AgentMessage>): String? {
+        for (index in messages.indices.reversed()) {
+            val current = messages[index]
+            val next = messages.getOrNull(index + 1)
+            if (
+                current is AgentMessage.UserMessage &&
+                current.content == CONTEXT_COMPACTION_MARKER &&
+                next is AgentMessage.AssistantMessage
+            ) {
+                return next.content.cleanSummary()
+            }
+            if (
+                current is AgentMessage.AssistantMessage &&
+                current.content.startsWith(CONTEXT_SUMMARY_LEGACY_PREFIX)
+            ) {
+                return current.content.cleanSummary()
+            }
+        }
+        return null
+    }
+
+    private fun removeCompactionPairs(messages: List<AgentMessage>): List<AgentMessage> {
+        val result = mutableListOf<AgentMessage>()
+        var index = 0
+        while (index < messages.size) {
+            val current = messages[index]
+            val next = messages.getOrNull(index + 1)
+            if (
+                current is AgentMessage.UserMessage &&
+                current.content == CONTEXT_COMPACTION_MARKER &&
+                next is AgentMessage.AssistantMessage
+            ) {
+                index += 2
+                continue
+            }
+            if (
+                current is AgentMessage.AssistantMessage &&
+                current.content.startsWith(CONTEXT_SUMMARY_LEGACY_PREFIX)
+            ) {
+                index++
+                continue
+            }
+            result.add(current)
+            index++
+        }
+        return result
+    }
+
+    private fun String.cleanSummary(): String =
+        removePrefix(CONTEXT_SUMMARY_LEGACY_PREFIX).trimStart()
+
+    private fun String.truncateForSummary(): String {
+        if (length <= TOOL_OUTPUT_MAX_CHARS) return this
+        return take(TOOL_OUTPUT_MAX_CHARS) + "\n[Tool output truncated for compaction]"
     }
 }

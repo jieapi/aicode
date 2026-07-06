@@ -1,11 +1,13 @@
 package com.aicodeeditor.feature.agent.domain.container
 
 import com.aicodeeditor.core.util.FileLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,25 +90,26 @@ class LinuxContainerEngine @Inject constructor(
 
         /**
          * 容器首次初始化时自动安装的基础包清单（Alpine 3.21 的 `python3` 即 3.12.x）。
-         * 包含：python3、git、pip（py3-pip）、nodejs、npm、bash、curl。用 `--no-cache` 避免 apk 缓存撑大 rootfs。
+         * 包含：python3、git、pip（py3-pip）、nodejs、npm、bash、curl、ripgrep（rg）。用 `--no-cache` 避免 apk 缓存撑大 rootfs。
          * bash：作为默认交互/命令 shell（见 [defaultShell]）；装好后比 busybox ash 更接近桌面习惯。
          * curl：常用下载工具，skill 脚本与 AI 联网拉取常依赖。
+         * ripgrep：提供 `rg`，用于高速搜索代码与文本。
          * 改清单时同步 +1 [PROVISION_VERSION] 触发重装。
          */
-        private const val PROVISION_PACKAGES = "python3 git py3-pip nodejs npm bash curl"
+        private const val PROVISION_PACKAGES = "python3 git py3-pip nodejs npm bash curl ripgrep"
 
         /**
          * 基础包配置版本。改 [PROVISION_PACKAGES] 或配置逻辑时 +1，触发在设备上重新 `apk add`。
          * 独立于 [ContainerInstaller] 的 rootfs INSTALL_VERSION：rootfs 版本升级会删 rootfs
          * （连带清掉本标记），故新 rootfs 必然重跑配置；同 rootfs 下改包清单则靠本版本号触发。
          */
-        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-v1"
+        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-rg-v2"
 
         /** `apk add` 下载基础包的超时（毫秒）：首次配置需联网拉包，给足时间。 */
         private const val PROVISION_TIMEOUT_MS = 600_000L
     }
 
-    /** 标记基础包（python3/git）已按 [PROVISION_VERSION] 配置完成，内容为版本号。 */
+    /** 标记基础包（python3/git/rg 等）已按 [PROVISION_VERSION] 配置完成，内容为版本号。 */
     private val provisionMarker: java.io.File
         get() = java.io.File(containerInstaller.rootfsDir, ".provisioned")
 
@@ -126,7 +129,7 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String? = null,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS
     ): Flow<CommandEvent> = flow {
-        // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git/pip/node/npm）
+        // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git/pip/node/npm/rg）
         ensureInstalled()
         emitAll(streamExecNoInstall(command, projectPath, timeoutMs))
     }.flowOn(Dispatchers.IO)
@@ -156,6 +159,13 @@ class LinuxContainerEngine @Inject constructor(
         // Job 与 flow 收集者不一致会触发「Flow invariant is violated」。这里仅用它在超时时杀进程。
         val watchScope = CoroutineScope(Dispatchers.IO + Job())
         val watchdog = launchKillWatchdog(watchScope, process, effectiveTimeout, timedOut, command)
+        val cancellationHook = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause is CancellationException && process.isAlive) {
+                FileLogger.i(TAG, "命令被取消，终止进程: $command")
+                runCatching { process.destroy() }
+                runCatching { process.destroyForcibly() }
+            }
+        }
         val reader = BufferedReader(InputStreamReader(process.inputStream))
         try {
             var line: String?
@@ -175,6 +185,7 @@ class LinuxContainerEngine @Inject constructor(
             }
         } finally {
             // 协程取消（用户离开页面等）时确保子进程被回收，避免泄漏
+            cancellationHook?.dispose()
             watchdog.cancel()
             watchScope.cancel()
             runCatching { reader.close() }
@@ -193,13 +204,32 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String? = null,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS
     ): String = withContext(Dispatchers.IO) {
-        // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git）
+        // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git/rg）
         ensureInstalled()
         execCaptured(command, projectPath, timeoutMs).output
     }
 
     /** 一次容器内执行的结果：限幅后的完整输出 + 退出码（超时/异常时为 null）。 */
+    data class CommandResult(val output: String, val exitCode: Int?)
+
+    /** 一次容器内执行的内部结果：限幅后的完整输出 + 退出码（超时/异常时为 null）。 */
     private data class ExecResult(val output: String, val exitCode: Int?)
+
+    /**
+     * 仅在容器和基础包已就绪时执行命令；不会触发 rootfs 解压或 apk 装包。
+     *
+     * 供只读工具做性能增强使用：例如 search 可优先用 rg，但不能因为一次自动批准的搜索
+     * 隐式初始化容器或联网安装环境。未就绪时返回 null，让调用方走纯宿主 fallback。
+     */
+    suspend fun runCommandSyncIfReady(
+        command: String,
+        projectPath: String? = null,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS
+    ): CommandResult? {
+        if (!containerInstaller.isInstalled() || !isProvisioned()) return null
+        val result = execCaptured(command, projectPath, timeoutMs)
+        return CommandResult(result.output, result.exitCode)
+    }
 
     /**
      * 在容器内同步执行命令并捕获输出。**假定 rootfs 已安装**（不做懒安装/配置），
@@ -219,21 +249,37 @@ class LinuxContainerEngine @Inject constructor(
             FileLogger.d(TAG, "执行命令(同步) cwd=$projectPath timeout=${effectiveTimeout}ms: $command")
             val process = startContainerProcess(command, projectPath)
             val timedOut = AtomicBoolean(false)
+            val cancellationHook = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                if (cause is CancellationException && process.isAlive) {
+                    FileLogger.i(TAG, "命令被取消，终止进程: $command")
+                    runCatching { process.destroy() }
+                    runCatching { process.destroyForcibly() }
+                }
+            }
 
             // 限幅累积：超大输出只保留开头+结尾，避免撑爆内存与模型上下文。
             val output = BoundedOutput()
             // 看门狗与读循环并发：超时则 destroy 进程，使阻塞的 readLine 立即返回 null 退出循环。
             var exitCode: Int? = null
-            coroutineScope {
-                val watchdog = launchKillWatchdog(this, process, effectiveTimeout, timedOut, command)
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    output.append(line!!)
-                    output.append("\n")
+            try {
+                coroutineScope {
+                    val watchdog = launchKillWatchdog(this, process, effectiveTimeout, timedOut, command)
+                    val reader = BufferedReader(InputStreamReader(process.inputStream))
+                    try {
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            output.append(line!!)
+                            output.append("\n")
+                        }
+                        exitCode = process.waitFor()
+                    } finally {
+                        watchdog.cancel()
+                        runCatching { reader.close() }
+                    }
                 }
-                exitCode = process.waitFor()
-                watchdog.cancel()
+            } finally {
+                cancellationHook?.dispose()
+                runCatching { process.destroy() }
             }
 
             if (timedOut.get()) {
@@ -245,6 +291,8 @@ class LinuxContainerEngine @Inject constructor(
                 FileLogger.v(TAG, "命令完成(退出码 $exitCode，输出 ${output.totalChars} 字符): $command")
                 ExecResult(output.build(), exitCode)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "执行命令异常: $command", e)
             ExecResult("Error: ${e.message}", null)
@@ -252,7 +300,7 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     /**
-     * 首次初始化时配置基础包（python3 / git / pip / node / npm）。幂等：已按 [PROVISION_VERSION] 配置则直接返回。
+     * 首次初始化时配置基础包（python3 / git / pip / node / npm / rg）。幂等：已按 [PROVISION_VERSION] 配置则直接返回。
      * 失败（断网/超时/退出码非 0）不写标记，下次 [ensureInstalled] 自动重试，且**不抛异常**——
      * 配置失败不应阻塞用户使用容器（只是暂时没有这些工具）。
      *
@@ -364,7 +412,7 @@ class LinuxContainerEngine @Inject constructor(
     fun defaultShell(): String = if (isProvisioned()) "/bin/bash" else "/bin/sh"
 
     /**
-     * 幂等地确保容器可用：先解压 rootfs/proot（首次耗时），再配置基础包 python3/git/pip/node/npm（首次需联网）。
+     * 幂等地确保容器可用：先解压 rootfs/proot（首次耗时），再配置基础包 python3/git/pip/node/npm/rg（首次需联网）。
      * 供所有命令执行入口（[runCommandSync]/[runCommandStream]）在执行前统一调用。
      *
      * 用 [initMutex] 串行化：多入口并发时只让第一个真正解压/配置，其余等待后看到就绪直接置 [ContainerInitState.Ready]。

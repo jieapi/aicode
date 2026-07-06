@@ -1,45 +1,41 @@
 package com.aicodeeditor.feature.agent.domain.tool.explorer
 
 import com.aicodeeditor.core.util.FileLogger
+import com.aicodeeditor.feature.agent.domain.container.LinuxContainerEngine
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
+import com.aicodeeditor.feature.workspace.data.repository.WorkspaceRepository
 import com.aicodeeditor.feature.workspace.domain.WorkspacePathMapper
-import kotlinx.serialization.json.JsonArray
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import javax.inject.Inject
 
 /**
- * 在代码中搜索内容——纯只读探索工具。
+ * rg 风格的项目搜索工具。
  *
- * 不进容器，通过 [WorkspacePathMapper] 映射容器路径到宿主文件系统直接遍历，
- * 与 `readFile` 一致的路径解析方式，无需容器就绪即可使用。两种模式下均可使用。
+ * 容器和基础包已就绪时执行真实 rg；否则用宿主文件系统实现常用 rg 参数的只读兜底。
  */
 class SearchCodeTool @Inject constructor(
-    private val pathMapper: WorkspacePathMapper
+    private val pathMapper: WorkspacePathMapper,
+    private val containerEngine: LinuxContainerEngine,
+    private val workspaceRepository: WorkspaceRepository
 ) : AgentTool() {
 
     private companion object {
         const val TAG = "SearchTool"
-        const val DEFAULT_MAX_RESULTS = 50
-        const val MAX_MAX_RESULTS = 200
-        /** 单文件超过此字节数则跳过（约 500KB），避免大文件拖慢搜索。 */
+        const val MAX_RESULTS = 200
         const val MAX_FILE_BYTES = 500L * 1024
-        /** 单行匹配内容截断上限。 */
         const val MAX_LINE_PREVIEW = 200
-        /** 搜索超时（毫秒），防止超大目录卡死。 */
         const val SEARCH_TIMEOUT_MS = 30_000L
-        /** 二进制文件的常见扩展名——跳过不搜。 */
         val BINARY_INDICATORS = setOf(
             ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
             ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv", ".flac",
@@ -52,259 +48,352 @@ class SearchCodeTool @Inject constructor(
     }
 
     override val name = "search"
-    override val description = "在项目代码中搜索匹配指定字符串或正则模式的行。返回文件路径、行号和匹配内容。纯只读工具，不会修改任何文件。适用于代码探索、查找引用、追踪调用关系等场景。"
+    override val description = "按 rg 风格搜索文本。例：args=\"-n \\\"fun main\\\" /workspace/app\"。"
     override val permissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
+    override val capabilities = setOf(ToolCapability.READ_WORKSPACE)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
-        "query" to ToolParameter(
-            name = "query",
-            type = ParameterType.ARRAY,
-            description = "搜索查询数组，每个元素是一个搜索内容（纯文本按子串匹配，或正则表达式）。所有查询共享同一次文件遍历，各自独立匹配返回。单个查询也用数组，如 [\"fun main\"]；多个查询如 [\"class Foo\", \"class Bar\"]。",
-            required = true,
-            itemsSchema = mapOf("type" to "string", "description" to "搜索内容：纯文本或正则表达式")
-        ),
-        "path" to ToolParameter(
-            name = "path",
+        "args" to ToolParameter(
+            name = "args",
             type = ParameterType.STRING,
-            description = "搜索起始路径，默认为 /workspace（项目根目录）。可缩小到子目录加速搜索。",
-            required = false
-        ),
-        "file_pattern" to ToolParameter(
-            name = "file_pattern",
-            type = ParameterType.STRING,
-            description = "文件名 glob 过滤，如 '*.kt' 只搜索 Kotlin 文件，'*.{ts,tsx}' 搜索 TypeScript 文件。不填则搜索所有文本文件。",
-            required = false
-        ),
-        "exclude" to ToolParameter(
-            name = "exclude",
-            type = ParameterType.STRING,
-            description = "要排除的目录名，逗号分隔，如 '.git,node_modules,build'。不填则不排除任何目录。",
-            required = false
-        ),
-        "case_sensitive" to ToolParameter(
-            name = "case_sensitive",
-            type = ParameterType.BOOLEAN,
-            description = "是否区分大小写，默认 false。",
-            required = false
-        ),
-        "max_results" to ToolParameter(
-            name = "max_results",
-            type = ParameterType.INTEGER,
-            description = "每个查询的最大返回匹配数，默认 $DEFAULT_MAX_RESULTS，上限 $MAX_MAX_RESULTS。",
-            required = false
+            description = "rg 风格参数。不填无效。常用：-i -F -e -g --hidden --。",
+            required = true
         )
     )
 
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
         return try {
-            // query 为数组参数
-            val queryArr = args["query"]?.jsonArray
-                ?: return ToolResult.Error("缺少必需参数: query", "MISSING_QUERY")
+            val rawArgs = args["args"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            if (rawArgs.isEmpty()) return ToolResult.Error("缺少搜索参数 args", "MISSING_ARGS")
 
-            val queries = queryArr.mapNotNull { it.jsonPrimitive.contentOrNull?.trim() }.filter { it.isNotEmpty() }.distinct()
-            if (queries.isEmpty()) {
-                return ToolResult.Error("查询内容为空", "EMPTY_QUERY")
-            }
-            val maxQueries = 10
-            if (queries.size > maxQueries) {
-                return ToolResult.Error("最多支持 $maxQueries 个查询，当前 ${queries.size} 个。请减少查询数量。", "TOO_MANY_QUERIES")
-            }
+            val tokens = parseShellWords(rawArgs)
+                ?: return ToolResult.Error("args 中存在未闭合的引号", "INVALID_ARGS")
+            if (tokens.isEmpty()) return ToolResult.Error("缺少搜索参数 args", "MISSING_ARGS")
 
-            val path = args["path"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { WorkspacePathMapper.CONTAINER_ROOT }
-                ?: WorkspacePathMapper.CONTAINER_ROOT
-            val filePattern = args["file_pattern"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
-            val caseSensitive = args["case_sensitive"]?.jsonPrimitive?.booleanOrNull ?: false
-            val maxResults = args["max_results"]?.jsonPrimitive?.intOrNull?.coerceIn(1, MAX_MAX_RESULTS) ?: DEFAULT_MAX_RESULTS
-            val excludeStr = args["exclude"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
-            val excludeDirs = excludeStr?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+            trySearchWithRg(tokens)?.let { return it }
 
-            val searchDir = pathMapper.toHostFile(path)
+            val options = parseRgOptions(tokens)
+                ?: return ToolResult.Error("兜底搜索仅支持常用 rg 参数：-i -s -F -e -g --glob --hidden --", "UNSUPPORTED_OPTION")
+            if (options.patterns.isEmpty()) return ToolResult.Error("缺少搜索模式", "MISSING_PATTERN")
 
-            FileLogger.d(TAG, "search queries=${queries.size} path=$path pattern=$filePattern case=$caseSensitive max=$maxResults")
-
-            if (!searchDir.exists()) {
-                return ToolResult.Error("搜索路径不存在: $path", "DIR_NOT_FOUND")
-            }
-            if (!searchDir.isDirectory) {
-                return ToolResult.Error("搜索路径不是目录: $path", "NOT_DIRECTORY")
-            }
-
-            // 为每个查询编译正则
-            val regexOptions = if (caseSensitive) setOf() else setOf(RegexOption.IGNORE_CASE)
-            val regexes = queries.map { q ->
-                try {
-                    Regex(q, regexOptions)
-                } catch (_: Exception) {
-                    Regex(Regex.escape(q), regexOptions)
-                }
-            }
-
-            val fileGlobRegex = filePattern?.let { globToRegex(it) }
-            // 每个查询独立的成绩列表和计数
-            val allResults = Array(queries.size) { mutableListOf<SearchMatch>() }
-            val skippedDirs = mutableListOf<String>()
+            val startedAt = System.currentTimeMillis()
+            val results = mutableListOf<SearchMatch>()
             var filesScanned = 0
             var filesSkipped = 0
-            val startTime = System.currentTimeMillis()
+            var truncated = false
 
-            // 只有所有查询都达到上限才停止
-            val activeIndices = queries.indices.toMutableSet()
+            val regexes = options.patterns.map { pattern ->
+                buildRegex(pattern, options)
+                    ?: return ToolResult.Error("无效正则: $pattern", "INVALID_REGEX")
+            }
 
-            walkAndSearchMulti(searchDir, regexes, fileGlobRegex, maxResults, excludeDirs,
-                allResults, activeIndices, skippedDirs, startTime,
-                fileScannedCounter = { filesScanned++ },
-                fileSkippedCounter = { filesSkipped++ }
-            )
-
-            val elapsed = System.currentTimeMillis() - startTime
-
-            FileLogger.v(TAG, "search 完成: ${allResults.sumOf { it.size }} total matches, $filesScanned files scanned, ${elapsed}ms")
-
-            // 格式化输出：每个查询一组，类似 grep 输出
-            val output = buildString {
-                for (i in queries.indices) {
-                    val results = allResults[i]
-                    if (queries.size > 1) {
-                        append("--- 查询: ${queries[i]} (${results.size} 条匹配) ---\n")
-                    }
-                    for (match in results) {
-                        val containerPath = pathMapper.toContainerPath(match.filePath)
-                        val preview = if (match.lineContent.length > MAX_LINE_PREVIEW) {
-                            match.lineContent.take(MAX_LINE_PREVIEW) + "…"
-                        } else {
-                            match.lineContent
-                        }
-                        append("$containerPath:${match.lineNumber}:$preview\n")
-                    }
-                    val wasTruncated = results.size >= maxResults
-                    if (wasTruncated) {
-                        append("\n已达 $maxResults 条匹配上限，可能有更多结果。可缩小搜索路径或添加 file_pattern 过滤。\n")
-                    }
-                }
-                if (skippedDirs.isNotEmpty()) {
-                    append("\n跳过的目录: ${skippedDirs.joinToString(", ")}")
+            for (path in options.paths) {
+                val root = pathMapper.toHostFile(path)
+                if (!root.exists()) return ToolResult.Error("路径不存在: $path", "PATH_NOT_FOUND")
+                searchPath(
+                    file = root,
+                    options = options,
+                    regexes = regexes,
+                    results = results,
+                    startedAt = startedAt,
+                    fileScannedCounter = { filesScanned++ },
+                    fileSkippedCounter = { filesSkipped++ }
+                )
+                if (results.size >= MAX_RESULTS || System.currentTimeMillis() - startedAt > SEARCH_TIMEOUT_MS) {
+                    truncated = true
+                    break
                 }
             }
 
+            val output = formatResults(results, truncated)
             ToolResult.Success(JsonObject(mapOf(
                 "content" to JsonPrimitive(output),
-                "matches" to JsonPrimitive(allResults.sumOf { it.size }),
+                "matches" to JsonPrimitive(results.size),
                 "files_scanned" to JsonPrimitive(filesScanned),
                 "files_skipped" to JsonPrimitive(filesSkipped),
-                "truncated" to JsonPrimitive(allResults.any { it.size >= maxResults }),
-                "elapsed_ms" to JsonPrimitive(elapsed)
+                "truncated" to JsonPrimitive(truncated || results.size >= MAX_RESULTS),
+                "elapsed_ms" to JsonPrimitive(System.currentTimeMillis() - startedAt),
+                "backend" to JsonPrimitive("kotlin")
             )))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "search 异常", e)
             ToolResult.Error(e.message ?: "搜索失败", "SEARCH_ERROR")
         }
     }
 
-    /**
-     * 递归遍历目录并多查询同时搜索。
-     * 所有查询共享同一次文件遍历，每个查询独立计数，达上限后该查询停止但其他查询继续。
-     */
-    private fun walkAndSearchMulti(
-        dir: File,
-        regexes: List<Regex>,
-        fileGlobRegex: Regex?,
-        maxResults: Int,
-        excludeDirs: Set<String>,
-        allResults: Array<MutableList<SearchMatch>>,
-        activeIndices: MutableSet<Int>,
-        skippedDirs: MutableList<String>,
-        startTime: Long,
-        fileScannedCounter: () -> Unit,
-        fileSkippedCounter: () -> Unit
-    ) {
-        if (activeIndices.isEmpty()) return
-        val children = dir.listFiles() ?: return
+    private suspend fun trySearchWithRg(tokens: List<String>): ToolResult? {
+        val command = buildRgCommand(tokens)
+        val startedAt = System.currentTimeMillis()
+        val result = containerEngine.runCommandSyncIfReady(
+            command = command,
+            projectPath = workspaceRepository.currentPath(),
+            timeoutMs = SEARCH_TIMEOUT_MS
+        ) ?: return null
 
-        for (child in children) {
-            if (activeIndices.isEmpty()) return
-            if (System.currentTimeMillis() - startTime > SEARCH_TIMEOUT_MS) return
-
-            if (child.isDirectory) {
-                if (child.name in excludeDirs) {
-                    if (child.name !in skippedDirs) skippedDirs.add(child.name)
-                    continue
-                }
-                walkAndSearchMulti(child, regexes, fileGlobRegex, maxResults, excludeDirs,
-                    allResults, activeIndices, skippedDirs, startTime,
-                    fileScannedCounter, fileSkippedCounter)
-            } else if (child.isFile) {
-                // glob 过滤
-                if (fileGlobRegex != null && !fileGlobRegex.matches(child.name)) {
-                    fileSkippedCounter()
-                    continue
-                }
-                // 二进制检测
-                if (isBinaryFile(child)) {
-                    fileSkippedCounter()
-                    continue
-                }
-                // 大文件跳过
-                if (child.length() > MAX_FILE_BYTES) {
-                    fileSkippedCounter()
-                    continue
-                }
-
-                fileScannedCounter()
-                searchInFileMulti(child, regexes, maxResults, allResults, activeIndices)
-            }
+        if (isRgMissing(result.output)) return null
+        if (result.exitCode != null && result.exitCode > 1) {
+            return ToolResult.Error(result.output.ifBlank { "rg 执行失败" }, "RG_ERROR")
         }
+
+        val lines = result.output.lineSequence().filter { it.isNotBlank() }.toList()
+        return ToolResult.Success(JsonObject(mapOf(
+            "content" to JsonPrimitive(result.output),
+            "matches" to JsonPrimitive(lines.size),
+            "files_scanned" to JsonPrimitive(0),
+            "files_skipped" to JsonPrimitive(0),
+            "truncated" to JsonPrimitive(false),
+            "elapsed_ms" to JsonPrimitive(System.currentTimeMillis() - startedAt),
+            "backend" to JsonPrimitive("rg")
+        )))
     }
 
-    /** 在单个文件中逐行搜索多个查询，匹配行添加到对应查询的结果列表。 */
-    private fun searchInFileMulti(
-        file: File,
-        regexes: List<Regex>,
-        maxResults: Int,
-        allResults: Array<MutableList<SearchMatch>>,
-        activeIndices: MutableSet<Int>
-    ) {
-        try {
-            val lines = file.readLines()
-            for ((index, line) in lines.withIndex()) {
-                for (qi in activeIndices.toList()) {
-                    if (regexes[qi].containsMatchIn(line)) {
-                        allResults[qi].add(SearchMatch(
-                            filePath = file.absolutePath,
-                            lineNumber = index + 1,
-                            lineContent = line.trimEnd()
-                        ))
-                        if (allResults[qi].size >= maxResults) {
-                            activeIndices.remove(qi)
+    private fun buildRgCommand(tokens: List<String>): String {
+        val args = mutableListOf(
+            "rg",
+            "--line-number",
+            "--no-heading",
+            "--with-filename",
+            "--color",
+            "never"
+        )
+        args.addAll(tokens.map(::shellQuote))
+        return args.joinToString(" ")
+    }
+
+    private fun isRgMissing(output: String): Boolean {
+        return output.contains("command not found", ignoreCase = true) ||
+            output.contains("rg: not found", ignoreCase = true)
+    }
+
+    private fun parseRgOptions(tokens: List<String>): RgOptions? {
+        val options = RgOptions()
+        val positional = mutableListOf<String>()
+        var parseOptions = true
+        var i = 0
+
+        fun nextValue(): String? {
+            i++
+            return tokens.getOrNull(i)
+        }
+
+        while (i < tokens.size) {
+            val token = tokens[i]
+            when {
+                parseOptions && token == "--" -> parseOptions = false
+                parseOptions && token == "-e" || parseOptions && token == "--regexp" -> {
+                    options.patterns.add(nextValue() ?: return null)
+                }
+                parseOptions && token.startsWith("-e") && token.length > 2 -> {
+                    options.patterns.add(token.drop(2))
+                }
+                parseOptions && (token == "-g" || token == "--glob") -> {
+                    options.globs.add(nextValue() ?: return null)
+                }
+                parseOptions && token.startsWith("--glob=") -> {
+                    options.globs.add(token.substringAfter("="))
+                }
+                parseOptions && token.startsWith("--") -> {
+                    when (token) {
+                        "--ignore-case" -> options.ignoreCase = true
+                        "--case-sensitive" -> options.ignoreCase = false
+                        "--fixed-strings" -> options.fixedStrings = true
+                        "--hidden" -> options.hidden = true
+                        "--line-number", "--no-heading", "--with-filename", "--no-ignore" -> Unit
+                        "--color", "--max-count", "--max-filesize" -> nextValue() ?: return null
+                        else -> return null
+                    }
+                }
+                parseOptions && token.startsWith("-") && token.length > 1 -> {
+                    for (flag in token.drop(1)) {
+                        when (flag) {
+                            'i' -> options.ignoreCase = true
+                            's' -> options.ignoreCase = false
+                            'F' -> options.fixedStrings = true
+                            'n', 'H' -> Unit
+                            else -> return null
                         }
                     }
                 }
-                if (activeIndices.isEmpty()) return
+                else -> positional.add(token)
             }
-        } catch (e: Exception) {
-            FileLogger.w(TAG, "搜索文件失败: ${file.absolutePath}", e)
+            i++
+        }
+
+        if (options.patterns.isEmpty() && positional.isNotEmpty()) {
+            options.patterns.add(positional.removeAt(0))
+        }
+        options.paths.addAll(positional.ifEmpty { listOf(WorkspacePathMapper.CONTAINER_ROOT) })
+        return options
+    }
+
+    private fun buildRegex(pattern: String, options: RgOptions): Regex? {
+        val regexOptions = if (options.ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet()
+        val source = if (options.fixedStrings) Regex.escape(pattern) else pattern
+        return try {
+            Regex(source, regexOptions)
+        } catch (_: Exception) {
+            null
         }
     }
 
-    /** 根据扩展名判断是否为二进制文件。 */
+    private fun searchPath(
+        file: File,
+        options: RgOptions,
+        regexes: List<Regex>,
+        results: MutableList<SearchMatch>,
+        startedAt: Long,
+        fileScannedCounter: () -> Unit,
+        fileSkippedCounter: () -> Unit
+    ) {
+        if (results.size >= MAX_RESULTS) return
+        if (System.currentTimeMillis() - startedAt > SEARCH_TIMEOUT_MS) return
+
+        if (file.isDirectory) {
+            if (!options.hidden && file.name.startsWith(".") && pathMapper.toContainerPath(file.absolutePath) != WorkspacePathMapper.CONTAINER_ROOT) return
+            file.listFiles().orEmpty().forEach {
+                searchPath(it, options, regexes, results, startedAt, fileScannedCounter, fileSkippedCounter)
+                if (results.size >= MAX_RESULTS) return
+            }
+            return
+        }
+
+        if (!file.isFile || isBinaryFile(file) || file.length() > MAX_FILE_BYTES || !matchesGlobs(file, options)) {
+            fileSkippedCounter()
+            return
+        }
+
+        fileScannedCounter()
+        runCatching {
+            file.useLines { lines ->
+                lines.forEachIndexed { index, line ->
+                    if (regexes.any { it.containsMatchIn(line) }) {
+                        results.add(SearchMatch(pathMapper.toContainerPath(file.absolutePath), index + 1, line.trimEnd()))
+                        if (results.size >= MAX_RESULTS) return
+                    }
+                }
+            }
+        }.onFailure {
+            FileLogger.w(TAG, "搜索文件失败: ${file.absolutePath}", it)
+        }
+    }
+
+    private fun matchesGlobs(file: File, options: RgOptions): Boolean {
+        if (options.globs.isEmpty()) return true
+        val containerPath = pathMapper.toContainerPath(file.absolutePath).removePrefix("${WorkspacePathMapper.CONTAINER_ROOT}/")
+        var included = options.globs.none { !it.startsWith("!") }
+        for (glob in options.globs) {
+            val negated = glob.startsWith("!")
+            val pattern = glob.removePrefix("!")
+            val matched = globToRegex(pattern).matches(containerPath) || globToRegex(pattern).matches(file.name)
+            if (matched) included = !negated
+        }
+        return included
+    }
+
+    private fun formatResults(results: List<SearchMatch>, truncated: Boolean): String {
+        return buildString {
+            for (match in results) {
+                val preview = if (match.lineContent.length > MAX_LINE_PREVIEW) {
+                    match.lineContent.take(MAX_LINE_PREVIEW) + "…"
+                } else {
+                    match.lineContent
+                }
+                append("${match.filePath}:${match.lineNumber}:$preview\n")
+            }
+            if (truncated || results.size >= MAX_RESULTS) {
+                append("\n已达 $MAX_RESULTS 条上限，可能有更多结果。\n")
+            }
+        }
+    }
+
+    private fun parseShellWords(input: String): List<String>? {
+        val result = mutableListOf<String>()
+        val current = StringBuilder()
+        var quote: Char? = null
+        var tokenStarted = false
+        var i = 0
+        while (i < input.length) {
+            val c = input[i]
+            when {
+                quote == '\'' -> {
+                    if (c == '\'') quote = null else current.append(c)
+                    tokenStarted = true
+                }
+                quote == '"' -> {
+                    when (c) {
+                        '"' -> quote = null
+                        '\\' -> {
+                            if (i + 1 < input.length) {
+                                i++
+                                current.append(input[i])
+                            } else {
+                                current.append(c)
+                            }
+                        }
+                        else -> current.append(c)
+                    }
+                    tokenStarted = true
+                }
+                c.isWhitespace() -> {
+                    if (tokenStarted) {
+                        result.add(current.toString())
+                        current.clear()
+                        tokenStarted = false
+                    }
+                }
+                c == '\'' || c == '"' -> {
+                    quote = c
+                    tokenStarted = true
+                }
+                c == '\\' -> {
+                    if (i + 1 < input.length) {
+                        i++
+                        current.append(input[i])
+                    } else {
+                        current.append(c)
+                    }
+                    tokenStarted = true
+                }
+                else -> {
+                    current.append(c)
+                    tokenStarted = true
+                }
+            }
+            i++
+        }
+        if (quote != null) return null
+        if (tokenStarted) result.add(current.toString())
+        return result
+    }
+
     private fun isBinaryFile(file: File): Boolean {
         val name = file.name.lowercase()
         return BINARY_INDICATORS.any { name.endsWith(it) }
     }
 
-    /** 将简单 glob 模式转为正则：支持 * 和 ? 通配符，以及 {a,b} 语法。 */
     private fun globToRegex(glob: String): Regex {
-        // 处理 {a,b,c} 语法 → (a|b|c)
-        val withBrace = glob.replace(Regex("\\{([^}]+)\\}")) { match ->
-            val options = match.groupValues[1].split(",").joinToString("|") { Regex.escape(it) }
-            "($options)"
-        }
-        val escaped = withBrace.replace(".", "\\.")
+        val escaped = glob
+            .replace(".", "\\.")
             .replace("*", ".*")
             .replace("?", ".")
         return Regex("^$escaped$")
     }
 
-    /** 单条搜索结果。 */
+    private fun shellQuote(value: String): String {
+        return "'" + value.replace("'", "'\"'\"'") + "'"
+    }
+
+    private data class RgOptions(
+        val patterns: MutableList<String> = mutableListOf(),
+        val paths: MutableList<String> = mutableListOf(),
+        val globs: MutableList<String> = mutableListOf(),
+        var ignoreCase: Boolean = false,
+        var fixedStrings: Boolean = false,
+        var hidden: Boolean = false
+    )
+
     private data class SearchMatch(
         val filePath: String,
         val lineNumber: Int,

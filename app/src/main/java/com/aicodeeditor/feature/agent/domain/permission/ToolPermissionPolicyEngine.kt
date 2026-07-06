@@ -1,5 +1,7 @@
 package com.aicodeeditor.feature.agent.domain.permission
 
+import com.aicodeeditor.feature.agent.domain.tool.AgentTool
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import javax.inject.Inject
@@ -32,6 +34,11 @@ class ToolPermissionPolicyEngine @Inject constructor(
          */
         const val TERMINAL_TOOL = "terminal"
         const val TERMINAL_SHELL_ACTION = "start"
+        val NON_REMEMBERABLE_CAPABILITIES = setOf(
+            ToolCapability.MODIFY_AGENT_CONFIG,
+            ToolCapability.MODIFY_CONTAINER_ENV,
+            ToolCapability.EXTERNAL_TOOL
+        )
     }
 
     enum class Verdict { ALLOW, DENY, ASK }
@@ -48,16 +55,31 @@ class ToolPermissionPolicyEngine @Inject constructor(
         val rememberDisabledReason: String? = null
     )
 
-    suspend fun evaluate(toolName: String, args: Map<String, JsonElement>, mode: com.aicodeeditor.feature.agent.domain.model.AgentMode): EvalResult {
-        if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName, args)) {
+    suspend fun evaluate(tool: AgentTool?, toolName: String, args: Map<String, JsonElement>, mode: com.aicodeeditor.feature.agent.domain.model.AgentMode): EvalResult {
+        val capabilities = tool?.effectiveCapabilities(args).orEmpty()
+        if (mode == com.aicodeeditor.feature.agent.domain.model.AgentMode.PLAN && isDangerousTool(toolName, args, capabilities)) {
             return EvalResult(Verdict.DENY, emptyList(), denyReason = "当前处于 PLAN（计划）模式，系统物理沙盒已禁止修改系统状态或执行写操作。请在计划模式下仅调用只读工具探索代码，不要尝试修改文件或执行命令。")
         }
 
+        if (capabilities == setOf(ToolCapability.READ_AGENT_CONFIG)) {
+            return EvalResult(Verdict.ALLOW, emptyList())
+        }
+
         val rules = rulesRepo.loadEffectiveForCurrentProject().filter { it.toolName == toolName }
-        return if (isShellTool(toolName, args)) evaluateShell(rules, args) else evaluateGeneric(rules)
+        return if (isShellTool(toolName, args)) evaluateShell(rules, args) else evaluateGeneric(rules, capabilities)
     }
 
-    private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>): Boolean {
+    private fun isDangerousTool(toolName: String, args: Map<String, JsonElement>, capabilities: Set<ToolCapability>): Boolean {
+        val dangerousCapabilities = setOf(
+            ToolCapability.WRITE_WORKSPACE,
+            ToolCapability.EXECUTE_COMMANDS,
+            ToolCapability.NETWORK_WRITE,
+            ToolCapability.MODIFY_AGENT_CONFIG,
+            ToolCapability.MODIFY_CONTAINER_ENV,
+            ToolCapability.EXTERNAL_TOOL
+        )
+        if (capabilities.any { it in dangerousCapabilities }) return true
+
         // 只读探索工具在 PLAN 模式下永远安全
         val safePlanModeTools = setOf("list", "search")
         if (toolName in safePlanModeTools) return false
@@ -92,10 +114,17 @@ class ToolPermissionPolicyEngine @Inject constructor(
         }
     }
 
-    private fun evaluateGeneric(rules: List<PermissionRule>): EvalResult {
+    private fun evaluateGeneric(rules: List<PermissionRule>, capabilities: Set<ToolCapability>): EvalResult {
         val whole = rules.filter { it.pattern == PermissionRule.WHOLE_TOOL }
         if (whole.any { it.decision == PermissionDecision.DENY }) return EvalResult(Verdict.DENY, emptyList(), denyReason = "该工具被项目权限规则策略禁止执行")
         if (whole.any { it.decision == PermissionDecision.ALLOW }) return EvalResult(Verdict.ALLOW, emptyList())
+        if (capabilities.any { it in NON_REMEMBERABLE_CAPABILITIES }) {
+            return EvalResult(
+                Verdict.ASK,
+                rememberablePatterns = emptyList(),
+                rememberDisabledReason = "该工具会修改 Agent 配置、容器环境或调用外部动态工具，为降低误授权风险，仅支持单次放行"
+            )
+        }
         return EvalResult(Verdict.ASK, listOf(PermissionRule.WHOLE_TOOL))
     }
 

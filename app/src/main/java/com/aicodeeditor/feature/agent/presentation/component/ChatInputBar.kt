@@ -1,13 +1,17 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -41,6 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,8 +66,12 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.AlertCircle
 import compose.icons.feathericons.ArrowUp
 import compose.icons.feathericons.Check
+import compose.icons.feathericons.FileText
+import compose.icons.feathericons.Image
 import compose.icons.feathericons.Settings
 import compose.icons.feathericons.Square
+import compose.icons.feathericons.X
+import java.util.Base64
 
 @Composable
 internal fun ChatInputBar(
@@ -77,9 +87,15 @@ internal fun ChatInputBar(
     onSelectModel: (String, String) -> Unit,
     onNavigateToSettings: () -> Unit,
     currentMode: AgentMode,
-    onToggleMode: (AgentMode) -> Unit
+    onToggleMode: (AgentMode) -> Unit,
+    pendingAttachments: List<PendingUploadAttachment>,
+    onRemoveAttachment: (Int) -> Unit,
+    canUploadFiles: Boolean,
+    canUploadImages: Boolean,
+    onUploadFile: () -> Unit,
+    onUploadImage: () -> Unit
 ) {
-    val canSend = value.isNotBlank() && !isBusy
+    val canSend = (value.isNotBlank() || pendingAttachments.isNotEmpty()) && !isBusy
     Surface(
         color = Color.Transparent,
         modifier = Modifier.fillMaxWidth()
@@ -98,6 +114,11 @@ internal fun ChatInputBar(
                 )
                 .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
         ) {
+            PendingAttachmentPreviewList(
+                attachments = pendingAttachments,
+                onRemoveAttachment = onRemoveAttachment
+            )
+
             TextField(
                 value = value,
                 onValueChange = onValueChange,
@@ -165,10 +186,199 @@ internal fun ChatInputBar(
                             hasRunningSessions = hasRunningSessions
                         )
                     }
+
+                    UploadIconButton(
+                        enabled = canUploadFiles && !isBusy,
+                        icon = FeatherIcons.FileText,
+                        contentDescription = "上传文件",
+                        onClick = onUploadFile
+                    )
+
+                    UploadIconButton(
+                        enabled = canUploadImages && !isBusy,
+                        icon = FeatherIcons.Image,
+                        contentDescription = "上传图片",
+                        onClick = onUploadImage
+                    )
                 }
                 SendButton(canSend = canSend, isBusy = isBusy, onSend = onSend, onStop = onStop)
             }
         }
+    }
+}
+
+@Composable
+private fun PendingAttachmentPreviewList(
+    attachments: List<PendingUploadAttachment>,
+    onRemoveAttachment: (Int) -> Unit
+) {
+    if (attachments.isEmpty()) return
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        attachments.forEachIndexed { index, attachment ->
+            PendingAttachmentPreviewItem(
+                attachment = attachment,
+                onRemove = { onRemoveAttachment(index) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun PendingAttachmentPreviewItem(
+    attachment: PendingUploadAttachment,
+    onRemove: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(Radius.md),
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+        modifier = Modifier.size(76.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (attachment.image != null) {
+                ImageThumbnail(
+                    attachment = attachment,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                FileAttachmentPreview(attachment = attachment)
+            }
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+            ) {
+                IconButton(
+                    onClick = onRemove,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        FeatherIcons.X,
+                        contentDescription = "移除附件",
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageThumbnail(
+    attachment: PendingUploadAttachment,
+    modifier: Modifier = Modifier.size(44.dp)
+) {
+    val base64Data = attachment.image?.base64Data.orEmpty()
+    val bitmap = remember(base64Data) {
+        runCatching {
+            val bytes = Base64.getDecoder().decode(base64Data)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val sampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 180, 180)
+            val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)?.asImageBitmap()
+        }.getOrNull()
+    }
+    Surface(
+        shape = RoundedCornerShape(Radius.sm),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier
+    ) {
+        if (bitmap != null) {
+            ComposeImage(
+                bitmap = bitmap,
+                contentDescription = attachment.fileName.ifBlank { "图片预览" },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    FeatherIcons.Image,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileAttachmentPreview(attachment: PendingUploadAttachment) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Spacing.xs),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            FeatherIcons.FileText,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = attachment.fileName,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = formatBytes(attachment.sizeBytes),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun calculateInSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
+    var sampleSize = 1
+    if (height > reqHeight || width > reqWidth) {
+        var halfHeight = height / 2
+        var halfWidth = width / 2
+        while (halfHeight / sampleSize >= reqHeight && halfWidth / sampleSize >= reqWidth) {
+            sampleSize *= 2
+        }
+    }
+    return sampleSize.coerceAtLeast(1)
+}
+
+@Composable
+internal fun UploadIconButton(
+    enabled: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(44.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
 

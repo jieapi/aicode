@@ -5,6 +5,7 @@ import com.aicodeeditor.feature.agent.domain.skill.SkillRepository
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -27,6 +28,7 @@ class LoadSkillTool @Inject constructor(
     }
 
     override val name = "loadSkill"
+    override val capabilities = setOf(ToolCapability.READ_AGENT_CONFIG)
     override val description =
         "加载指定技能（Skill）的完整指令内容。当系统提示清单中的技能适用于当前任务时，调用此工具获取其详细操作说明。"
 
