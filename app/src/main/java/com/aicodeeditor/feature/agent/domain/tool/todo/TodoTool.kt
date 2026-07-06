@@ -12,11 +12,11 @@ import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
@@ -25,14 +25,8 @@ import javax.inject.Inject
 /**
  * 管理 AI Agent 当前会话的任务清单（待办列表）。
  *
- * Action 分发：
- * - create: 批量创建待办项，传入 todos 数组
- * - update: 更新单个待办项（status/subject/description），必填 todo_id
- * - delete: 删除指定待办项，必填 todo_id
- * - list: 列出当前会话所有待办项
- *
- * 典型用法：接到复杂任务时先 create 拆分为步骤；开始处理某项时 update 其 status 为
- * in_progress；完成时标记 completed。帮助你和用户同步追踪进度。
+ * 工具采用快照式接口：每次传入当前完整 items 列表，工具用它替换会话里的待办清单。
+ * AI 不需要查询或记忆 todo_id，也不需要区分创建、更新、删除动作。
  */
 class TodoTool @Inject constructor(
     private val todoItemDao: TodoItemDao
@@ -43,15 +37,14 @@ class TodoTool @Inject constructor(
     }
 
     override val name = "todo"
-    override val description = "管理当前会话的任务清单。用 action 参数选操作：" +
-        "create（批量创建）、update（更新状态/标题）、delete（删除）、list（列出全部）。" +
-        "接到复杂任务时，先 create 拆分为步骤；开始处理某项时 update 其 status 为 in_progress；" +
-        "完成时标记 completed。帮助你和用户同步追踪进度。"
+    override val description = "用当前完整 items 列表替换会话任务清单。只需提交完整列表，" +
+        "无需 action、todo_id 或单项更新。items 可为空数组表示清空；每项为 " +
+        "{subject, description, status, priority}。status 可为 pending、in_progress、completed。"
 
     override val permissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
     override val capabilities = setOf(ToolCapability.MODIFY_TODO_STATE)
 
-    /** todos 数组中单个待办项的 JSON Schema */
+    /** items 数组中单个待办项的 JSON Schema */
     private val todoItemSchema: Map<String, Any> = mapOf(
         "type" to "object",
         "properties" to mapOf(
@@ -77,44 +70,12 @@ class TodoTool @Inject constructor(
     )
 
     override val parameters: Map<String, ToolParameter> = mapOf(
-        "action" to ToolParameter(
-            name = "action",
-            type = ParameterType.STRING,
-            description = "操作类型",
-            required = true,
-            enum = listOf("create", "update", "delete", "list")
-        ),
-        "todos" to ToolParameter(
-            name = "todos",
+        "items" to ToolParameter(
+            name = "items",
             type = ParameterType.ARRAY,
-            description = "待办项列表（create 时必填，每项含 subject 等字段）",
-            required = false,
+            description = "当前完整待办列表。传空数组会清空任务清单；每项为含 subject 的对象。",
+            required = true,
             itemsSchema = todoItemSchema
-        ),
-        "todo_id" to ToolParameter(
-            name = "todo_id",
-            type = ParameterType.STRING,
-            description = "待办项 ID（update/delete 时必填）",
-            required = false
-        ),
-        "status" to ToolParameter(
-            name = "status",
-            type = ParameterType.STRING,
-            description = "更新时的目标状态（update 时可选，pending/in_progress/completed）",
-            required = false,
-            enum = listOf("pending", "in_progress", "completed")
-        ),
-        "subject" to ToolParameter(
-            name = "subject",
-            type = ParameterType.STRING,
-            description = "更新时的目标标题（update 时可选）",
-            required = false
-        ),
-        "description" to ToolParameter(
-            name = "description",
-            type = ParameterType.STRING,
-            description = "更新时的目标描述（update 时可选）",
-            required = false
         )
     )
 
@@ -126,116 +87,51 @@ class TodoTool @Inject constructor(
         args: Map<String, JsonElement>,
         context: AgentContext
     ): ToolResult {
-        val action = args["action"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.Error("缺少 action 参数", "MISSING_ACTION")
         val sessionId = context.sessionId
             ?: return ToolResult.Error("未关联会话", "NO_SESSION")
 
         return try {
-            when (action) {
-                "create" -> createTodos(args, sessionId)
-                "update" -> updateTodo(args, sessionId)
-                "delete" -> deleteTodo(args, sessionId)
-                "list" -> listTodos(sessionId)
-                else -> ToolResult.Error("未知的 action: $action", "UNKNOWN_ACTION")
-            }
+            replaceTodos(args, sessionId)
         } catch (e: Exception) {
             FileLogger.e(TAG, "todo 工具执行失败: ${e.message}", e)
             ToolResult.Error("待办操作失败: ${e.message}")
         }
     }
 
-    private suspend fun createTodos(args: Map<String, JsonElement>, sessionId: String): ToolResult {
-        val todosJson = args["todos"]?.jsonArray
-        if (todosJson == null || todosJson.isEmpty()) {
-            return ToolResult.Error("create 需要 todos 数组且不能为空", "MISSING_TODOS")
-        }
-
-        val maxOrder = todoItemDao.getMaxOrder(sessionId) ?: -1
+    private suspend fun replaceTodos(args: Map<String, JsonElement>, sessionId: String): ToolResult {
+        val itemElements = args["items"] as? JsonArray
+            ?: return ToolResult.Error("需要 items 数组", "MISSING_ITEMS")
+        val existingBySubject = todoItemDao.getBySessionOnce(sessionId)
+            .groupBy { normalizeSubject(it.subject) }
+            .mapValues { (_, items) -> items.toMutableList() }
         val now = System.currentTimeMillis()
         val entities = mutableListOf<TodoItemEntity>()
 
-        for ((idx, element) in todosJson.withIndex()) {
-            val obj = element.jsonObject
-            val subject = obj["subject"]?.jsonPrimitive?.contentOrNull?.trim()
-            if (subject.isNullOrEmpty()) {
-                return ToolResult.Error("第 ${idx + 1} 项缺少 subject", "MISSING_SUBJECT")
-            }
-            val description = obj["description"]?.jsonPrimitive?.contentOrNull?.trim() ?: ""
-            val statusStr = obj["status"]?.jsonPrimitive?.contentOrNull?.trim()?.uppercase()
-                ?: "PENDING"
-            val status = try { TodoStatus.valueOf(statusStr) } catch (_: Exception) {
-                return ToolResult.Error("第 ${idx + 1} 项 status 无效: $statusStr", "INVALID_STATUS")
-            }
-            val priority = obj["priority"]?.jsonPrimitive?.intOrNull ?: 0
+        for ((idx, element) in itemElements.withIndex()) {
+            val draft = parseTodoDraft(element, idx) ?: return ToolResult.Error(
+                "第 ${idx + 1} 项需要字符串标题或含 subject 的对象",
+                "INVALID_ITEM"
+            )
+            val previous = existingBySubject[normalizeSubject(draft.subject)]?.removeFirstOrNull()
 
             entities.add(TodoItemEntity(
-                id = UUID.randomUUID().toString(),
+                id = previous?.id ?: UUID.randomUUID().toString(),
                 sessionId = sessionId,
-                subject = subject,
-                description = description,
-                status = status.name,
-                priority = priority,
-                order = maxOrder + idx + 1,
-                createdAt = now,
+                subject = draft.subject,
+                description = draft.description,
+                status = draft.status.name,
+                priority = draft.priority,
+                order = idx,
+                createdAt = previous?.createdAt ?: now,
                 updatedAt = now
             ))
         }
 
-        todoItemDao.upsertAll(entities)
-        FileLogger.d(TAG, "todo create: 创建了 ${entities.size} 项待办")
-
-        return listTodos(sessionId)
-    }
-
-    private suspend fun updateTodo(args: Map<String, JsonElement>, sessionId: String): ToolResult {
-        val todoId = args["todo_id"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?: return ToolResult.Error("update 需要 todo_id", "MISSING_TODO_ID")
-
-        val existing = todoItemDao.getBySessionOnce(sessionId).find { it.id == todoId }
-            ?: return ToolResult.Error("未找到待办项: $todoId", "NOT_FOUND")
-
-        val now = System.currentTimeMillis()
-        var updated = existing
-
-        // 更新 status
-        val statusStr = args["status"]?.jsonPrimitive?.contentOrNull?.trim()?.uppercase()
-        if (statusStr != null) {
-            try {
-                TodoStatus.valueOf(statusStr)
-                updated = updated.copy(status = statusStr, updatedAt = now)
-            } catch (_: Exception) {
-                return ToolResult.Error("无效 status: $statusStr", "INVALID_STATUS")
-            }
+        todoItemDao.deleteBySession(sessionId)
+        if (entities.isNotEmpty()) {
+            todoItemDao.upsertAll(entities)
         }
-
-        // 更新 subject
-        val subject = args["subject"]?.jsonPrimitive?.contentOrNull?.trim()
-        if (!subject.isNullOrEmpty()) {
-            updated = updated.copy(subject = subject, updatedAt = now)
-        }
-
-        // 更新 description
-        if (args.containsKey("description")) {
-            val desc = args["description"]?.jsonPrimitive?.contentOrNull?.trim() ?: ""
-            updated = updated.copy(description = desc, updatedAt = now)
-        }
-
-        todoItemDao.upsert(updated)
-        FileLogger.d(TAG, "todo update: 更新了 $todoId → status=${updated.status}")
-
-        return listTodos(sessionId)
-    }
-
-    private suspend fun deleteTodo(args: Map<String, JsonElement>, sessionId: String): ToolResult {
-        val todoId = args["todo_id"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?: return ToolResult.Error("delete 需要 todo_id", "MISSING_TODO_ID")
-
-        val existing = todoItemDao.getBySessionOnce(sessionId).find { it.id == todoId }
-            ?: return ToolResult.Error("未找到待办项: $todoId", "NOT_FOUND")
-
-        todoItemDao.delete(todoId)
-        FileLogger.d(TAG, "todo delete: 删除了 $todoId")
+        FileLogger.d(TAG, "todo replace: 同步了 ${entities.size} 项待办")
 
         return listTodos(sessionId)
     }
@@ -244,22 +140,6 @@ class TodoTool @Inject constructor(
         val items = todoItemDao.getBySessionOnce(sessionId)
         val total = items.size
         val completed = items.count { it.status == "COMPLETED" }
-
-        val resultJson = buildString {
-            append("{\"total\":$total,\"completed\":$completed,\"items\":[")
-            items.forEachIndexed { idx, entity ->
-                if (idx > 0) append(",")
-                append("{")
-                append("\"id\":\"${entity.id}\",")
-                append("\"subject\":\"${escapeJson(entity.subject)}\",")
-                append("\"description\":\"${escapeJson(entity.description)}\",")
-                append("\"status\":\"${entity.status.lowercase()}\",")
-                append("\"priority\":${entity.priority},")
-                append("\"order\":${entity.order}")
-                append("}")
-            }
-            append("]}")
-        }
 
         return ToolResult.Success(JsonObject(mapOf(
             "total" to JsonPrimitive(total),
@@ -279,7 +159,45 @@ class TodoTool @Inject constructor(
         )))
     }
 
-    private fun escapeJson(s: String): String {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+    private fun parseTodoDraft(element: JsonElement, index: Int): TodoDraft? {
+        if (element is JsonPrimitive) {
+            val subject = element.contentOrNull?.trim().orEmpty()
+            return if (subject.isBlank()) null else TodoDraft(subject = subject)
+        }
+
+        val obj = runCatching { element.jsonObject }.getOrNull() ?: return null
+        val subject = obj["subject"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        if (subject.isBlank()) return null
+
+        val status = parseStatus(obj["status"]?.jsonPrimitive?.contentOrNull)
+            ?: throw IllegalArgumentException("第 ${index + 1} 项 status 无效")
+
+        return TodoDraft(
+            subject = subject,
+            description = obj["description"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty(),
+            status = status,
+            priority = obj["priority"]?.jsonPrimitive?.intOrNull ?: 0
+        )
+    }
+
+    private fun parseStatus(raw: String?): TodoStatus? {
+        val normalized = raw
+            ?.trim()
+            ?.replace("-", "_")
+            ?.replace(" ", "_")
+            ?.uppercase()
+            ?: return TodoStatus.PENDING
+        return runCatching { TodoStatus.valueOf(normalized) }.getOrNull()
+    }
+
+    private fun normalizeSubject(subject: String): String {
+        return subject.trim().lowercase()
     }
 }
+
+private data class TodoDraft(
+    val subject: String,
+    val description: String = "",
+    val status: TodoStatus = TodoStatus.PENDING,
+    val priority: Int = 0
+)
