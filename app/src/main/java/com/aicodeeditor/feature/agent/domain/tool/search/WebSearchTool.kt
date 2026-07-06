@@ -102,7 +102,7 @@ class WebSearchTool @Inject constructor() : AgentTool() {
                 if (rawResultText.isNullOrBlank()) {
                     ToolResult.Success(kotlinx.serialization.json.JsonPrimitive("未能找到关于 '$query' 的搜索结果，请换个关键词重试。"))
                 } else {
-                    ToolResult.Success(kotlinx.serialization.json.JsonPrimitive(rawResultText))
+                    ToolResult.Success(parseSearchResultPayload(rawResultText) ?: JsonPrimitive(rawResultText))
                 }
             } catch (e: Exception) {
                 FileLogger.e(TAG, "WebSearch 发生异常", e)
@@ -139,5 +139,13 @@ class WebSearchTool @Inject constructor() : AgentTool() {
             }
         }
         return null
+    }
+
+    private fun parseSearchResultPayload(raw: String): JsonElement? {
+        return runCatching {
+            val element = Json.parseToJsonElement(raw.trim())
+            val obj = element as? JsonObject ?: return@runCatching null
+            if (obj["results"] is JsonArray) element else null
+        }.getOrNull()
     }
 }
