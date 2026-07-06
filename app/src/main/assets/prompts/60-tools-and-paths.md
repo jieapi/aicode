@@ -50,12 +50,10 @@
 
 待办工具：
 
-- `todo`：管理当前会话的任务清单。用 `action` 参数选操作：
-  - `action="create"`：批量创建待办项。传入 `todos` 数组，每项含 `subject`（必填，简短祈使句标题）、`description`（可选，详细说明）、`status`（可选，默认 pending）、`priority`（可选，默认 0，越大越优先）。创建后返回完整列表。
-  - `action="update"`：更新单个待办项，必填 `todo_id`。可单独更新 `status`（pending → in_progress → completed）、`subject`、`description`。
-  - `action="delete"`：删除指定待办项，必填 `todo_id`。
-  - `action="list"`：列出当前会话所有待办项。
-  - 典型用法：接到复杂任务时先 `create` 拆分为步骤；开始处理某项时 `update` 其 status 为 in_progress；完成时标记 completed。帮助你和用户同步追踪进度。
+- `todo`：用当前完整 `items` 列表替换会话任务清单。不要使用 `action`、`todo_id` 或单项更新；每次状态变化都重新提交完整列表。
+  - 参数只有 `items`：数组，可为空；空数组表示清空任务清单。
+  - 每项为对象：`subject`（必填，简短祈使句标题）、`description`（可选）、`status`（可选，默认 `pending`，可为 `pending` / `in_progress` / `completed`）、`priority`（可选，默认 0，越大越优先）。
+  - 典型用法：接到复杂任务时调用一次 `todo(items=[...])` 建立清单；开始处理某项时，把该项改为 `in_progress` 并带上其他未变项重新提交；完成时把对应项改为 `completed` 并重新提交完整列表。
 
 网络与搜索工具：
 
