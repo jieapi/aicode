@@ -12,6 +12,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aicodeeditor.feature.workspace.domain.model.RemoteConnection
 import com.aicodeeditor.feature.workspace.domain.model.RemoteMount
+import com.aicodeeditor.feature.workspace.domain.model.RemoteProtocol
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
 
@@ -197,14 +198,19 @@ fun RemoteConnectionCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    val isLocal = conn.protocol == RemoteProtocol.LOCAL
                     Icon(
-                        FeatherIcons.Cloud,
+                        if (isLocal) FeatherIcons.HardDrive else FeatherIcons.Cloud,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(text = conn.name, fontWeight = FontWeight.Normal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-                        Text(text = "${conn.protocol}://${conn.username}@${conn.host}:${conn.port}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = if (isLocal) "LOCAL://${conn.host}" else "${conn.protocol}://${conn.username}@${conn.host}:${conn.port}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
                 Row {
@@ -230,6 +236,7 @@ fun RemoteMountCard(
     onConnect: (RemoteMount) -> Unit,
     onDisconnect: (RemoteMount) -> Unit
 ) {
+    val isLocal = mount.connection?.protocol == RemoteProtocol.LOCAL
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -266,7 +273,11 @@ fun RemoteMountCard(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            Text(text = "远程路径: ${mount.remotePath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = if (isLocal) "镜像子目录: ${mount.remotePath}" else "远程路径: ${mount.remotePath}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Text(text = "本地路径: ${mount.localMountPath}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -279,10 +290,12 @@ fun RemoteMountCard(
                         Text("断开连接")
                     }
                     TextButton(onClick = { onUpload(mount) }) {
-                        Text("上传全部")
+                        Text(if (isLocal) "同步全部" else "上传全部")
                     }
-                    TextButton(onClick = { onDownload(mount) }) {
-                        Text("下载全部")
+                    if (!isLocal) {
+                        TextButton(onClick = { onDownload(mount) }) {
+                            Text("下载全部")
+                        }
                     }
                 } else {
                     Button(onClick = { onConnect(mount) }) {

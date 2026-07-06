@@ -34,8 +34,9 @@ fun AddRemoteConnectionDialog(
     var username by remember(initialConnection) { mutableStateOf(initialConnection?.username ?: "") }
     var password by remember(initialConnection) { mutableStateOf(initialConnection?.password ?: "") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var isSftp by remember(initialConnection) { mutableStateOf(initialConnection?.protocol != RemoteProtocol.FTP) }
+    var protocol by remember(initialConnection) { mutableStateOf(initialConnection?.protocol ?: RemoteProtocol.SFTP) }
     var isTesting by remember { mutableStateOf(false) }
+    val isLocal = protocol == RemoteProtocol.LOCAL
 
     AlertDialog(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -51,40 +52,70 @@ fun AddRemoteConnectionDialog(
                     Text("协议类型:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                     Spacer(modifier = Modifier.width(12.dp))
                     FilterChip(
-                        selected = isSftp,
-                        onClick = { isSftp = true; port = "22" },
+                        selected = protocol == RemoteProtocol.SFTP,
+                        onClick = { protocol = RemoteProtocol.SFTP; port = "22" },
                         label = { Text("SFTP") }
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     FilterChip(
-                        selected = !isSftp,
-                        onClick = { isSftp = false; port = "21" },
+                        selected = protocol == RemoteProtocol.FTP,
+                        onClick = { protocol = RemoteProtocol.FTP; port = "21" },
                         label = { Text("FTP") }
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChip(
+                        selected = protocol == RemoteProtocol.LOCAL,
+                        onClick = { protocol = RemoteProtocol.LOCAL; port = "0"; username = "local"; password = "" },
+                        label = { Text("本地") }
+                    )
                 }
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("连接名称 (如: 腾讯云云服务器)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("主机地址 (IP 或域名)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("端口") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("密码") },
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(if (isLocal) "通道名称 (如: 内部存储镜像)" else "连接名称 (如: 腾讯云云服务器)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    trailingIcon = {
-                        val image = if (passwordVisible) FeatherIcons.Eye else FeatherIcons.EyeOff
-                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                            Icon(image, "切换密码可见性", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
+                    modifier = Modifier.fillMaxWidth()
                 )
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { host = it },
+                    label = { Text(if (isLocal) "内部存储目标目录" else "主机地址 (IP 或域名)") },
+                    placeholder = if (isLocal) {
+                        { Text("/storage/emulated/0/AICode/projects") }
+                    } else {
+                        null
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (!isLocal) {
+                    OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("端口") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("用户名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("密码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        trailingIcon = {
+                            val image = if (passwordVisible) FeatherIcons.Eye else FeatherIcons.EyeOff
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(image, "切换密码可见性", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    )
+                } else {
+                    Text(
+                        text = "该目录作为镜像根目录。工作区会单向同步到这里，供只能访问普通目录的 App 使用。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedButton(
                     onClick = {
-                        val protocol = if (isSftp) RemoteProtocol.SFTP else RemoteProtocol.FTP
                         isTesting = true
                         onTestConnection(host, port, username, password, protocol) { success, msg ->
                             isTesting = false
@@ -92,19 +123,18 @@ fun AddRemoteConnectionDialog(
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
-                    enabled = !isTesting && host.isNotBlank() && username.isNotBlank()
+                    enabled = !isTesting && host.isNotBlank() && (isLocal || username.isNotBlank())
                 ) {
                     if (isTesting) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                     } else {
-                        Text("测试连通性")
+                        Text(if (isLocal) "测试目录" else "测试连通性")
                     }
                 }
             }
         },
         confirmButton = {
             Button(onClick = {
-                val protocol = if (isSftp) RemoteProtocol.SFTP else RemoteProtocol.FTP
                 onAdd(name, host, port, username, password, protocol)
             }) {
                 Text(if (initialConnection != null) "保存" else "添加")
@@ -137,6 +167,8 @@ fun AddRemoteMountDialog(
     var connExpanded by remember { mutableStateOf(false) }
     var wsExpanded by remember { mutableStateOf(false) }
     var showBrowser by remember { mutableStateOf(false) }
+    val selectedConnection = connections.find { it.id == selectedConnectionId }
+    val isLocalConnection = selectedConnection?.protocol == RemoteProtocol.LOCAL
 
     AlertDialog(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -170,6 +202,9 @@ fun AddRemoteMountDialog(
                                 text = { Text(conn.name) },
                                 onClick = {
                                     selectedConnectionId = conn.id
+                                    if (conn.protocol == RemoteProtocol.LOCAL && remotePath.isBlank()) {
+                                        remotePath = "/"
+                                    }
                                     connExpanded = false
                                 }
                             )
@@ -181,7 +216,12 @@ fun AddRemoteMountDialog(
                     OutlinedTextField(
                         value = remotePath,
                         onValueChange = { remotePath = it },
-                        label = { Text("远程目标目录 (绝对路径)") },
+                        label = { Text(if (isLocalConnection) "镜像目标子目录" else "远程目标目录 (绝对路径)") },
+                        placeholder = if (isLocalConnection) {
+                            { Text("/") }
+                        } else {
+                            null
+                        },
                         singleLine = true,
                         modifier = Modifier.weight(1f)
                     )
@@ -192,6 +232,14 @@ fun AddRemoteMountDialog(
                     ) {
                         Icon(FeatherIcons.Folder, contentDescription = "浏览目录", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                }
+
+                if (isLocalConnection) {
+                    Text(
+                        text = "本地通道的镜像根目录来自连接配置；这里填写根目录下的子目录，通常保持 / 即可。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 ExposedDropdownMenuBox(

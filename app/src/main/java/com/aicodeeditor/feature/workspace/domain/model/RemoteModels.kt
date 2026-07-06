@@ -2,7 +2,8 @@ package com.aicodeeditor.feature.workspace.domain.model
 
 enum class RemoteProtocol {
     SFTP,
-    FTP
+    FTP,
+    LOCAL
 }
 
 data class RemoteConnection(

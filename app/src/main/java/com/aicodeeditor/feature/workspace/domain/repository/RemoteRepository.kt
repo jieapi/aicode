@@ -9,6 +9,7 @@ import com.aicodeeditor.feature.workspace.domain.model.RemoteProtocol
 import com.aicodeeditor.feature.workspace.domain.remote.RemoteAuth
 import com.aicodeeditor.feature.workspace.domain.remote.SyncEngine
 import com.aicodeeditor.feature.workspace.domain.remote.ftp.FtpSyncClient
+import com.aicodeeditor.feature.workspace.domain.remote.local.LocalSyncClient
 import com.aicodeeditor.feature.workspace.domain.remote.sftp.SftpSyncClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -119,6 +120,7 @@ class RemoteRepository @Inject constructor(
             val client = when (conn.protocol) {
                 RemoteProtocol.SFTP -> SftpSyncClient()
                 RemoteProtocol.FTP -> FtpSyncClient()
+                RemoteProtocol.LOCAL -> LocalSyncClient()
             }
 
             val auth = if (connEntity.authType == "PASSWORD") {
@@ -139,6 +141,9 @@ class RemoteRepository @Inject constructor(
             )
             // 移除默认的全量下载以免覆盖本地修改，交由用户手动点击同步
             engine.startWatching()     // 增量监听
+            if (conn.protocol == RemoteProtocol.LOCAL) {
+                engine.uploadWorkspace()
+            }
 
             activeEngines[mountId] = engine
             activeEngineIds.update { it + mountId }
@@ -185,6 +190,7 @@ class RemoteRepository @Inject constructor(
             val client = when (protocol) {
                 RemoteProtocol.SFTP -> SftpSyncClient()
                 RemoteProtocol.FTP -> FtpSyncClient()
+                RemoteProtocol.LOCAL -> LocalSyncClient()
             }
             client.connect(host, port, username, auth)
             client.disconnect()
@@ -202,6 +208,7 @@ class RemoteRepository @Inject constructor(
             val client = when (conn.protocol) {
                 RemoteProtocol.SFTP -> SftpSyncClient()
                 RemoteProtocol.FTP -> FtpSyncClient()
+                RemoteProtocol.LOCAL -> LocalSyncClient()
             }
             val auth = if (connEntity.authType == "PASSWORD") {
                 RemoteAuth.Password(connEntity.authData)

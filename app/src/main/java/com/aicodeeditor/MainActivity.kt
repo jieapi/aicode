@@ -1,8 +1,12 @@
 package com.aicodeeditor
 
+import android.Manifest
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
 import android.view.WindowManager
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -26,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,10 +68,25 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var themeSettings: ThemeSettingsRepository
 
+    private val storagePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val granted = grants[Manifest.permission.WRITE_EXTERNAL_STORAGE] == true ||
+            grants[Manifest.permission.READ_EXTERNAL_STORAGE] == true
+        if (!granted) {
+            Toast.makeText(
+                this,
+                "未授予存储权限，本地镜像目录可能无法写入。",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // 绘制到系统状态栏/导航栏之下，让应用背景与系统栏融为一体（消除割裂的色块）。
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        requestLegacyStoragePermissionIfNeeded()
         // API 30+：全局切到 ADJUST_NOTHING，由 rememberImeBottomInset() 接管键盘内边距。
         // 必须在 Activity 级别统一设置，不能在每个 composable 里各自 save/restore——
         // NavHost 过渡动画期间新旧页面共存，旧页面 dispose 恢复 softInputMode 会触发窗口重布局导致白屏。
@@ -103,6 +123,20 @@ class MainActivity : ComponentActivity() {
             if (keepaliveSettings.isEnabled()) {
                 TerminalKeepaliveService.enablePersistent(this@MainActivity)
             }
+        }
+    }
+
+    private fun requestLegacyStoragePermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val permissions = arrayOf(
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        )
+        val missing = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            storagePermissionLauncher.launch(missing.toTypedArray())
         }
     }
 }
