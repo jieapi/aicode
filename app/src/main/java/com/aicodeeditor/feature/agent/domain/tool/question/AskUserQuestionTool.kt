@@ -4,6 +4,7 @@ import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -36,6 +37,7 @@ class AskUserQuestionTool @Inject constructor(
     }
 
     override val name = "askUserQuestion"
+    override val capabilities = setOf(ToolCapability.USER_INTERACTION)
 
     override val description =
         "向用户提出结构化的选择题并阻塞等待其选择结果。用于涉及用户决策的场景（如方案选择、环境确认等）。" +

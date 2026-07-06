@@ -1,5 +1,7 @@
 package com.aicodeeditor.feature.agent.presentation.component
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -10,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,10 +20,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
@@ -29,6 +34,7 @@ import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,18 +53,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
+import com.aicodeeditor.feature.agent.presentation.AgentAttachment
 import com.aicodeeditor.feature.agent.presentation.AgentUIMessage
 import com.aicodeeditor.feature.agent.presentation.hasVisibleContent
 import com.aicodeeditor.feature.agent.presentation.MessageRole
@@ -81,6 +91,8 @@ import compose.icons.feathericons.Copy
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.Star
+import compose.icons.feathericons.FileText
+import compose.icons.feathericons.Image
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
@@ -111,8 +123,14 @@ internal fun AgentMessageItem(
     liveOutput: String? = null,
     markdownCache: MarkdownRenderCache? = null
 ) {
+    if (message.isCompactionMarker) {
+        CompactionDivider()
+        return
+    }
+
     val hasReasoning = message.role == MessageRole.ASSISTANT && !message.reasoning.isNullOrEmpty()
     val hasContent = message.content.hasVisibleContent()
+    val hasAttachments = message.attachments.isNotEmpty()
     if (message.role == MessageRole.ASSISTANT && !hasContent && !hasReasoning) return
 
     val isUser = message.role == MessageRole.USER
@@ -123,56 +141,61 @@ internal fun AgentMessageItem(
         if (hasReasoning) {
             ReasoningBubble(text = message.reasoning!!, initiallyExpanded = false)
         }
-        if (hasContent || message.role != MessageRole.ASSISTANT) {
+        if (hasContent || hasAttachments || message.role != MessageRole.ASSISTANT) {
             Column(
                 // 助手消息左对齐，用户消息右对齐
                 horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
             ) {
-                Surface(
-                    shape = if (isUser) {
-                        RoundedCornerShape(Radius.md, Radius.md, Radius.xs, Radius.md)
-                    } else {
-                        RoundedCornerShape(Radius.md, Radius.md, Radius.md, Radius.xs)
-                    },
-                    color = when (message.role) {
-                        MessageRole.USER -> MaterialTheme.colorScheme.primary
-                        MessageRole.ASSISTANT -> MaterialTheme.colorScheme.surface
-                        MessageRole.TOOL -> MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    border = if (message.role == MessageRole.ASSISTANT) {
-                        BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    } else null,
-                    modifier = Modifier.fillMaxWidth(0.88f)
-                ) {
-                    if (message.role == MessageRole.TOOL) {
-                        ToolMessageBody(message, liveOutput = liveOutput)
-                    } else {
-                        val textColor = when (message.role) {
-                            MessageRole.USER -> MaterialTheme.colorScheme.onPrimary
-                            else -> MaterialTheme.colorScheme.onSurface
-                        }
-                        SelectionContainer {
-                            val selectionColors = if (isUser) {
-                                TextSelectionColors(
-                                    handleColor = MaterialTheme.colorScheme.onPrimary,
-                                    backgroundColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.28f),
-                                )
-                            } else {
-                                TextSelectionColors(
-                                    handleColor = MaterialTheme.colorScheme.primary,
-                                    backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
-                                )
+                if (hasContent || message.role == MessageRole.TOOL) {
+                    Surface(
+                        shape = if (isUser) {
+                            RoundedCornerShape(Radius.md, Radius.md, Radius.xs, Radius.md)
+                        } else {
+                            RoundedCornerShape(Radius.md, Radius.md, Radius.md, Radius.xs)
+                        },
+                        color = when (message.role) {
+                            MessageRole.USER -> MaterialTheme.colorScheme.primary
+                            MessageRole.ASSISTANT -> MaterialTheme.colorScheme.surface
+                            MessageRole.TOOL -> MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        border = if (message.role == MessageRole.ASSISTANT) {
+                            BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        } else null,
+                        modifier = Modifier.fillMaxWidth(0.88f)
+                    ) {
+                        if (message.role == MessageRole.TOOL) {
+                            ToolMessageBody(message, liveOutput = liveOutput)
+                        } else {
+                            val textColor = when (message.role) {
+                                MessageRole.USER -> MaterialTheme.colorScheme.onPrimary
+                                else -> MaterialTheme.colorScheme.onSurface
                             }
-                            CompositionLocalProvider(LocalTextSelectionColors provides selectionColors) {
-                                MarkdownContent(
-                                    text = message.content.ifEmpty { "…" },
-                                    color = textColor,
-                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
-                                    cache = markdownCache
-                                )
+                            SelectionContainer {
+                                val selectionColors = if (isUser) {
+                                    TextSelectionColors(
+                                        handleColor = MaterialTheme.colorScheme.onPrimary,
+                                        backgroundColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.28f),
+                                    )
+                                } else {
+                                    TextSelectionColors(
+                                        handleColor = MaterialTheme.colorScheme.primary,
+                                        backgroundColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                    )
+                                }
+                                CompositionLocalProvider(LocalTextSelectionColors provides selectionColors) {
+                                    MarkdownContent(
+                                        text = message.content,
+                                        color = textColor,
+                                        modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+                                        cache = markdownCache
+                                    )
+                                }
                             }
                         }
                     }
+                }
+                if (isUser && hasAttachments) {
+                    MessageAttachmentPreviewRow(attachments = message.attachments)
                 }
                 // 气泡下方复制按钮（工具消息不显示）
                 if (message.content.hasVisibleContent() && message.role != MessageRole.TOOL) {
@@ -201,6 +224,131 @@ internal fun AgentMessageItem(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MessageAttachmentPreviewRow(attachments: List<AgentAttachment>) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth(0.88f)
+            .horizontalScroll(rememberScrollState())
+            .padding(top = Spacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        attachments.forEach { attachment ->
+            MessageAttachmentPreviewItem(attachment = attachment)
+        }
+    }
+}
+
+@Composable
+private fun MessageAttachmentPreviewItem(attachment: AgentAttachment) {
+    Surface(
+        shape = RoundedCornerShape(Radius.md),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.size(76.dp)
+    ) {
+        if (attachment.isImage) {
+            MessageImagePreview(attachment = attachment)
+        } else {
+            MessageFilePreview(attachment = attachment)
+        }
+    }
+}
+
+@Composable
+private fun MessageImagePreview(attachment: AgentAttachment) {
+    val bitmap = remember(attachment.localPath) {
+        runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(attachment.localPath, bounds)
+            val sampleSize = calculateMessageAttachmentSampleSize(bounds.outWidth, bounds.outHeight, 180, 180)
+            val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            BitmapFactory.decodeFile(attachment.localPath, options)?.asImageBitmap()
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        ComposeImage(
+            bitmap = bitmap,
+            contentDescription = attachment.fileName.ifBlank { "图片预览" },
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+    } else {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(
+                FeatherIcons.Image,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageFilePreview(attachment: AgentAttachment) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(Spacing.xs),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            FeatherIcons.FileText,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = attachment.fileName,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = formatBytes(attachment.sizeBytes),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+private fun calculateMessageAttachmentSampleSize(width: Int, height: Int, reqWidth: Int, reqHeight: Int): Int {
+    var sampleSize = 1
+    if (height > reqHeight || width > reqWidth) {
+        val halfHeight = height / 2
+        val halfWidth = width / 2
+        while (halfHeight / sampleSize >= reqHeight && halfWidth / sampleSize >= reqWidth) {
+            sampleSize *= 2
+        }
+    }
+    return sampleSize.coerceAtLeast(1)
+}
+
+@Composable
+private fun CompactionDivider() {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = Spacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+    ) {
+        HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
+        Text(
+            text = "上下文已压缩",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall
+        )
+        HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -356,6 +504,34 @@ internal fun ThinkingBubble() {
     }
 }
 
+/** 上下文压缩期间的临时状态气泡，不落库。 */
+@Composable
+internal fun CompactionProgressBubble() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(Radius.md, Radius.md, Radius.md, Radius.xs),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Text(
+                    text = "正在压缩上下文",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                TypingDots(color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
 /**
  * 模型流式吐字时的实时气泡：左对齐、与助手气泡同款。
  * 尾部带三个跳动的点表示仍在生成。本轮结束后由落库的助手气泡接管。
@@ -366,16 +542,8 @@ internal fun ThinkingBubble() {
 @OptIn(FlowPreview::class)
 @Composable
 internal fun StreamingBubble(text: String) {
-    var throttledText by remember { mutableStateOf(text) }
-    val latestText by rememberUpdatedState(text)
-    LaunchedEffect(Unit) {
-        snapshotFlow { latestText }
-            .debounce(80)
-            .collect { throttledText = it }
-    }
-
     // 打字机：把节流后「蹦出来」的目标文本转成逐字浮现，避免每隔 80ms 跳变一次的顿挫感。
-    val displayText = rememberTypewriterText(target = throttledText)
+    val displayText = rememberTypewriterText(target = rememberDebouncedText(text))
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -397,6 +565,19 @@ internal fun StreamingBubble(text: String) {
             }
         }
     }
+}
+
+@OptIn(FlowPreview::class)
+@Composable
+internal fun rememberDebouncedText(target: String, debounceMillis: Long = 80): String {
+    var debouncedText by remember { mutableStateOf(target) }
+    val latestText by rememberUpdatedState(target)
+    LaunchedEffect(debounceMillis) {
+        snapshotFlow { latestText }
+            .debounce(debounceMillis)
+            .collect { debouncedText = it }
+    }
+    return debouncedText
 }
 
 /**
@@ -433,8 +614,17 @@ internal fun rememberTypewriterText(target: String): String {
  * [initiallyExpanded]：流式实时展示时默认展开以便边想边看；落库后的历史气泡默认折叠，避免刷屏。
  */
 @Composable
-internal fun ReasoningBubble(text: String, initiallyExpanded: Boolean = true) {
+internal fun ReasoningBubble(
+    text: String,
+    initiallyExpanded: Boolean = true,
+    streaming: Boolean = false
+) {
     var expanded by remember { mutableStateOf(initiallyExpanded) }
+    val displayText = if (streaming) {
+        rememberTypewriterText(target = rememberDebouncedText(text))
+    } else {
+        text
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start
@@ -474,7 +664,7 @@ internal fun ReasoningBubble(text: String, initiallyExpanded: Boolean = true) {
                 if (expanded) {
                     Spacer(Modifier.height(Spacing.sm))
                     Text(
-                        text = text,
+                        text = displayText,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

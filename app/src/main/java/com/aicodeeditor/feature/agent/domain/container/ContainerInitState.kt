@@ -14,7 +14,7 @@ sealed interface ContainerInitState {
     /** 正在部署 proot 二进制 / loader / 动态依赖库。 */
     data object DeployingProot : ContainerInitState
 
-    /** 正在安装基础包（python3/git/pip/node/npm），[line] 为 apk 的实时输出行（可为 null）。 */
+    /** 正在安装基础包（python3/git/pip/node/npm/rg），[line] 为 apk 的实时输出行（可为 null）。 */
     data class InstallingPackages(val line: String?) : ContainerInitState
 
     /** 容器已就绪（rootfs + proot + 基础包均完成）。 */

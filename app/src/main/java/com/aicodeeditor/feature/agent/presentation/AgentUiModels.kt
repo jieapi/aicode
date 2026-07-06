@@ -1,7 +1,9 @@
 package com.aicodeeditor.feature.agent.presentation
 
 import androidx.compose.runtime.Immutable
+import com.aicodeeditor.feature.agent.domain.model.AgentImage
 import com.aicodeeditor.feature.agent.domain.model.WorkflowStatus
+import kotlinx.serialization.Serializable
 
 sealed class AgentUIState {
     object Idle : AgentUIState()
@@ -25,13 +27,27 @@ data class AgentUIMessage(
     val role: MessageRole,
     val content: String,
     val timestamp: Long = System.currentTimeMillis(),
+    val attachments: List<AgentAttachment> = emptyList(),
     // 仅 TOOL 消息：渲染用，不参与上下文回放。
     val toolName: String? = null,
     // 仅 TOOL 消息：本次调用传入的参数（JSON 文本），渲染「执行的指令」用。
     val toolArgs: String? = null,
     val isError: Boolean = false,
     // 仅 ASSISTANT 消息：本轮模型的思考过程，渲染为可折叠「思考过程」气泡；无则为 null。
-    val reasoning: String? = null
+    val reasoning: String? = null,
+    // 上下文压缩内部锚点：不显示用户气泡，渲染为压缩分隔线。
+    val isCompactionMarker: Boolean = false
+)
+
+@Immutable
+@Serializable
+data class AgentAttachment(
+    val fileName: String,
+    val containerPath: String,
+    val localPath: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val isImage: Boolean
 )
 
 enum class MessageRole {
@@ -94,7 +110,10 @@ data class RunningToolOutput(val messageId: String, val text: String, val toolNa
 data class QueuedRequest(
     val id: String,
     val request: String,
+    val modelRequest: String = request,
     val currentFile: String?,
     val selectedCode: String?,
-    val projectRoot: String
+    val projectRoot: String,
+    val inputImages: List<AgentImage> = emptyList(),
+    val inputAttachments: List<AgentAttachment> = emptyList()
 )

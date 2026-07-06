@@ -1,15 +1,15 @@
 package com.aicodeeditor.feature.agent.domain.tool.mcp
 
 import com.aicodeeditor.core.util.FileLogger
-import com.aicodeeditor.feature.agent.domain.container.LinuxContainerEngine
 import com.aicodeeditor.feature.agent.domain.mcp.McpConfigRepository
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerConfig
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
+import com.aicodeeditor.feature.agent.domain.tool.PendingToolPermission
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
+import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,15 +20,23 @@ import kotlinx.serialization.json.jsonPrimitive
 import javax.inject.Inject
 
 class ManageMcpTool @Inject constructor(
-    private val mcpConfigRepository: McpConfigRepository,
-    private val containerEngine: LinuxContainerEngine
+    private val mcpConfigRepository: McpConfigRepository
 ) : AgentTool() {
     private companion object {
         const val TAG = "ManageMcpTool"
     }
 
     override val name = "manageMcp"
-    override val description = "管理 Model Context Protocol (MCP) 服务器。支持添加、删除与列表查询，并自动准备本地运行环境。"
+    override val description = "管理 Model Context Protocol (MCP) 服务器。支持添加、删除与列表查询。添加/删除会修改 Agent 配置，不会自动安装 Node/Python 等运行时。"
+    override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.MODIFY_AGENT_CONFIG)
+
+    override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
+        return when (args["action"]?.jsonPrimitive?.contentOrNull) {
+            "list" -> setOf(ToolCapability.READ_AGENT_CONFIG)
+            else -> capabilities
+        }
+    }
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "action" to ToolParameter(
@@ -64,6 +72,30 @@ class ManageMcpTool @Inject constructor(
         )
     )
 
+    override fun buildPermissionRequest(
+        callId: String,
+        args: Map<String, JsonElement>,
+        argsPreview: String
+    ): PendingToolPermission {
+        val action = args["action"]?.jsonPrimitive?.contentOrNull ?: "unknown"
+        val server = args["server_name"]?.jsonPrimitive?.contentOrNull ?: "未指定"
+        val summary = when (action) {
+            "add_stdio" -> "添加本地 MCP server: $server"
+            "add_http" -> "添加 HTTP MCP server: $server"
+            "remove" -> "移除 MCP server: $server"
+            "list" -> "列出 MCP server"
+            else -> "管理 MCP server"
+        }
+        return PendingToolPermission(
+            id = callId,
+            toolName = name,
+            title = "确认修改 MCP 配置",
+            summary = summary,
+            details = "操作：$action\n服务：$server\n该操作会修改 Agent 的 MCP 配置，新增配置将在下一次会话生效。",
+            argsPreview = argsPreview
+        )
+    }
+
     override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
         val action = args["action"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("缺少 action 参数")
         
@@ -89,9 +121,6 @@ class ManageMcpTool @Inject constructor(
                     val command = args["command"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("add_stdio 缺少 command")
                     val commandArgs = args["args"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
                     
-                    // 自动环境准备 (AI 自治增强)
-                    ensureEnvironment(command)
-                    
                     val newServer = McpServerConfig(
                         name = name,
                         command = command,
@@ -105,7 +134,7 @@ class ManageMcpTool @Inject constructor(
                     servers.add(newServer)
                     mcpConfigRepository.setServers(servers)
                     
-                    ToolResult.Success(JsonPrimitive("成功添加本地 MCP server: $name. 配置将在下一次会话生效。"))
+                    ToolResult.Success(JsonPrimitive("成功添加本地 MCP server: $name。配置将在下一次会话生效。若命令依赖 Node/Python 等运行时，请通过命令工具在用户确认后安装。"))
                 }
                 "add_http" -> {
                     val name = args["server_name"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.Error("add_http 缺少 server_name")
@@ -133,18 +162,4 @@ class ManageMcpTool @Inject constructor(
         }
     }
     
-    private suspend fun ensureEnvironment(command: String) {
-        val installCmd = when (command) {
-            "npx", "node", "npm" -> "command -v node >/dev/null 2>&1 || (echo 'Installing Node.js...' && apk update && apk add --no-cache nodejs npm)"
-            "python", "python3", "pip" -> "command -v python3 >/dev/null 2>&1 || (echo 'Installing Python3...' && apk update && apk add --no-cache python3 py3-pip)"
-            else -> null
-        }
-        
-        installCmd?.let {
-            FileLogger.i(TAG, "正在自动准备环境: $it")
-            withContext(Dispatchers.IO) {
-                containerEngine.runCommandSync(it, "/", 60_000L) // 1 分钟超时
-            }
-        }
-    }
 }

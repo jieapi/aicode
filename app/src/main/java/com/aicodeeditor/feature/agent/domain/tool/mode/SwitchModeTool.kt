@@ -7,6 +7,7 @@ import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.PendingToolPermission
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.serialization.json.JsonElement
@@ -25,6 +26,7 @@ class SwitchModeTool @Inject constructor(
     override val name = "switchMode"
     override val description = "切换当前会话的模式。如果你当前处于 BUILD（构建）模式并认为你需要进入 PLAN（计划）模式来构思复杂逻辑，或者当前在 PLAN 模式下计划已经完成需要进入 BUILD 模式修改代码时，调用此工具主动申请切换。切换前需要用户授权。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.MODIFY_SESSION_STATE)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "mode" to ToolParameter(

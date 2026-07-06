@@ -51,6 +51,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronUp
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -421,26 +422,34 @@ internal data class EditDiff(
  * 从持久化的 TOOL 内容中解析 edit_file / write_file 的结构化差异
  */
 internal fun parseEditDiff(content: String): EditDiff? {
+    val dataObj = extractToolDataObject(content)
+    if (dataObj != null) {
+        return parseEditDiffObject(dataObj)
+    }
+
     val start = content.indexOf('{')
     val end = content.lastIndexOf('}')
     if (start < 0 || end <= start) return null
     return runCatching {
-        val obj = Json.parseToJsonElement(content.substring(start, end + 1)).jsonObject
-        val path = obj["path"]?.jsonPrimitive?.contentOrNull ?: ""
-        val added = obj["added_lines"]?.jsonPrimitive?.intOrNull ?: 0
-        val removed = obj["removed_lines"]?.jsonPrimitive?.intOrNull ?: 0
-
-        val hunks = obj["hunks"]?.jsonArray?.mapNotNull { el ->
-            val ho = el.jsonObject
-            val d = ho["diff"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-            EditHunk(startLine = ho["start_line"]?.jsonPrimitive?.intOrNull ?: 1, diff = d)
-        } ?: run {
-            val d = obj["diff"]?.jsonPrimitive?.contentOrNull ?: return null
-            listOf(EditHunk(startLine = obj["start_line"]?.jsonPrimitive?.intOrNull ?: 1, diff = d))
-        }
-        if (hunks.isEmpty()) return null
-        EditDiff(path = path, added = added, removed = removed, hunks = hunks)
+        parseEditDiffObject(Json.parseToJsonElement(content.substring(start, end + 1)).jsonObject)
     }.getOrNull()
+}
+
+private fun parseEditDiffObject(obj: JsonObject): EditDiff? {
+    val path = obj["path"]?.jsonPrimitive?.contentOrNull ?: ""
+    val added = obj["added_lines"]?.jsonPrimitive?.intOrNull ?: 0
+    val removed = obj["removed_lines"]?.jsonPrimitive?.intOrNull ?: 0
+
+    val hunks = obj["hunks"]?.jsonArray?.mapNotNull { el ->
+        val ho = el.jsonObject
+        val d = ho["diff"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+        EditHunk(startLine = ho["start_line"]?.jsonPrimitive?.intOrNull ?: 1, diff = d)
+    } ?: run {
+        val d = obj["diff"]?.jsonPrimitive?.contentOrNull ?: return null
+        listOf(EditHunk(startLine = obj["start_line"]?.jsonPrimitive?.intOrNull ?: 1, diff = d))
+    }
+    if (hunks.isEmpty()) return null
+    return EditDiff(path = path, added = added, removed = removed, hunks = hunks)
 }
 
 /**
@@ -448,6 +457,14 @@ internal fun parseEditDiff(content: String): EditDiff? {
  */
 internal fun formatToolResult(raw: String): String {
     val s = raw.withoutToolStatusPrefix()
+    parseToolTransport(s)?.let { obj ->
+        return when (obj["status"]?.jsonPrimitive?.contentOrNull) {
+            "error" -> obj["message"]?.jsonPrimitive?.contentOrNull ?: s
+            "success", "partial" -> formatToolData(obj["data"]) ?: s
+            else -> s
+        }
+    }
+
     when {
         s.startsWith("Error(") -> {
             val msgIdx = s.indexOf("message=")
@@ -472,6 +489,33 @@ internal fun formatToolResult(raw: String): String {
     return s
 }
 
+private fun parseToolTransport(raw: String): JsonObject? {
+    return runCatching {
+        val obj = Json.parseToJsonElement(raw.trim()).jsonObject
+        if (obj["status"] != null) obj else null
+    }.getOrNull()
+}
+
+private fun extractToolDataObject(raw: String): JsonObject? {
+    return (parseToolTransport(raw)?.get("data") as? JsonObject)
+}
+
+private fun formatToolData(data: JsonElement?): String? {
+    return when (data) {
+        is JsonPrimitive -> data.contentOrNull ?: data.toString()
+        is JsonObject -> {
+            val main = data["content"] ?: data["output"] ?: data["stdout"] ?: data["text"]
+            val mainStr = (main as? JsonPrimitive)?.contentOrNull
+            mainStr ?: data.entries.joinToString("\n") { (k, v) ->
+                val vv = (v as? JsonPrimitive)?.contentOrNull ?: v.toString()
+                "$k: $vv"
+            }
+        }
+        null -> null
+        else -> data.toString()
+    }
+}
+
 internal fun String.withoutToolStatusPrefix(): String = trim()
     .removePrefix(LEGACY_STOPPED_TOOL_MARKER)
     .removePrefix(LEGACY_RUNNING_TOOL_MARKER)
@@ -483,15 +527,8 @@ internal fun String.withoutToolStatusPrefix(): String = trim()
  */
 internal fun formatJsonData(jsonStr: String): String? = runCatching {
     when (val el = Json.parseToJsonElement(jsonStr.trim())) {
-        is JsonPrimitive -> el.contentOrNull ?: el.toString()
-        is JsonObject -> {
-            val main = el["content"] ?: el["output"] ?: el["stdout"] ?: el["text"]
-            val mainStr = (main as? JsonPrimitive)?.contentOrNull
-            mainStr ?: el.entries.joinToString("\n") { (k, v) ->
-                val vv = (v as? JsonPrimitive)?.contentOrNull ?: v.toString()
-                "$k: $vv"
-            }
-        }
+        is JsonPrimitive -> formatToolData(el) ?: jsonStr.trim()
+        is JsonObject -> formatToolData(el) ?: jsonStr.trim()
         else -> jsonStr.trim()
     }
 }.getOrNull()

@@ -3,7 +3,10 @@ package com.aicodeeditor.feature.agent.domain.session
 import com.aicodeeditor.feature.agent.data.local.dao.AgentMessageDao
 import com.aicodeeditor.feature.agent.data.local.entity.AgentMessageEntity
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
+import com.aicodeeditor.feature.agent.domain.model.CONTEXT_COMPACTION_MARKER
+import com.aicodeeditor.feature.agent.domain.model.CONTEXT_SUMMARY_LEGACY_PREFIX
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
+import com.aicodeeditor.feature.agent.presentation.AgentAttachment
 import com.aicodeeditor.feature.agent.presentation.MessageRole
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -44,7 +47,8 @@ class MessagePersistenceUseCase @Inject constructor(
         toolName: String? = null,
         toolArgs: String? = null,
         isError: Boolean = false,
-        reasoning: String? = null
+        reasoning: String? = null,
+        attachments: List<AgentAttachment> = emptyList()
     ) {
         agentMessageDao.insert(
             AgentMessageEntity(
@@ -58,7 +62,8 @@ class MessagePersistenceUseCase @Inject constructor(
                 toolName = toolName,
                 toolArgs = toolArgs,
                 isError = isError,
-                reasoning = reasoning
+                reasoning = reasoning,
+                attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null
             )
         )
     }
@@ -100,17 +105,27 @@ class MessagePersistenceUseCase @Inject constructor(
         for (e in entities) {
             when (MessageRole.valueOf(e.role)) {
                 MessageRole.USER -> result.add(
-                    AgentMessage.UserMessage(id = e.id, content = e.content)
+                    AgentMessage.UserMessage(
+                        id = e.id,
+                        content = if (e.isCompactionMarker) CONTEXT_COMPACTION_MARKER else e.content
+                    )
                 )
                 MessageRole.ASSISTANT -> {
                     val toolCalls = e.toolCallsJson?.let {
                         runCatching { json.decodeFromString<List<ToolCall>>(it) }.getOrNull()
                     }?.filter { it.id in validIds } ?: emptyList()
                     if (e.content.isNotBlank() || toolCalls.isNotEmpty()) {
+                        val previous = result.lastOrNull()
+                        if (
+                            e.isContextSummary &&
+                            !(previous is AgentMessage.UserMessage && previous.content == CONTEXT_COMPACTION_MARKER)
+                        ) {
+                            result.add(AgentMessage.UserMessage(content = CONTEXT_COMPACTION_MARKER))
+                        }
                         result.add(
                             AgentMessage.AssistantMessage(
                                 id = e.id,
-                                content = e.content,
+                                content = e.content.removePrefix(CONTEXT_SUMMARY_LEGACY_PREFIX).trimStart(),
                                 toolCalls = toolCalls
                             )
                         )

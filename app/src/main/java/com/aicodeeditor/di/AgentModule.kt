@@ -19,6 +19,7 @@ import com.aicodeeditor.feature.agent.domain.provider.AIProvider
 import com.aicodeeditor.feature.agent.domain.provider.AnthropicAdapter
 import com.aicodeeditor.feature.agent.domain.provider.OpenAIAdapter
 import com.aicodeeditor.feature.agent.domain.tool.file.ReadFileTool
+import com.aicodeeditor.feature.agent.domain.tool.file.ViewImageTool
 import com.aicodeeditor.feature.agent.domain.tool.file.WriteFileTool
 import com.aicodeeditor.feature.agent.domain.tool.editor.EditFileTool
 import com.aicodeeditor.feature.agent.domain.tool.container.ExecuteCommandTool
@@ -33,6 +34,8 @@ import com.aicodeeditor.feature.agent.domain.workflow.AgentWorkflow
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionManager
 import com.aicodeeditor.feature.agent.domain.permission.ToolPermissionPolicyEngine
 import com.aicodeeditor.feature.agent.domain.tool.ToolRegistry
+import com.aicodeeditor.feature.agent.domain.tool.ToolOutputStore
+import com.aicodeeditor.feature.settings.data.remote.ModelMetadataService
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -180,6 +183,7 @@ object AgentModule {
     @Singleton
     fun provideToolRegistry(
         readFileTool: ReadFileTool,
+        viewImageTool: ViewImageTool,
         writeFileTool: WriteFileTool,
         editFileTool: EditFileTool,
         executeCommandTool: ExecuteCommandTool,
@@ -196,6 +200,7 @@ object AgentModule {
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
+            register("viewImage", viewImageTool)
             register("writeFile", writeFileTool)
             register("editFile", editFileTool)
             register("Bash", executeCommandTool)
@@ -230,7 +235,9 @@ object AgentModule {
         permissionManager: ToolPermissionManager,
         policyEngine: ToolPermissionPolicyEngine,
         contextCompactor: com.aicodeeditor.feature.agent.domain.workflow.ContextCompactor,
-        planApprovalManager: com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalManager
+        planApprovalManager: com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalManager,
+        toolOutputStore: ToolOutputStore,
+        modelMetadataService: ModelMetadataService
     ): AgentWorkflow {
         return com.aicodeeditor.feature.agent.domain.workflow.StatefulAgentWorkflow(
             toolRegistry,
@@ -242,7 +249,9 @@ object AgentModule {
             permissionManager,
             policyEngine,
             contextCompactor,
-            planApprovalManager
+            planApprovalManager,
+            toolOutputStore,
+            modelMetadataService
         )
     }
 }

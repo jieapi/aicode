@@ -11,6 +11,7 @@ import com.aicodeeditor.feature.agent.domain.container.ContainerInitState
 import com.aicodeeditor.feature.agent.domain.container.LinuxContainerEngine
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
 import com.aicodeeditor.feature.agent.domain.model.AgentContext
+import com.aicodeeditor.feature.agent.domain.model.AgentImage
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
 import com.aicodeeditor.feature.agent.domain.model.ChatSession
 import com.aicodeeditor.feature.agent.domain.model.CodeChange
@@ -25,6 +26,7 @@ import com.aicodeeditor.feature.agent.domain.tool.question.AskUserQuestionManage
 import com.aicodeeditor.feature.agent.domain.tool.question.UserQuestionAnswer
 import com.aicodeeditor.feature.agent.domain.session.SessionUseCase
 import com.aicodeeditor.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aicodeeditor.feature.agent.presentation.AgentAttachment
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -127,7 +129,7 @@ class AIAgentViewModel @Inject constructor(
                 ChatMessagesState(
                     sessionId = id,
                     messages = list.asSequence()
-                        .filterNot { it.isCompacted }
+                        .filterNot { it.isContextSummary }
                         .filterNot {
                             it.role == MessageRole.ASSISTANT.name &&
                                 !it.content.hasVisibleContent() &&
@@ -166,6 +168,22 @@ class AIAgentViewModel @Inject constructor(
 
     private fun setRunningTool(sessionId: String, tool: RunningToolOutput?) {
         _runningTools.value = if (tool == null) _runningTools.value - sessionId else _runningTools.value + (sessionId to tool)
+    }
+
+    private val _compactingSessions = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val isCompacting: StateFlow<Boolean> = _currentSessionId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(false)
+            else _compactingSessions.map { it[id] == true }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private fun setCompacting(sessionId: String, compacting: Boolean) {
+        _compactingSessions.value = if (compacting) {
+            _compactingSessions.value + (sessionId to true)
+        } else {
+            _compactingSessions.value - sessionId
+        }
     }
 
     private val _streamingTexts = MutableStateFlow<Map<String, String?>>(emptyMap())
@@ -262,9 +280,12 @@ class AIAgentViewModel @Inject constructor(
 
     fun executeAgentRequest(
         request: String,
+        modelRequest: String = request,
         currentFile: String? = null,
         selectedCode: String? = null,
         projectRoot: String = "",
+        inputImages: List<AgentImage> = emptyList(),
+        inputAttachments: List<AgentAttachment> = emptyList(),
         targetSessionId: String? = null
     ): Job = viewModelScope.launch {
         val sessionId = targetSessionId ?: ensureSession()
@@ -275,7 +296,7 @@ class AIAgentViewModel @Inject constructor(
             val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
-            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request)
+            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
             if (isFirst) sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
             sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
 
@@ -288,12 +309,13 @@ class AIAgentViewModel @Inject constructor(
                 projectRoot = projectRoot,
                 language = currentFile?.let { detectLanguage(it) },
                 history = history,
+                inputImages = inputImages,
                 sessionId = sessionId,
                 mode = mode
             )
 
             val result = agentWorkflow.execute(
-                userRequest = request,
+                userRequest = modelRequest,
                 context = context,
                 tools = toolRegistry.getAvailableTools(mode)
             )
@@ -323,9 +345,12 @@ class AIAgentViewModel @Inject constructor(
 
     fun enqueueAgentRequest(
         request: String,
+        modelRequest: String = request,
         currentFile: String? = null,
         selectedCode: String? = null,
-        projectRoot: String = ""
+        projectRoot: String = "",
+        inputImages: List<AgentImage> = emptyList(),
+        inputAttachments: List<AgentAttachment> = emptyList()
     ) {
         val sid = _currentSessionId.value
         val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
@@ -333,14 +358,26 @@ class AIAgentViewModel @Inject constructor(
             val req = QueuedRequest(
                 id = UUID.randomUUID().toString(),
                 request = request,
+                modelRequest = modelRequest,
                 currentFile = currentFile,
                 selectedCode = selectedCode,
-                projectRoot = projectRoot
+                projectRoot = projectRoot,
+                inputImages = inputImages,
+                inputAttachments = inputAttachments
             )
             val currentList = _queuedRequests.value[sid] ?: emptyList()
             _queuedRequests.value = _queuedRequests.value + (sid to (currentList + req))
         } else {
-            executeAgentRequestStream(request, currentFile, selectedCode, projectRoot, sid)
+            executeAgentRequestStream(
+                request = request,
+                modelRequest = modelRequest,
+                currentFile = currentFile,
+                selectedCode = selectedCode,
+                projectRoot = projectRoot,
+                inputImages = inputImages,
+                inputAttachments = inputAttachments,
+                targetSessionId = sid
+            )
         }
     }
 
@@ -350,18 +387,24 @@ class AIAgentViewModel @Inject constructor(
         _queuedRequests.value = _queuedRequests.value + (sessionId to queue.drop(1))
         executeAgentRequestStream(
             request = next.request,
+            modelRequest = next.modelRequest,
             currentFile = next.currentFile,
             selectedCode = next.selectedCode,
             projectRoot = next.projectRoot,
+            inputImages = next.inputImages,
+            inputAttachments = next.inputAttachments,
             targetSessionId = sessionId
         )
     }
 
     fun executeAgentRequestStream(
         request: String,
+        modelRequest: String = request,
         currentFile: String? = null,
         selectedCode: String? = null,
         projectRoot: String = "",
+        inputImages: List<AgentImage> = emptyList(),
+        inputAttachments: List<AgentAttachment> = emptyList(),
         targetSessionId: String? = null
     ): Job = viewModelScope.launch {
         val sessionId = targetSessionId ?: ensureSession()
@@ -374,7 +417,7 @@ class AIAgentViewModel @Inject constructor(
             val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
-            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request)
+            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
             if (isFirst) sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
             sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
 
@@ -387,12 +430,13 @@ class AIAgentViewModel @Inject constructor(
                 projectRoot = projectRoot,
                 language = currentFile?.let { detectLanguage(it) },
                 history = history,
+                inputImages = inputImages,
                 sessionId = sessionId,
                 mode = mode
             )
 
             agentWorkflow.executeEvents(
-                userRequest = request,
+                userRequest = modelRequest,
                 context = context,
                 tools = toolRegistry.getAvailableTools(mode)
             ).collect { event ->
@@ -407,6 +451,15 @@ class AIAgentViewModel @Inject constructor(
                     }
                     is AgentEvent.Retrying -> {
                         setRetryState(sessionId, RetryState(event.attempt, event.maxRetries))
+                    }
+                    is AgentEvent.CompactionStarted -> {
+                        setRetryState(sessionId, null)
+                        setStreamingText(sessionId, null)
+                        setStreamingReasoning(sessionId, null)
+                        setCompacting(sessionId, true)
+                    }
+                    AgentEvent.CompactionFinished -> {
+                        setCompacting(sessionId, false)
                     }
                     is AgentEvent.AssistantText -> {
                         val normalized = if (event.content.hasVisibleContent()) event.content else ""
@@ -464,10 +517,12 @@ class AIAgentViewModel @Inject constructor(
                     }
                     is AgentEvent.Failed -> {
                         failed = true
+                        setCompacting(sessionId, false)
                         setAgentState(sessionId, AgentUIState.Error(event.error))
                     }
                     AgentEvent.Completed -> {
                         setRetryState(sessionId, null)
+                        setCompacting(sessionId, false)
                     }
                     is AgentEvent.ModeChanged -> {
                         // 模式切换事件：PlanApprovalManager 已在 workflow 层面挂起等待用户批准
@@ -495,6 +550,7 @@ class AIAgentViewModel @Inject constructor(
             setRunningTool(sessionId, null)
             setStreamingText(sessionId, null)
             setStreamingReasoning(sessionId, null)
+            setCompacting(sessionId, false)
             setRetryState(sessionId, null)
 
             // Process the next queued request if any
@@ -554,6 +610,7 @@ class AIAgentViewModel @Inject constructor(
             setRunningTool(sessionId, null)
             setStreamingText(sessionId, null)
             setStreamingReasoning(sessionId, null)
+            setCompacting(sessionId, false)
             setRetryState(sessionId, null)
         }
     }

@@ -9,10 +9,12 @@ import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.PendingToolPermission
 import com.aicodeeditor.feature.agent.domain.tool.StreamingAgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import com.aicodeeditor.feature.agent.domain.tool.ToolStreamEvent
 import com.aicodeeditor.feature.workspace.data.repository.WorkspaceRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.JsonElement
@@ -48,6 +50,7 @@ class ExecuteCommandTool @Inject constructor(
     override val name = "Bash"
     override val description = "在独立的 Linux 容器环境中执行 Shell 命令。支持 npm、git 等绝大多数终端操作。对于耗时任务（如安装大量依赖、启动服务器等），请不要在此命令末尾加 '&' 挂后台，而是强烈建议改用 `terminal` 工具（action=\"start\"）来创建常驻终端页面，这样才能方便后续查看实时输出结果和管理进程。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.EXECUTE_COMMANDS)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "command" to ToolParameter(
@@ -99,6 +102,8 @@ class ExecuteCommandTool @Inject constructor(
             val output = containerEngine.runCommandSync(command, workdir, timeoutMs)
             FileLogger.v(TAG, "execute_command 完成，输出 ${output.length} 字符")
             ToolResult.Success(JsonPrimitive(output))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "execute_command 失败: $command", e)
             ToolResult.Error("执行命令失败: ${e.message}")
@@ -135,6 +140,8 @@ class ExecuteCommandTool @Inject constructor(
             }
             FileLogger.v(TAG, "execute_command(流式) 完成，输出 ${accumulated.totalChars} 字符")
             emit(ToolStreamEvent.Completed(ToolResult.Success(JsonPrimitive(accumulated.build()))))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             FileLogger.e(TAG, "execute_command(流式) 失败: $command", e)
             emit(ToolStreamEvent.Completed(ToolResult.Error("执行命令失败: ${e.message}")))

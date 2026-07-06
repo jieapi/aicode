@@ -4,6 +4,7 @@ import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,6 +26,7 @@ class WebFetchTool @Inject constructor() : AgentTool() {
 
     override val name = "webfetch"
     override val description = "抓取指定 HTTP/HTTPS 网页内容。支持提取网页正文为纯文本或返回原始 HTML 结构。"
+    override val capabilities = setOf(ToolCapability.NETWORK_READ)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "url" to ToolParameter(

@@ -1,19 +1,34 @@
 package com.aicodeeditor.feature.agent.domain.tool
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 @Serializable
 sealed class ToolResult {
     @Serializable
+    @SerialName("success")
     data class Success(val data: JsonElement) : ToolResult()
 
     @Serializable
+    @SerialName("error")
     data class Error(val message: String, val code: String = "UNKNOWN") : ToolResult()
 
     @Serializable
+    @SerialName("partial")
     data class Partial(val data: JsonElement, val message: String) : ToolResult()
+}
+
+private val ToolResultTransportJson = Json {
+    classDiscriminator = "status"
+    encodeDefaults = true
+}
+
+fun ToolResult.toTransportString(): String {
+    return ToolResultTransportJson.encodeToString(this)
 }
 
 data class ToolParameter(
@@ -38,6 +53,21 @@ enum class ToolPermissionPolicy {
     AUTO_APPROVE, ASK
 }
 
+enum class ToolCapability {
+    READ_WORKSPACE,
+    WRITE_WORKSPACE,
+    EXECUTE_COMMANDS,
+    NETWORK_READ,
+    NETWORK_WRITE,
+    READ_AGENT_CONFIG,
+    MODIFY_AGENT_CONFIG,
+    MODIFY_CONTAINER_ENV,
+    USER_INTERACTION,
+    MODIFY_SESSION_STATE,
+    MODIFY_TODO_STATE,
+    EXTERNAL_TOOL
+}
+
 data class PendingToolPermission(
     val id: String,
     val toolName: String,
@@ -60,6 +90,11 @@ abstract class AgentTool {
     abstract val description: String
     abstract val parameters: Map<String, ToolParameter>
     open val permissionPolicy: ToolPermissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
+    open val capabilities: Set<ToolCapability> = emptySet()
+
+    open fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
+        return capabilities
+    }
 
     abstract suspend fun execute(args: Map<String, JsonElement>): ToolResult
 

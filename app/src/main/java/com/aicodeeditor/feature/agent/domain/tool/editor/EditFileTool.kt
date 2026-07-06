@@ -4,6 +4,7 @@ import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.PendingToolPermission
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import com.aicodeeditor.core.util.FileLogger
@@ -38,6 +39,7 @@ class EditFileTool @Inject constructor(
     override val description =
         "通过精确的字符串匹配替换修改已存在的文件内容。作为局部修改文件的首选工具。支持通过 edits 数组一次性应用多处修改，任一处匹配失败将整批回滚。整文件重写请用 writeFile。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
+    override val capabilities = setOf(ToolCapability.WRITE_WORKSPACE)
 
     /** edits 数组单个元素的结构，供 function-calling 的 items schema。 */
     private val editItemSchema: Map<String, Any> = mapOf(

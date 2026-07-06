@@ -4,11 +4,14 @@ import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ParameterType
 import com.aicodeeditor.feature.agent.domain.tool.ToolParameter
+import com.aicodeeditor.feature.agent.domain.tool.ToolCapability
 import com.aicodeeditor.feature.agent.domain.tool.ToolResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.Json
@@ -29,6 +32,7 @@ class WebSearchTool @Inject constructor() : AgentTool() {
 
     override val name = "websearch"
     override val description = "通过互联网搜索引擎获取实时信息，突破大模型的知识库时间截断限制。适用于需要最新资料或时效性信息的任务。"
+    override val capabilities = setOf(ToolCapability.NETWORK_READ)
 
     override val parameters: Map<String, ToolParameter> = mapOf(
         "query" to ToolParameter(
@@ -45,22 +49,25 @@ class WebSearchTool @Inject constructor() : AgentTool() {
 
         return withContext(Dispatchers.IO) {
             try {
-                // 构造 MCP 标准协议的 JSON-RPC 请求
-                val requestBody = """
-                    {
-                      "jsonrpc": "2.0",
-                      "id": 1,
-                      "method": "tools/call",
-                      "params": {
-                        "name": "web_search",
-                        "arguments": {
-                          "objective": "$query",
-                          "search_queries": ["$query"],
-                          "session_id": "aicode-android"
-                        }
-                      }
-                    }
-                """.trimIndent()
+                val requestBody = JsonObject(
+                    mapOf(
+                        "jsonrpc" to JsonPrimitive("2.0"),
+                        "id" to JsonPrimitive(1),
+                        "method" to JsonPrimitive("tools/call"),
+                        "params" to JsonObject(
+                            mapOf(
+                                "name" to JsonPrimitive("web_search"),
+                                "arguments" to JsonObject(
+                                    mapOf(
+                                        "objective" to JsonPrimitive(query),
+                                        "search_queries" to JsonArray(listOf(JsonPrimitive(query))),
+                                        "session_id" to JsonPrimitive("aicode-android")
+                                    )
+                                )
+                            )
+                        )
+                    )
+                ).toString()
 
                 FileLogger.i(TAG, "发起 WebSearch 请求: $query")
 
