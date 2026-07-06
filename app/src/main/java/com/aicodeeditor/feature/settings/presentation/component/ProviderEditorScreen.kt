@@ -85,6 +85,7 @@ import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.settings.data.remote.ModelTestResult
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
+import com.aicodeeditor.feature.settings.domain.model.ModelMetadata
 import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import com.aicodeeditor.feature.settings.presentation.FetchState
 import com.aicodeeditor.feature.settings.presentation.SettingsViewModel
@@ -115,6 +116,8 @@ fun ProviderEditorScreen(
     val fetchState by viewModel.fetchState.collectAsStateWithLifecycle()
     val testResults by viewModel.testResults.collectAsStateWithLifecycle()
     val testing by viewModel.testing.collectAsStateWithLifecycle()
+    val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
+    val modelSnapshot = models.toList()
 
     DisposableEffect(Unit) {
         viewModel.resetFetchState()
@@ -123,6 +126,10 @@ fun ProviderEditorScreen(
             viewModel.resetFetchState()
             viewModel.clearTestResults()
         }
+    }
+
+    LaunchedEffect(type, modelSnapshot) {
+        viewModel.resolveModelMetadata(type, modelSnapshot)
     }
 
     fun currentConfig() = AIProviderConfig(
@@ -135,7 +142,8 @@ fun ProviderEditorScreen(
         defaultModel = initialProvider?.defaultModel ?: "",
         isActive = initialProvider?.isActive ?: false,
         models = models.toList(),
-        selectedModel = initialProvider?.selectedModel ?: ""
+        selectedModel = initialProvider?.selectedModel ?: "",
+        useResponseApi = useResponseApi
     )
 
     Scaffold(
@@ -323,6 +331,7 @@ fun ProviderEditorScreen(
                         models.forEach { model ->
                             ProviderModelRow(
                                 model = model,
+                                metadata = modelMetadata[model],
                                 testing = model in testing,
                                 result = testResults[model],
                                 onTest = { viewModel.testModel(currentConfig(), model) },
@@ -369,6 +378,7 @@ fun ProviderEditorScreen(
         key(fetchDialogKey) {
             FetchModelsDialog(
                 fetchState = fetchState,
+                modelMetadata = modelMetadata,
                 existingModels = models,
                 onFetchModels = { viewModel.fetchModels(currentConfig()) },
                 onAddModel = { m ->
@@ -387,6 +397,7 @@ fun ProviderEditorScreen(
 @Composable
 private fun FetchModelsDialog(
     fetchState: FetchState,
+    modelMetadata: Map<String, ModelMetadata>,
     existingModels: List<String>,
     onFetchModels: () -> Unit,
     onAddModel: (String) -> Unit,
@@ -491,7 +502,11 @@ private fun FetchModelsDialog(
                                     }
                                     if (collapsedBrands[brandKey] != true) {
                                         items(models, key = { "${brandKey}_$it" }) { m ->
-                                            FetchModelRow(model = m, onAdd = { onAddModel(m) })
+                                            FetchModelRow(
+                                                model = m,
+                                                metadata = modelMetadata[m],
+                                                onAdd = { onAddModel(m) }
+                                            )
                                         }
                                     }
                                 }
@@ -509,8 +524,13 @@ private fun FetchModelsDialog(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FetchModelRow(model: String, onAdd: () -> Unit) {
+private fun FetchModelRow(
+    model: String,
+    metadata: ModelMetadata?,
+    onAdd: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -523,14 +543,37 @@ private fun FetchModelRow(model: String, onAdd: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Text(model, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
             Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ModelTag(text = "聊天")
-                ModelTag(icon = FeatherIcons.Image)
-                ModelTag(icon = FeatherIcons.Tool)
-            }
+            ModelMetadataTags(metadata)
         }
         IconButton(onClick = onAdd, modifier = Modifier.size(32.dp)) {
             Icon(FeatherIcons.Plus, contentDescription = "添加", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun ModelMetadataTags(metadata: ModelMetadata?) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        ModelTag(text = "Chat")
+        metadata?.let {
+            if (it.supportsVision) {
+                ModelTag(text = "Image")
+            }
+            if (it.supportsTools) {
+                ModelTag(text = "Tools")
+            }
+            val input = it.inputTokens?.takeIf { tokens -> tokens > 0 }
+                ?: it.contextTokens.takeIf { tokens -> tokens > 0 }
+            if (input != null) {
+                ModelTag(text = "Input ${formatTokenLimit(input)}")
+            }
+            it.outputTokens?.takeIf { tokens -> tokens > 0 }?.let { output ->
+                ModelTag(text = "Output ${formatTokenLimit(output)}")
+            }
         }
     }
 }
@@ -568,6 +611,7 @@ private fun ModelTag(text: String? = null, icon: androidx.compose.ui.graphics.ve
 @Composable
 internal fun ProviderModelRow(
     model: String,
+    metadata: ModelMetadata?,
     testing: Boolean,
     result: ModelTestResult?,
     onTest: () -> Unit,
@@ -592,11 +636,7 @@ internal fun ProviderModelRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ModelTag(text = "聊天")
-                    ModelTag(icon = FeatherIcons.Image)
-                    ModelTag(icon = FeatherIcons.Tool)
-                }
+                ModelMetadataTags(metadata)
             }
 
             Spacer(Modifier.width(Spacing.sm))
@@ -643,6 +683,18 @@ internal fun ProviderModelRow(
         }
     }
 }
+
+private fun formatTokenLimit(tokens: Int): String =
+    when {
+        tokens >= 1_000_000 && tokens % 1_000_000 == 0 -> "${tokens / 1_000_000}M"
+        tokens >= 1_000_000 -> "${tokens / 1_000_000.0}M".trimDecimal()
+        tokens >= 1_000 && tokens % 1_000 == 0 -> "${tokens / 1_000}K"
+        tokens >= 1_000 -> "${tokens / 1_000.0}K".trimDecimal()
+        else -> tokens.toString()
+    }
+
+private fun String.trimDecimal(): String =
+    replace(Regex("(\\.\\d)\\d+"), "$1").removeSuffix(".0")
 
 internal fun defaultProviderBaseUrl(type: ProviderType): String = when (type) {
     ProviderType.ANTHROPIC -> "https://api.anthropic.com/"

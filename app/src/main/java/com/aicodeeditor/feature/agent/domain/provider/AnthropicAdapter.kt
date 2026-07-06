@@ -6,6 +6,7 @@ import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicMessage
 import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicContentBlock
 import com.aicodeeditor.feature.agent.data.remote.anthropic.AnthropicToolDefinition
 import com.aicodeeditor.core.util.AILogger
+import com.aicodeeditor.feature.agent.domain.model.AgentImage
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
@@ -261,7 +262,7 @@ class AnthropicAdapter @Inject constructor(
         for (message in messages) {
             when (message) {
                 is AgentMessage.UserMessage -> {
-                    result.add(AnthropicMessage(role = "user", content = message.content))
+                    result.add(AnthropicMessage(role = "user", content = message.toAnthropicUserContent()))
                     lastAssistantHadToolUse = false
                 }
                 is AgentMessage.AssistantMessage -> {
@@ -337,5 +338,29 @@ class AnthropicAdapter @Inject constructor(
             is kotlinx.serialization.json.JsonArray -> element.map { jsonElementToMap(it) }
             is JsonPrimitive -> element.contentOrNull ?: ""
         }
+    }
+
+    private fun AgentMessage.UserMessage.toAnthropicUserContent(): Any {
+        if (images.isEmpty()) return content
+
+        val blocks = mutableListOf<AnthropicContentBlock>()
+        if (content.isNotBlank()) {
+            blocks.add(AnthropicContentBlock(type = "text", text = content))
+        }
+        images.forEach { image ->
+            blocks.add(image.toAnthropicImageBlock())
+        }
+        return blocks
+    }
+
+    private fun AgentImage.toAnthropicImageBlock(): AnthropicContentBlock {
+        return AnthropicContentBlock(
+            type = "image",
+            source = mapOf(
+                "type" to "base64",
+                "media_type" to mimeType,
+                "data" to base64Data
+            )
+        )
     }
 }

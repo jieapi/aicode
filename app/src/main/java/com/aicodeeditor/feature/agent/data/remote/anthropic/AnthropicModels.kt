@@ -18,6 +18,7 @@ data class AnthropicMessage(
 data class AnthropicContentBlock(
     val type: String, // "text", "tool_use", "tool_result"
     val text: String? = null,
+    val source: Map<String, Any>? = null,
     val id: String? = null, // for tool_use
     val name: String? = null, // for tool_use
     val input: Map<String, Any>? = null, // for tool_use
