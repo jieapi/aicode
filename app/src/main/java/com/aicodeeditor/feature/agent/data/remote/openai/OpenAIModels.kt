@@ -11,7 +11,7 @@ data class ChatCompletionRequest(
 
 data class OpenAIChatMessage(
     val role: String,
-    val content: String?,
+    val content: Any?,
     val name: String? = null,
     val tool_calls: List<OpenAIToolCall>? = null,
     val tool_call_id: String? = null,

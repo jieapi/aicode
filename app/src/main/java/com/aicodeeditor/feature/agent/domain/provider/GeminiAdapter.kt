@@ -2,6 +2,7 @@ package com.aicodeeditor.feature.agent.domain.provider
 
 import com.aicodeeditor.core.util.AILogger
 import com.aicodeeditor.feature.agent.data.remote.gemini.GeminiApi
+import com.aicodeeditor.feature.agent.domain.model.AgentImage
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
@@ -233,10 +234,17 @@ class GeminiAdapter @Inject constructor(
         for (message in messages) {
             when (message) {
                 is AgentMessage.UserMessage -> {
+                    val parts = mutableListOf<Map<String, Any>>()
+                    if (message.content.isNotBlank()) {
+                        parts.add(mapOf("text" to message.content))
+                    }
+                    message.images.forEach { image ->
+                        parts.add(image.toGeminiInlineDataPart())
+                    }
                     result.add(
                         mapOf(
                             "role" to "user",
-                            "parts" to listOf(mapOf("text" to message.content))
+                            "parts" to parts
                         )
                     )
                     lastModelHadFunctionCall = false
@@ -288,5 +296,14 @@ class GeminiAdapter @Inject constructor(
             }
         }
         return result
+    }
+
+    private fun AgentImage.toGeminiInlineDataPart(): Map<String, Any> {
+        return mapOf(
+            "inline_data" to mapOf(
+                "mime_type" to mimeType,
+                "data" to base64Data
+            )
+        )
     }
 }

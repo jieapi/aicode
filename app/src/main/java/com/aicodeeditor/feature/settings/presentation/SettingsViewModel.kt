@@ -11,12 +11,15 @@ import com.aicodeeditor.feature.agent.domain.mcp.McpToolDescriptor
 import com.aicodeeditor.feature.agent.domain.permission.PermissionRule
 import com.aicodeeditor.feature.agent.domain.permission.PermissionRulesRepository
 import com.aicodeeditor.feature.settings.data.remote.ModelApiService
+import com.aicodeeditor.feature.settings.data.remote.ModelMetadataService
 import com.aicodeeditor.feature.settings.data.remote.ModelTestResult
 import com.aicodeeditor.feature.settings.data.repository.AppThemeMode
 import com.aicodeeditor.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.LogSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.ThemeSettingsRepository
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
+import com.aicodeeditor.feature.settings.domain.model.ModelMetadata
+import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +41,7 @@ sealed class FetchState {
 class SettingsViewModel @Inject constructor(
     private val repository: AIProviderRepository,
     private val modelApiService: ModelApiService,
+    private val modelMetadataService: ModelMetadataService,
     private val logSettingsRepository: LogSettingsRepository,
     private val themeSettingsRepository: ThemeSettingsRepository,
     private val keepaliveSettingsRepository: KeepaliveSettingsRepository,
@@ -74,6 +78,9 @@ class SettingsViewModel @Inject constructor(
 
     private val _testResults = MutableStateFlow<Map<String, ModelTestResult>>(emptyMap())
     val testResults: StateFlow<Map<String, ModelTestResult>> = _testResults.asStateFlow()
+
+    private val _modelMetadata = MutableStateFlow<Map<String, ModelMetadata>>(emptyMap())
+    val modelMetadata: StateFlow<Map<String, ModelMetadata>> = _modelMetadata.asStateFlow()
 
     private val _testing = MutableStateFlow<Set<String>>(emptySet())
     val testing: StateFlow<Set<String>> = _testing.asStateFlow()
@@ -244,8 +251,23 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             _fetchState.value = FetchState.Loading
             modelApiService.fetchModels(provider.baseUrl, provider.apiKey, provider.type)
-                .onSuccess { _fetchState.value = FetchState.Success(it) }
+                .onSuccess {
+                    _fetchState.value = FetchState.Success(it)
+                    resolveModelMetadata(provider.type, it)
+                }
                 .onFailure { _fetchState.value = FetchState.Error(it.message ?: "拉取失败") }
+        }
+    }
+
+    fun resolveModelMetadata(type: ProviderType, modelIds: List<String>) {
+        val normalizedIds = modelIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (normalizedIds.isEmpty()) return
+        viewModelScope.launch {
+            val metadata = modelMetadataService.resolveAll(type, normalizedIds)
+            _modelMetadata.update { current -> current + metadata }
+            modelMetadataService.refreshAll(type, normalizedIds).onSuccess { refreshed ->
+                _modelMetadata.update { current -> current + refreshed }
+            }
         }
     }
 

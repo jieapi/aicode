@@ -5,6 +5,7 @@ import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIApi
 import java.io.IOException
 import com.aicodeeditor.feature.agent.data.remote.openai.ChatCompletionRequest
 import com.aicodeeditor.feature.agent.data.remote.openai.OpenAIChatMessage
+import com.aicodeeditor.feature.agent.domain.model.AgentImage
 import com.aicodeeditor.feature.agent.domain.model.AgentMessage
 import com.aicodeeditor.feature.agent.domain.tool.AgentTool
 import com.aicodeeditor.feature.agent.domain.tool.ToolCall
@@ -46,7 +47,7 @@ class OpenAIAdapter @Inject constructor(
                 val role = if (model.startsWith("o1") || model.startsWith("o3")) "developer" else "system"
                 add(OpenAIChatMessage(role = role, content = systemPrompt))
             }
-            addAll(convertToOpenAIMessages(messages))
+            addAll(convertToOpenAIMessages(messages, useResponseApi))
         }
 
         val toolDefs = tools.takeIf { it.isNotEmpty() }?.map { tool ->
@@ -132,7 +133,7 @@ class OpenAIAdapter @Inject constructor(
 
         val message = response.choices.firstOrNull()?.message
         val finishReason = response.choices.firstOrNull()?.finish_reason
-        val content = message?.content ?: ""
+        val content = message?.content.asTextContent()
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
         val reasoning = message?.reasoning_content?.takeIf { it.isNotEmpty() }
 
@@ -149,7 +150,7 @@ class OpenAIAdapter @Inject constructor(
                 val role = if (model.startsWith("o1") || model.startsWith("o3")) "developer" else "system"
                 add(OpenAIChatMessage(role = role, content = systemPrompt))
             }
-            addAll(convertToOpenAIMessages(messages))
+            addAll(convertToOpenAIMessages(messages, useResponseApi))
         }
         val toolDefs = tools.takeIf { it.isNotEmpty() }?.map { tool ->
             OpenAIToolDefinition(
@@ -409,10 +410,16 @@ class OpenAIAdapter @Inject constructor(
         return runCatching { Json.parseToJsonElement(trimmed).jsonObject }.getOrElse { JsonObject(emptyMap()) }
     }
 
-    private fun convertToOpenAIMessages(messages: List<AgentMessage>): MutableList<OpenAIChatMessage> {
+    private fun convertToOpenAIMessages(
+        messages: List<AgentMessage>,
+        useResponsesContentParts: Boolean
+    ): MutableList<OpenAIChatMessage> {
         val raw = messages.map { message ->
             when (message) {
-                is AgentMessage.UserMessage -> OpenAIChatMessage(role = "user", content = message.content)
+                is AgentMessage.UserMessage -> OpenAIChatMessage(
+                    role = "user",
+                    content = message.toOpenAIUserContent(useResponsesContentParts)
+                )
                 is AgentMessage.AssistantMessage -> {
                     val toolCalls = if (message.toolCalls.isNotEmpty()) {
                         message.toolCalls.map { convertToOpenAIToolCall(it) }
@@ -451,6 +458,50 @@ class OpenAIAdapter @Inject constructor(
             cleaned.add(msg)
         }
         return cleaned
+    }
+
+    private fun AgentMessage.UserMessage.toOpenAIUserContent(useResponsesContentParts: Boolean): Any {
+        if (images.isEmpty()) return content
+
+        val parts = mutableListOf<Map<String, Any>>()
+        if (content.isNotBlank()) {
+            parts.add(
+                if (useResponsesContentParts) {
+                    mapOf("type" to "input_text", "text" to content)
+                } else {
+                    mapOf("type" to "text", "text" to content)
+                }
+            )
+        }
+        images.forEach { image ->
+            parts.add(image.toOpenAIImagePart(useResponsesContentParts))
+        }
+        return parts
+    }
+
+    private fun AgentImage.toOpenAIImagePart(useResponsesContentParts: Boolean): Map<String, Any> {
+        val imageUrl = "data:$mimeType;base64,$base64Data"
+        return if (useResponsesContentParts) {
+            mapOf(
+                "type" to "input_image",
+                "image_url" to imageUrl,
+                "detail" to "auto"
+            )
+        } else {
+            mapOf(
+                "type" to "image_url",
+                "image_url" to mapOf(
+                    "url" to imageUrl,
+                    "detail" to "auto"
+                )
+            )
+        }
+    }
+
+    private fun Any?.asTextContent(): String = when (this) {
+        null -> ""
+        is String -> this
+        else -> toString()
     }
 
     private fun convertToToolCall(openAIToolCall: OpenAIToolCall): ToolCall {
