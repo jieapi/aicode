@@ -140,14 +140,14 @@ class RemoteServerViewModel @Inject constructor(
         protocol: RemoteProtocol
     ) {
         viewModelScope.launch {
-            val p = port.toIntOrNull() ?: 22
+            val p = port.toIntOrNull() ?: defaultPort(protocol)
             val conn = RemoteConnection(
                 id = UUID.randomUUID().toString(),
                 name = name,
                 protocol = protocol,
                 host = host,
                 port = p,
-                username = username
+                username = username.ifBlank { "local" }
             )
             repository.addConnection(conn, RemoteAuth.Password(password))
         }
@@ -163,14 +163,14 @@ class RemoteServerViewModel @Inject constructor(
         protocol: RemoteProtocol
     ) {
         viewModelScope.launch {
-            val p = port.toIntOrNull() ?: 22
+            val p = port.toIntOrNull() ?: defaultPort(protocol)
             val conn = RemoteConnection(
                 id = id,
                 name = name,
                 protocol = protocol,
                 host = host,
                 port = p,
-                username = username
+                username = username.ifBlank { "local" }
             )
             repository.updateConnection(conn, RemoteAuth.Password(password))
         }
@@ -219,7 +219,7 @@ class RemoteServerViewModel @Inject constructor(
         onResult: (Boolean, String) -> Unit
     ) {
         viewModelScope.launch {
-            val p = port.toIntOrNull() ?: 22
+            val p = port.toIntOrNull() ?: defaultPort(protocol)
             val result = repository.testConnection(host, p, username, RemoteAuth.Password(password), protocol)
             if (result.isSuccess) {
                 onResult(true, "连接成功！")
@@ -266,6 +266,12 @@ class RemoteServerViewModel @Inject constructor(
         viewModelScope.launch {
             ftpServerManager.saveConfig(port, username, password, isAnonymous, autoStart)
         }
+    }
+
+    private fun defaultPort(protocol: RemoteProtocol): Int = when (protocol) {
+        RemoteProtocol.SFTP -> 22
+        RemoteProtocol.FTP -> 21
+        RemoteProtocol.LOCAL -> 0
     }
 }
 
