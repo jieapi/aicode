@@ -23,3 +23,4 @@ keystore.properties
 /.kotlin/
 /.agents/
 /skills-lock.json
+/AGENTS.md

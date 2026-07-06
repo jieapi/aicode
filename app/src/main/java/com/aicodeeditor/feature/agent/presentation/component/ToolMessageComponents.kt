@@ -97,10 +97,13 @@ internal fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null
     val todoData = if (message.toolName == "todo" && !running && !message.isError) {
         remember(message.id, message.content) { parseTodoResult(message.content) }
     } else null
+    val webSearchData = if (message.toolName == "websearch" && !running && !message.isError) {
+        remember(message.id, message.content) { parseWebSearchResult(message.content) }
+    } else null
 
     val expandable = !running && (edit != null || !resultText.isNullOrBlank() || !argsFull.isNullOrBlank()
-            || (todoData != null && todoData.items.isNotEmpty()))
-    var expanded by remember(message.id) { mutableStateOf(edit != null || todoData != null) }
+            || (todoData != null && todoData.items.isNotEmpty()) || webSearchData != null)
+    var expanded by remember(message.id) { mutableStateOf(edit != null || todoData != null || webSearchData != null) }
 
     val toolLabel = if (edit != null) edit.path.substringAfterLast('/') else (message.toolName ?: "工具")
 
@@ -180,6 +183,9 @@ internal fun ToolMessageBody(message: AgentUIMessage, liveOutput: String? = null
             if (todoData != null && todoData.items.isNotEmpty()) {
                 Spacer(Modifier.height(Spacing.sm))
                 TodoCard(items = todoData.items)
+            } else if (webSearchData != null) {
+                Spacer(Modifier.height(Spacing.sm))
+                WebSearchResultCard(result = webSearchData)
             } else if (edit != null) {
                 edit.hunks.forEach { h ->
                     Spacer(Modifier.height(Spacing.xs))
