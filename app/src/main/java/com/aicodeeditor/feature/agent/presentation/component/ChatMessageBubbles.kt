@@ -43,12 +43,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -93,9 +90,7 @@ import compose.icons.feathericons.ChevronUp
 import compose.icons.feathericons.Star
 import compose.icons.feathericons.FileText
 import compose.icons.feathericons.Image
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.debounce
 
 internal class MarkdownRenderCache(
     private val maxEntries: Int = 80
@@ -536,15 +531,10 @@ internal fun CompactionProgressBubble() {
  * 模型流式吐字时的实时气泡：左对齐、与助手气泡同款。
  * 尾部带三个跳动的点表示仍在生成。本轮结束后由落库的助手气泡接管。
  *
- * 流式阶段只渲染纯文本，避免每个打字机 tick 都重建 Markdown AST。
- * 稳定落库后的助手消息再走 [MarkdownContent]，这样滚动和生成都不会被解析任务卡住。
+ * 流式阶段也渲染 Markdown，但使用采样文本降低解析频率；最终落库消息再走常规缓存渲染。
  */
-@OptIn(FlowPreview::class)
 @Composable
 internal fun StreamingBubble(text: String) {
-    // 打字机：把节流后「蹦出来」的目标文本转成逐字浮现，避免每隔 80ms 跳变一次的顿挫感。
-    val displayText = rememberTypewriterText(target = rememberDebouncedText(text))
-
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start
@@ -556,8 +546,8 @@ internal fun StreamingBubble(text: String) {
             modifier = Modifier.fillMaxWidth(0.88f)
         ) {
             Column(modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm)) {
-                PlainMarkdownText(
-                    text = displayText,
+                MarkdownContent(
+                    text = text,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.height(Spacing.sm))
@@ -567,48 +557,6 @@ internal fun StreamingBubble(text: String) {
     }
 }
 
-@OptIn(FlowPreview::class)
-@Composable
-internal fun rememberDebouncedText(target: String, debounceMillis: Long = 80): String {
-    var debouncedText by remember { mutableStateOf(target) }
-    val latestText by rememberUpdatedState(target)
-    LaunchedEffect(debounceMillis) {
-        snapshotFlow { latestText }
-            .debounce(debounceMillis)
-            .collect { debouncedText = it }
-    }
-    return debouncedText
-}
-
-/**
- * 打字机平滑：把会「跳变」的目标文本（节流后每 80ms 往往一次蹦出一大块）
- * 转成以稳定帧率逐字浮现的显示文本。落后越多步进越大（按比例追赶），既不会越拖越远，
- * 临近追平时又退化为逐字，呈现自然的打字手感。目标被清空/缩短（新一轮或重置）时立即对齐。
- *
- * 实现要点：用 rememberUpdatedState 持有最新目标，LaunchedEffect(Unit) 跑一个常驻追赶循环——
- * 不要把 target 当 LaunchedEffect 的 key，那样目标每变（每 80ms）就重启 effect、丢失追赶进度。
- */
-@Composable
-internal fun rememberTypewriterText(target: String): String {
-    var visibleCount by remember { mutableIntStateOf(0) }
-    val latestTarget by rememberUpdatedState(target)
-    LaunchedEffect(Unit) {
-        while (true) {
-            val t = latestTarget
-            // 目标缩短（新一轮/重置）：立即对齐，避免逐字回退。
-            if (t.length < visibleCount) visibleCount = t.length
-            if (visibleCount < t.length) {
-                val remaining = t.length - visibleCount
-                // 按比例追赶：落后越多步进越大；临近追平时退化为逐字。
-                val step = (remaining / 4).coerceIn(1, 60)
-                visibleCount += step
-            }
-            delay(32)
-        }
-    }
-    return target.take(visibleCount.coerceAtMost(target.length))
-}
-
 /**
  * 思考过程可折叠气泡：左对齐、浅色弱化，与正式回复区分。点击标题栏折叠/展开。
  * [initiallyExpanded]：流式实时展示时默认展开以便边想边看；落库后的历史气泡默认折叠，避免刷屏。
@@ -616,15 +564,10 @@ internal fun rememberTypewriterText(target: String): String {
 @Composable
 internal fun ReasoningBubble(
     text: String,
-    initiallyExpanded: Boolean = true,
-    streaming: Boolean = false
+    initiallyExpanded: Boolean = true
 ) {
     var expanded by remember { mutableStateOf(initiallyExpanded) }
-    val displayText = if (streaming) {
-        rememberTypewriterText(target = rememberDebouncedText(text))
-    } else {
-        text
-    }
+    val displayText = text
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start

@@ -38,7 +38,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.core.theme.Radius
 import com.aicodeeditor.core.theme.Spacing
 import com.aicodeeditor.feature.workspace.domain.model.Workspace
@@ -70,7 +69,7 @@ fun WorkspaceChip(
         Icon(
             FeatherIcons.Folder,
             contentDescription = null,
-            tint = Brand.IconGray,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(16.dp)
         )
         Spacer(Modifier.width(Spacing.xs))
@@ -84,7 +83,7 @@ fun WorkspaceChip(
         Icon(
             FeatherIcons.MoreHorizontal,
             contentDescription = "切换工作区",
-            tint = Brand.IconGray,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(16.dp)
         )
     }
@@ -149,7 +148,7 @@ fun WorkspaceIconButton(
         Icon(
             FeatherIcons.Folder,
             contentDescription = "打开工作区",
-            tint = Brand.IconGray
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 
@@ -306,7 +305,7 @@ private fun WorkspaceRow(
         Icon(
             FeatherIcons.Folder,
             contentDescription = null,
-            tint = Brand.IconGray,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(20.dp)
         )
         Spacer(Modifier.width(Spacing.md))
@@ -322,7 +321,7 @@ private fun WorkspaceRow(
             Icon(
                 FeatherIcons.Check,
                 contentDescription = "当前",
-                tint = Brand.IconGray,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp)
             )
         } else if (canDelete) {
@@ -336,7 +335,7 @@ private fun WorkspaceRow(
                 Icon(
                     FeatherIcons.Trash2,
                     contentDescription = "删除",
-                    tint = Brand.IconGray,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp)
                 )
             }

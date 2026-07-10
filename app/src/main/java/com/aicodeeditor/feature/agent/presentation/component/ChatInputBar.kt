@@ -162,14 +162,20 @@ internal fun ChatInputBar(
                                 onToggleMode(nextMode)
                             }
                     ) {
-                        Text(
-                            text = if (isPlan) "PLAN" else "BUILD",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = if (isPlan) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                        Box(
+                            modifier = Modifier
+                                .width(58.dp)
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (isPlan) "PLAN" else "BUILD",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isPlan) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                                )
                             )
-                        )
+                        }
                     }
                     Spacer(Modifier.width(Spacing.sm))
 
@@ -370,14 +376,12 @@ internal fun UploadIconButton(
 ) {
     IconButton(
         onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.size(44.dp)
+        enabled = enabled
     ) {
         Icon(
             icon,
             contentDescription = contentDescription,
             tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
-            modifier = Modifier.size(20.dp)
         )
     }
 }

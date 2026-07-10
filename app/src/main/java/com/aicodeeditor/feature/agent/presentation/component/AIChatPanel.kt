@@ -540,7 +540,7 @@ fun AIChatPanel(
                         val showReasoning = reasoning != null && reasoning.isNotEmpty()
                         if (showReasoning) {
                             item(key = "__reasoning__", contentType = "tail") {
-                                ReasoningBubble(text = reasoning!!, streaming = true)
+                                ReasoningBubble(text = reasoning!!)
                             }
                         }
                         val streaming = streamingText
