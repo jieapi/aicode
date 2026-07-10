@@ -25,7 +25,7 @@ data class ModelTestResult(
 )
 
 /**
- * 直接通过 OkHttp 调用服务商的 REST 接口来拉取模型列表与测试连通性，
+ * 直接通过 OkHttp 调用提供商的 REST 接口来拉取模型列表与测试连通性，
  * 复用全局 OkHttpClient，独立于聊天用的 Retrofit 适配器。
  */
 @Singleton
@@ -34,7 +34,7 @@ class ModelApiService @Inject constructor(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** 拉取服务商可用模型列表（OpenAI 兼容 / Anthropic 均为 GET /v1/models，Gemini 为 GET /v1beta/models）。 */
+    /** 拉取提供商可用模型列表（OpenAI 兼容 / Anthropic 均为 GET /v1/models，Gemini 为 GET /v1beta/models）。 */
     suspend fun fetchModels(
         baseUrl: String,
         apiKey: String,

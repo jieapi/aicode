@@ -40,7 +40,7 @@ class AIProviderRepositoryImpl @Inject constructor(
     }
 
     override suspend fun saveProvider(provider: AIProviderConfig) {
-        FileLogger.i(TAG, "保存服务商 id=${provider.id} name=${provider.name} active=${provider.isActive}")
+        FileLogger.i(TAG, "保存提供商 id=${provider.id} name=${provider.name} active=${provider.isActive}")
         val entity = provider.toEntity()
         if (provider.isActive) {
             aiProviderDao.deactivateAllProviders()
@@ -49,12 +49,12 @@ class AIProviderRepositoryImpl @Inject constructor(
     }
 
     override suspend fun deleteProvider(id: String) {
-        FileLogger.i(TAG, "删除服务商 id=$id")
+        FileLogger.i(TAG, "删除提供商 id=$id")
         aiProviderDao.deleteProvider(id)
     }
 
     override suspend fun setActiveProvider(id: String) {
-        FileLogger.i(TAG, "切换启用服务商 id=$id")
+        FileLogger.i(TAG, "切换启用提供商 id=$id")
         aiProviderDao.deactivateAllProviders()
         aiProviderDao.activateProvider(id)
     }
@@ -70,7 +70,7 @@ class AIProviderRepositoryImpl @Inject constructor(
     }
 
     override suspend fun setProviderEnabled(id: String, isEnabled: Boolean) {
-        FileLogger.i(TAG, "设置服务商状态 provider=$id isEnabled=$isEnabled")
+        FileLogger.i(TAG, "设置提供商状态 provider=$id isEnabled=$isEnabled")
         aiProviderDao.setProviderEnabled(id, isEnabled)
     }
 
@@ -78,7 +78,7 @@ class AIProviderRepositoryImpl @Inject constructor(
         // 已有激活项则无需处理。
         if (aiProviderDao.getActiveProviderSync() != null) return
         val first = aiProviderDao.getAllProviders().first().firstOrNull() ?: return
-        FileLogger.i(TAG, "无激活服务商，自动激活首个: ${first.id} (${first.name})")
+        FileLogger.i(TAG, "无激活提供商，自动激活首个: ${first.id} (${first.name})")
         aiProviderDao.deactivateAllProviders()
         aiProviderDao.activateProvider(first.id)
     }

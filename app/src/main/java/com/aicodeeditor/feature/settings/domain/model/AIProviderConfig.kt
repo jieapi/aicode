@@ -8,7 +8,7 @@ data class AIProviderConfig(
     val baseUrl: String,
     val defaultModel: String,
     val isActive: Boolean,
-    /** 该服务商已添加的可用模型列表（拉取或手动添加）。 */
+    /** 该提供商已添加的可用模型列表（拉取或手动添加）。 */
     val models: List<String> = emptyList(),
     /** 当前选中使用的模型；为空时回退到 defaultModel。 */
     val selectedModel: String = defaultModel,
