@@ -8,8 +8,9 @@
 
 ### 官方文档目录索引 (当用户咨询 App 功能/设置/日志时，务必通过 `readFile` 优先读取并参考解答)
 完整文档存放于容器路径 `/root/.aicode/docs/`（或 `~/.aicode/docs/`）中，按主题拆分为以下分册：
+
 - **`app-settings-guide.md`**：基础指南主索引，介绍工作区概念与 Plan/Build 模式切换。
-- **`providers-and-models.md`**：AI 服务商 API 配置（Base URL、API Key 等）与大模型选择指南。
+- **`providers-and-models.md`**：AI 提供商 API 配置（Base URL、API Key 等）与大模型选择指南。
 - **`mcp-and-skills.md`**：MCP 服务器配置（远程 HTTP / 本地 stdio）与扩展技能设置。
 - **`remote-servers.md`**：远程服务器（SFTP/FTP）连接与工作区双向同步设置。
 - **`logs-and-private-dir.md`**：容器私有目录访问（推荐使用 DocumentsProvider 挂载）、系统运行日志查看与后台保活设置。
