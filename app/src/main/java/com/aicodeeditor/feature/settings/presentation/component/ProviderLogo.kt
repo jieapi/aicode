@@ -3,8 +3,12 @@ package com.aicodeeditor.feature.settings.presentation.component
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -12,6 +16,7 @@ import com.aicodeeditor.R
 import com.aicodeeditor.core.theme.Brand
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Cloud
 import compose.icons.feathericons.Cpu
 
 /**
@@ -89,6 +94,14 @@ fun brandLogoRes(key: String): Int? = when (key) {
     else -> null
 }
 
+private fun shouldTintModelLogo(key: String): Boolean = key == "grok" || key == "openai"
+
+@Composable
+private fun modelLogoTint(): Color {
+    val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return if (isDarkTheme) Color.White else Color.Black
+}
+
 /**
  * 渲染品牌 logo 图标；若未匹配或 provider 为 null，则显示默认 Cpu 图标。
  */
@@ -107,9 +120,9 @@ fun ProviderLogoIcon(
         )
     } else {
         Icon(
-            imageVector = FeatherIcons.Cpu,
-            contentDescription = "模型选择",
-            tint = Brand.IconGray,
+            imageVector = FeatherIcons.Cloud,
+            contentDescription = "AI 提供商",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = modifier.size(size)
         )
     }
@@ -130,6 +143,7 @@ fun ModelLogoIcon(
         Image(
             painter = painterResource(res),
             contentDescription = modelName,
+            colorFilter = if (shouldTintModelLogo(key)) ColorFilter.tint(modelLogoTint()) else null,
             modifier = modifier.size(size)
         )
     } else {
