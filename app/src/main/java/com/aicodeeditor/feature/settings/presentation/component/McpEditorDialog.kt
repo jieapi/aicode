@@ -64,6 +64,7 @@ fun McpServerEditDialog(
     initial: McpServerConfig?,
     tools: List<McpToolDescriptor> = emptyList(),
     onRefreshTools: () -> Unit = {},
+    onOpenLogs: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onSave: (McpServerConfig) -> Unit,
     onDelete: (() -> Unit)?
@@ -145,6 +146,18 @@ fun McpServerEditDialog(
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurface
                     )
+                    if (onOpenLogs != null) {
+                        IconButton(
+                            onClick = onOpenLogs,
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                FeatherIcons.FileText,
+                                contentDescription = "查看此 MCP 日志",
+                                tint = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = onRefreshTools,
                         modifier = Modifier.size(36.dp)

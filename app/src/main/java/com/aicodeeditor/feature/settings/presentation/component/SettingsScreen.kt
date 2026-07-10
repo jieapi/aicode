@@ -3,6 +3,8 @@ package com.aicodeeditor.feature.settings.presentation.component
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,6 +51,7 @@ import com.aicodeeditor.feature.agent.domain.mcp.McpServerConfig
 import com.aicodeeditor.feature.agent.domain.mcp.McpServerStatus
 import com.aicodeeditor.feature.settings.data.repository.AppThemeMode
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
+import com.aicodeeditor.feature.settings.domain.model.ModelMetadata
 import com.aicodeeditor.feature.settings.presentation.SettingsViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
@@ -56,10 +59,12 @@ import compose.icons.feathericons.*
 /** 设置页内部二级菜单分区。Menu 为首页菜单，其余为各自的二级页。 */
 internal enum class SettingsSection(val title: String) {
     Menu("设置"),
-    Providers("AI 服务商"),
-    ProviderEditor("服务商"),
+    Providers("AI 提供商"),
+    ProviderEditor("提供商"),
+    VisionModel("识图模型"),
     Mcp("MCP 服务器"),
     Log("日志等级"),
+    LogViewer("日志查看"),
     Permissions("工具授权"),
     RemoteServers("远程工作区")
 }
@@ -73,6 +78,7 @@ fun SettingsScreen(
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val activeProvider by viewModel.activeProvider.collectAsStateWithLifecycle()
     val logLevel by viewModel.logLevel.collectAsStateWithLifecycle()
+    val logViewerState by viewModel.logViewerState.collectAsStateWithLifecycle()
     val mcpServers by viewModel.mcpServers.collectAsStateWithLifecycle()
     val mcpStatuses by viewModel.mcpStatuses.collectAsStateWithLifecycle()
     val mcpReloading by viewModel.mcpReloading.collectAsStateWithLifecycle()
@@ -80,8 +86,12 @@ fun SettingsScreen(
     val projectRules by viewModel.projectRules.collectAsStateWithLifecycle()
     val keepaliveEnabled by viewModel.keepaliveEnabled.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+    val visionProviderId by viewModel.visionProviderId.collectAsStateWithLifecycle()
+    val visionModel by viewModel.visionModel.collectAsStateWithLifecycle()
+    val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
+    var logReturnSection by remember { mutableStateOf(SettingsSection.Menu) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
     var showMcpDialog by remember { mutableStateOf(false) }
     var editingMcp by remember { mutableStateOf<McpServerConfig?>(null) }
@@ -90,11 +100,12 @@ fun SettingsScreen(
     BackHandler(enabled = section != SettingsSection.Menu) {
         when (section) {
             SettingsSection.ProviderEditor -> section = SettingsSection.Providers
+            SettingsSection.LogViewer -> section = logReturnSection
             else -> section = SettingsSection.Menu
         }
     }
 
-    // 服务商编辑为独立全屏页，直接渲染（不嵌套 Scaffold）
+    // 提供商编辑为独立全屏页，直接渲染（不嵌套 Scaffold）
     if (section == SettingsSection.ProviderEditor) {
         ProviderEditorScreen(
             viewModel = viewModel,
@@ -102,7 +113,6 @@ fun SettingsScreen(
             onNavigateBack = { section = SettingsSection.Providers },
             onSave = { provider ->
                 viewModel.saveProvider(provider)
-                section = SettingsSection.Providers
             },
             onDelete = { id ->
                 viewModel.deleteProvider(id)
@@ -130,7 +140,13 @@ fun SettingsScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (section == SettingsSection.Menu) onNavigateBack() else section = SettingsSection.Menu
+                        if (section == SettingsSection.Menu) {
+                            onNavigateBack()
+                        } else if (section == SettingsSection.LogViewer) {
+                            section = logReturnSection
+                        } else {
+                            section = SettingsSection.Menu
+                        }
                     }) {
                         Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                     }
@@ -141,7 +157,7 @@ fun SettingsScreen(
                             editingProvider = null
                             section = SettingsSection.ProviderEditor
                         }) {
-                            Icon(FeatherIcons.Plus, contentDescription = "添加服务商")
+                            Icon(FeatherIcons.Plus, contentDescription = "添加提供商")
                         }
                         SettingsSection.Mcp -> {
                             IconButton(onClick = { viewModel.reloadMcp() }) {
@@ -156,6 +172,11 @@ fun SettingsScreen(
                                 showMcpDialog = true
                             }) {
                                 Icon(FeatherIcons.Plus, contentDescription = "添加 MCP 服务器")
+                            }
+                        }
+                        SettingsSection.LogViewer -> {
+                            IconButton(onClick = { viewModel.refreshLogs() }) {
+                                Icon(FeatherIcons.RefreshCw, contentDescription = "刷新日志")
                             }
                         }
                         else -> {}
@@ -173,6 +194,8 @@ fun SettingsScreen(
                 SettingsSection.Menu -> SettingsMenu(
                     providerCount = providers.size,
                     activeProviderName = activeProvider?.name,
+                    visionProviderName = providers.firstOrNull { it.id == visionProviderId }?.name,
+                    visionModel = visionModel,
                     mcpCount = mcpServers.size,
                     mcpConnected = mcpStatuses.count { it.state == McpServerStatus.State.CONNECTED },
                     logLevel = logLevel,
@@ -181,7 +204,13 @@ fun SettingsScreen(
                     onThemeModeChange = { viewModel.setThemeMode(it) },
                     keepaliveEnabled = keepaliveEnabled,
                     onToggleKeepalive = { viewModel.setKeepaliveEnabled(it) },
-                    onOpen = { section = it }
+                    onOpen = {
+                        if (it == SettingsSection.LogViewer) {
+                            logReturnSection = SettingsSection.Menu
+                            viewModel.refreshLogs(filterServerName = null)
+                        }
+                        section = it
+                    }
                 )
                 SettingsSection.Providers -> ProvidersSection(
                     providers = providers,
@@ -190,6 +219,15 @@ fun SettingsScreen(
                         editingProvider = it
                         section = SettingsSection.ProviderEditor
                     }
+                )
+                SettingsSection.VisionModel -> VisionModelSection(
+                    providers = providers,
+                    visionProviderId = visionProviderId,
+                    visionModel = visionModel,
+                    modelMetadata = modelMetadata,
+                    onLoadMetadata = { viewModel.loadAllModelMetadata() },
+                    onSelect = { pid, m -> viewModel.setVisionModel(pid, m) },
+                    onClear = { viewModel.clearVisionModel() }
                 )
                 SettingsSection.Mcp -> McpSection(
                     servers = mcpServers,
@@ -206,6 +244,10 @@ fun SettingsScreen(
                 SettingsSection.Log -> LogSection(
                     current = logLevel,
                     onSelect = { viewModel.setLogLevel(it) }
+                )
+                SettingsSection.LogViewer -> LogViewerSection(
+                    state = logViewerState,
+                    onSelectFile = { viewModel.selectLogFile(it) }
                 )
                 SettingsSection.Permissions -> PermissionsSection(
                     projectName = viewModel.currentProjectName,
@@ -226,6 +268,14 @@ fun SettingsScreen(
             initial = editingMcp,
             tools = viewModel.getMcpServerTools(editingMcp?.name),
             onRefreshTools = { viewModel.reloadMcp() },
+            onOpenLogs = editingMcp?.let { existing ->
+                {
+                    showMcpDialog = false
+                    logReturnSection = SettingsSection.Mcp
+                    viewModel.refreshLogs(filterServerName = existing.name)
+                    section = SettingsSection.LogViewer
+                }
+            },
             onDismiss = { showMcpDialog = false },
             onSave = { config ->
                 viewModel.upsertMcpServer(editingMcp?.name, config)
@@ -246,6 +296,8 @@ fun SettingsScreen(
 internal fun SettingsMenu(
     providerCount: Int,
     activeProviderName: String?,
+    visionProviderName: String?,
+    visionModel: String,
     mcpCount: Int,
     mcpConnected: Int,
     logLevel: LogLevel,
@@ -259,18 +311,29 @@ internal fun SettingsMenu(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
         MenuRow(
-            icon = FeatherIcons.Cpu,
+            icon = FeatherIcons.Cloud,
             title = SettingsSection.Providers.title,
             subtitle = if (providerCount == 0) {
-                "未添加服务商"
+                "未添加提供商"
             } else {
                 "$providerCount 个" + (activeProviderName?.let { " · 启用：$it" } ?: "")
             },
             onClick = { onOpen(SettingsSection.Providers) }
+        )
+        MenuRow(
+            icon = FeatherIcons.Image,
+            title = SettingsSection.VisionModel.title,
+            subtitle = if (visionProviderName.isNullOrBlank() || visionModel.isBlank()) {
+                "跟随当前聊天模型"
+            } else {
+                "专用：$visionProviderName · $visionModel"
+            },
+            onClick = { onOpen(SettingsSection.VisionModel) }
         )
         MenuRow(
             icon = FeatherIcons.Box,
@@ -283,6 +346,12 @@ internal fun SettingsMenu(
             title = SettingsSection.Log.title,
             subtitle = "当前：${logLevel.name}",
             onClick = { onOpen(SettingsSection.Log) }
+        )
+        MenuRow(
+            icon = FeatherIcons.FileText,
+            title = SettingsSection.LogViewer.title,
+            subtitle = "查看最近日志，支持 MCP 名称过滤",
+            onClick = { onOpen(SettingsSection.LogViewer) }
         )
         MenuRow(
             icon = FeatherIcons.Lock,

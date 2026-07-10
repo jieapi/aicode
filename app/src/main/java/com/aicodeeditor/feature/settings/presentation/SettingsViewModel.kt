@@ -2,6 +2,7 @@ package com.aicodeeditor.feature.settings.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aicodeeditor.core.util.FileLogger
 import com.aicodeeditor.core.util.LogLevel
 import com.aicodeeditor.feature.agent.domain.mcp.McpConfigRepository
 import com.aicodeeditor.feature.agent.domain.mcp.McpManager
@@ -17,6 +18,7 @@ import com.aicodeeditor.feature.settings.data.repository.AppThemeMode
 import com.aicodeeditor.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.LogSettingsRepository
 import com.aicodeeditor.feature.settings.data.repository.ThemeSettingsRepository
+import com.aicodeeditor.feature.settings.data.repository.VisionModelSettingsRepository
 import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.domain.model.ModelMetadata
 import com.aicodeeditor.feature.settings.domain.model.ProviderType
@@ -27,7 +29,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 sealed class FetchState {
@@ -36,6 +40,17 @@ sealed class FetchState {
     data class Success(val models: List<String>) : FetchState()
     data class Error(val message: String) : FetchState()
 }
+
+data class LogViewerUiState(
+    val files: List<String> = emptyList(),
+    val selectedFileName: String? = null,
+    val filterServerName: String? = null,
+    val content: String = "",
+    val totalLines: Int = 0,
+    val shownLines: Int = 0,
+    val loading: Boolean = false,
+    val error: String? = null
+)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -47,8 +62,12 @@ class SettingsViewModel @Inject constructor(
     private val keepaliveSettingsRepository: KeepaliveSettingsRepository,
     private val mcpConfigRepository: McpConfigRepository,
     private val mcpManager: McpManager,
-    private val permissionRulesRepository: PermissionRulesRepository
+    private val permissionRulesRepository: PermissionRulesRepository,
+    private val visionModelSettingsRepository: VisionModelSettingsRepository
 ) : ViewModel() {
+    private companion object {
+        const val MAX_LOG_LINES = 1200
+    }
 
     private val _providers = MutableStateFlow<List<AIProviderConfig>>(emptyList())
     val providers: StateFlow<List<AIProviderConfig>> = _providers.asStateFlow()
@@ -56,8 +75,18 @@ class SettingsViewModel @Inject constructor(
     private val _activeProvider = MutableStateFlow<AIProviderConfig?>(null)
     val activeProvider: StateFlow<AIProviderConfig?> = _activeProvider.asStateFlow()
 
+    /** 识图专用模型选择：providerId 为空即「跟随当前聊天模型」。 */
+    private val _visionProviderId = MutableStateFlow("")
+    val visionProviderId: StateFlow<String> = _visionProviderId.asStateFlow()
+
+    private val _visionModel = MutableStateFlow("")
+    val visionModel: StateFlow<String> = _visionModel.asStateFlow()
+
     private val _logLevel = MutableStateFlow(LogLevel.VERBOSE)
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()
+
+    private val _logViewerState = MutableStateFlow(LogViewerUiState())
+    val logViewerState: StateFlow<LogViewerUiState> = _logViewerState.asStateFlow()
 
     private val _keepaliveEnabled = MutableStateFlow(false)
     val keepaliveEnabled: StateFlow<Boolean> = _keepaliveEnabled.asStateFlow()
@@ -95,13 +124,13 @@ class SettingsViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            // 启动即保证有激活服务商（若库中存在却无激活项），避免主页模型胶囊因 activeProvider=null 消失。
+            // 启动即保证有激活提供商（若库中存在却无激活项），避免主页模型胶囊因 activeProvider=null 消失。
             repository.ensureActiveProvider()
 
             launch {
                 repository.getAllProviders().collectLatest {
                     _providers.value = it
-                    // 运行期兜底：服务商列表变化后若仍无激活项且有服务商，自动激活首个。
+                    // 运行期兜底：提供商列表变化后若仍无激活项且有提供商，自动激活首个。
                     if (_activeProvider.value == null && it.isNotEmpty()) {
                         repository.ensureActiveProvider()
                     }
@@ -111,6 +140,18 @@ class SettingsViewModel @Inject constructor(
             launch {
                 repository.getActiveProvider().collectLatest {
                     _activeProvider.value = it
+                }
+            }
+
+            launch {
+                visionModelSettingsRepository.providerIdFlow.collectLatest {
+                    _visionProviderId.value = it
+                }
+            }
+
+            launch {
+                visionModelSettingsRepository.modelFlow.collectLatest {
+                    _visionModel.value = it
                 }
             }
 
@@ -210,6 +251,70 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun refreshLogs(filterServerName: String? = _logViewerState.value.filterServerName) {
+        loadLogs(
+            filterServerName = filterServerName?.takeIf { it.isNotBlank() },
+            preferredFileName = _logViewerState.value.selectedFileName
+        )
+    }
+
+    fun selectLogFile(fileName: String) {
+        loadLogs(
+            filterServerName = _logViewerState.value.filterServerName,
+            preferredFileName = fileName
+        )
+    }
+
+    private fun loadLogs(filterServerName: String?, preferredFileName: String?) {
+        viewModelScope.launch {
+            _logViewerState.update {
+                it.copy(
+                    loading = true,
+                    filterServerName = filterServerName,
+                    error = null
+                )
+            }
+            val state = withContext(Dispatchers.IO) {
+                runCatching {
+                    val files = FileLogger.listLogFiles()
+                    val selected = files.firstOrNull { it.name == preferredFileName } ?: files.lastOrNull()
+                    if (selected == null) {
+                        return@runCatching LogViewerUiState(
+                            filterServerName = filterServerName,
+                            error = "还没有日志文件"
+                        )
+                    }
+
+                    val rawLines = selected.readLines(Charsets.UTF_8)
+                    val filteredLines = if (filterServerName.isNullOrBlank()) {
+                        rawLines
+                    } else {
+                        rawLines.filter { line ->
+                            line.contains("[$filterServerName]") ||
+                                line.contains(filterServerName, ignoreCase = true)
+                        }
+                    }
+                    val visibleLines = filteredLines.takeLast(MAX_LOG_LINES)
+
+                    LogViewerUiState(
+                        files = files.map { it.name },
+                        selectedFileName = selected.name,
+                        filterServerName = filterServerName,
+                        content = visibleLines.joinToString("\n"),
+                        totalLines = filteredLines.size,
+                        shownLines = visibleLines.size
+                    )
+                }.getOrElse { e ->
+                    LogViewerUiState(
+                        filterServerName = filterServerName,
+                        error = "读取日志失败: ${e.message}"
+                    )
+                }
+            }
+            _logViewerState.value = state
+        }
+    }
+
     // 仅持久化标志位——启停 Service 由 AIEditorApp 监听 enabledFlow 统一完成。
     fun setKeepaliveEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -220,6 +325,20 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: AppThemeMode) {
         viewModelScope.launch {
             themeSettingsRepository.setThemeMode(mode)
+        }
+    }
+
+    /** 设置识图专用模型；providerId 留空等同 [clearVisionModel]（跟随聊天模型）。 */
+    fun setVisionModel(providerId: String, model: String) {
+        viewModelScope.launch {
+            visionModelSettingsRepository.setVisionModel(providerId, model)
+        }
+    }
+
+    /** 清空识图专用模型——回退到跟随当前聊天模型。 */
+    fun clearVisionModel() {
+        viewModelScope.launch {
+            visionModelSettingsRepository.clear()
         }
     }
 
@@ -267,6 +386,35 @@ class SettingsViewModel @Inject constructor(
             _modelMetadata.update { current -> current + metadata }
             modelMetadataService.refreshAll(type, normalizedIds).onSuccess { refreshed ->
                 _modelMetadata.update { current -> current + refreshed }
+            }
+        }
+    }
+
+    /**
+     * 加载所有已启用 provider 的全部模型元数据，合并进 [modelMetadata]。
+     * 供「识图模型」等需要展示跨 provider 模型能力标签的页面在进入时调用--
+     * 这些页面不像 ProviderEditor 那样会在编辑单个 provider 时顺带 resolve，
+     * 不主动加载则 map 为空、所有模型都被误判为不支持图片。
+     *
+     * 实现要点（避免设置页卡顿）：
+     * - 单协程顺序处理各 provider：首个 resolveAll 触发 catalog 加载（网络/磁盘）并写入内存缓存，
+     *   后续 provider 命中缓存，不会并发重复拉取 models.dev。
+     * - 只调 resolveAll（用缓存/磁盘/infer），不调 refreshAll--识图页只需能力标签，
+     *   最新 catalog 的刷新留给 ProviderEditor 显式触发。
+     * - 全部解析完一次性 update，避免多次 emit 导致设置页反复重组。
+     */
+    fun loadAllModelMetadata() {
+        val enabled = _providers.value.filter { it.isEnabled }
+        if (enabled.isEmpty()) return
+        viewModelScope.launch {
+            val resolved = mutableMapOf<String, ModelMetadata>()
+            for (provider in enabled) {
+                val ids = provider.models.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+                if (ids.isEmpty()) continue
+                resolved += modelMetadataService.resolveAll(provider.type, ids)
+            }
+            if (resolved.isNotEmpty()) {
+                _modelMetadata.update { it + resolved }
             }
         }
     }
