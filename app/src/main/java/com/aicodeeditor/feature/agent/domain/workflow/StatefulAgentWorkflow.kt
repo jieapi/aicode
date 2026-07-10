@@ -27,6 +27,8 @@ import com.aicodeeditor.feature.agent.domain.tool.ToolOutputStore
 import com.aicodeeditor.feature.agent.domain.tool.ToolStreamEvent
 import com.aicodeeditor.feature.agent.domain.tool.toTransportString
 import com.aicodeeditor.feature.settings.data.remote.ModelMetadataService
+import com.aicodeeditor.feature.settings.data.repository.VisionModelSettingsRepository
+import com.aicodeeditor.feature.settings.domain.model.AIProviderConfig
 import com.aicodeeditor.feature.settings.domain.model.ProviderType
 import com.aicodeeditor.feature.settings.domain.repository.AIProviderRepository
 import kotlinx.coroutines.CancellationException
@@ -56,7 +58,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val contextCompactor: ContextCompactor,
     private val planApprovalManager: PlanApprovalManager,
     private val toolOutputStore: ToolOutputStore,
-    private val modelMetadataService: ModelMetadataService
+    private val modelMetadataService: ModelMetadataService,
+    private val visionModelSettingsRepository: VisionModelSettingsRepository
 ) : AgentWorkflow {
 
     private companion object {
@@ -74,7 +77,9 @@ class StatefulAgentWorkflow @Inject constructor(
         val isFinished: Boolean = false,
         val error: String? = null,
         val pendingToolCalls: List<ToolCall> = emptyList(),
-        val executingToolCall: ToolCall? = null
+        val executingToolCall: ToolCall? = null,
+        /** 标记下一轮 CallLlm 用于识图——若当前聊天模型不支持 vision 则临时切到识图专用模型发送。 */
+        val pendingVisionRound: Boolean = false
     )
 
     /** 改变状态的动作 (Action) */
@@ -119,10 +124,21 @@ class StatefulAgentWorkflow @Inject constructor(
 
     private suspend fun getActiveProvider(sessionId: String?): AIProvider {
         val config = aiProviderRepository.getActiveProviderSync()
-            ?: throw IllegalStateException("尚未配置 AI 服务商，请到设置中添加并选择一个")
+            ?: throw IllegalStateException("尚未配置 AI 提供商，请到设置中添加并选择一个")
         if (config.apiKey.isBlank()) throw IllegalStateException("「${config.name}」未填写 API Key")
         if (config.effectiveModel.isBlank()) throw IllegalStateException("「${config.name}」未选择模型")
+        return getProviderFor(config, sessionId)
+    }
 
+    /**
+     * 据 [config] 选定对应的 provider 单例实例并填入其连接字段后返回。
+     * 复用于「当前聊天模型」与「识图专用模型」两条路径。
+     *
+     * 注意：三个 provider 实例是注入的单例且字段可变（apiKey/baseUrl/apiPath/useResponseApi/model/logSessionId），
+     * 调用方在用本方法切换到不同于当前的 provider 后，必须在发送请求的 try/finally 里保存并恢复所有可变字段，
+     * 以免污染后续轮次——见 effect 执行层识图轮的 save/Restore。
+     */
+    private fun getProviderFor(config: AIProviderConfig, sessionId: String?): AIProvider {
         val provider = when (config.type) {
             ProviderType.ANTHROPIC -> anthropicProvider
             ProviderType.GEMINI -> geminiProvider
@@ -131,6 +147,8 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.apiKey = config.apiKey
         provider.baseUrl = config.baseUrl
         provider.model = config.effectiveModel
+        provider.apiPath = if (config.apiPath.isNotBlank()) config.apiPath else provider.apiPath
+        provider.useResponseApi = config.useResponseApi
         provider.logSessionId = sessionId
         return provider
     }
@@ -227,6 +245,10 @@ class StatefulAgentWorkflow @Inject constructor(
                     newState = newState.copy(pendingToolCalls = newState.pendingToolCalls.drop(1), executingToolCall = nextTool)
                     effects.add(AgentSideEffect.RequestPermission(nextTool))
                 } else {
+                    // 本批工具已全部执行完，即将发给 LLM；若本次 viewImage 产出了图片，标记下一轮为识图轮。
+                    if (action.images.isNotEmpty()) {
+                        newState = newState.copy(pendingVisionRound = true)
+                    }
                     effects.add(AgentSideEffect.CallLlm)
                 }
             }
@@ -274,15 +296,21 @@ class StatefulAgentWorkflow @Inject constructor(
             for (effect in effects) {
                 when (effect) {
                     is AgentSideEffect.CallLlm -> {
-                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider, context.sessionId)
+                        // 识图轮：若当前聊天模型无 vision，临时切到识图专用模型发送，发完恢复三单例字段。
+                        val visionRound = if (state.pendingVisionRound) resolveVisionFallbackProvider() else null
+                        val providerInUse = visionRound?.provider ?: aiProvider
+                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, providerInUse, context.sessionId)
                         if (compactedMessages !== state.messages) {
                             state = state.copy(messages = compactedMessages)
                         }
                         try {
-                            val aiResponse = aiProvider.complete(systemPrompt, compactedMessages, currentTools)
+                            val aiResponse = providerInUse.complete(systemPrompt, compactedMessages, currentTools)
                             actionQueue.addLast(AgentAction.LlmResponse(aiResponse))
                         } catch (e: Exception) {
                             actionQueue.addLast(AgentAction.LlmError("LLM 调用失败: ${e.message}"))
+                        } finally {
+                            visionRound?.restore()
+                            if (state.pendingVisionRound) state = state.copy(pendingVisionRound = false)
                         }
                     }
                     is AgentSideEffect.RequestPermission -> {
@@ -368,7 +396,10 @@ class StatefulAgentWorkflow @Inject constructor(
             for (effect in effects) {
                 when (effect) {
                     is AgentSideEffect.CallLlm -> {
-                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, aiProvider, context.sessionId) { emit(it) }
+                        // 识图轮：若当前聊天模型无 vision，临时切到识图专用模型发送，发完恢复三单例字段。
+                        val visionRound = if (state.pendingVisionRound) resolveVisionFallbackProvider() else null
+                        val providerInUse = visionRound?.provider ?: aiProvider
+                        val compactedMessages = contextCompactor.compactIfNeeded(state.messages, providerInUse, context.sessionId) { emit(it) }
                         if (compactedMessages !== state.messages) {
                             state = state.copy(messages = compactedMessages)
                         }
@@ -378,7 +409,7 @@ class StatefulAgentWorkflow @Inject constructor(
                         var finalResponse: AIResponse? = null
 
                         try {
-                            aiProvider.completeStream(systemPrompt, compactedMessages, currentTools).collect { chunk ->
+                            providerInUse.completeStream(systemPrompt, compactedMessages, currentTools).collect { chunk ->
                                 when (chunk) {
                                     is AIStreamChunk.TextDelta -> {
                                         acc.append(chunk.text)
@@ -414,6 +445,9 @@ class StatefulAgentWorkflow @Inject constructor(
                                 emit(AgentEvent.AssistantText(partial, emptyList(), reasoning))
                             }
                             actionQueue.addLast(AgentAction.LlmError("LLM 调用失败: ${e.message}"))
+                        } finally {
+                            visionRound?.restore()
+                            if (state.pendingVisionRound) state = state.copy(pendingVisionRound = false)
                         }
                     }
                     is AgentSideEffect.RequestPermission -> {
@@ -481,10 +515,10 @@ class StatefulAgentWorkflow @Inject constructor(
             return ToolRunResult(ToolResult.Error("工具 $name 不存在", "TOOL_NOT_FOUND").toTransportString(), true)
         }
         return try {
-            if (name == "viewImage" && !activeModelSupportsVision()) {
+            if (name == "viewImage" && !activeModelSupportsVision() && !visionFallbackReady()) {
                 return ToolRunResult(
                     ToolResult.Error(
-                        "当前选中的模型不支持图片输入，无法使用 viewImage。请切换到支持 Vision/图片输入的模型后再查看图片。",
+                        "当前聊天模型不支持图片输入，且未配置支持 Vision 的识图专用模型。请在「设置 → 识图模型」中指定一个支持 Vision 的模型后再查看图片。",
                         "MODEL_VISION_UNSUPPORTED"
                     ).toTransportString(),
                     true
@@ -506,6 +540,79 @@ class StatefulAgentWorkflow @Inject constructor(
         val config = aiProviderRepository.getActiveProviderSync() ?: return false
         val metadata = modelMetadataService.resolve(config.type, config.effectiveModel)
         return metadata.supportsVision
+    }
+
+    /**
+     * 识图专用兜底模型是否可用：已配置 providerId 且指向的 provider/model 存在、有 apiKey、且其
+     * ModelMetadata.supportsVision 为真。识图轮仅当 [activeModelSupportsVision] 为 false 时才回退到它。
+     * 未配置（providerId 空）即视为「跟随聊天模型」，不构成兜底 → 返回 false。
+     */
+    private suspend fun visionFallbackReady(): Boolean {
+        val providerId = visionModelSettingsRepository.getVisionProviderId().trim()
+        if (providerId.isEmpty()) return false
+        val model = visionModelSettingsRepository.getVisionModel().trim()
+        if (model.isEmpty()) return false
+        val config = aiProviderRepository.getProviderById(providerId) ?: return false
+        if (!config.isEnabled) return false
+        if (config.apiKey.isBlank()) return false
+        val metadata = modelMetadataService.resolve(config.type, model)
+        return metadata.supportsVision
+    }
+
+    /** 一次 provider 单例可变字段的快照，用于识图轮临切后恢复。 */
+    private data class ProviderSnapshot(
+        val provider: AIProvider,
+        val apiKey: String,
+        val baseUrl: String,
+        val apiPath: String,
+        val useResponseApi: Boolean,
+        val model: String,
+        val logSessionId: String?
+    )
+
+    private fun snapshotProvider(provider: AIProvider) = ProviderSnapshot(
+        provider = provider,
+        apiKey = provider.apiKey,
+        baseUrl = provider.baseUrl,
+        apiPath = provider.apiPath,
+        useResponseApi = provider.useResponseApi,
+        model = provider.model,
+        logSessionId = provider.logSessionId
+    )
+
+    private fun restoreProvider(snap: ProviderSnapshot) {
+        snap.provider.apiKey = snap.apiKey
+        snap.provider.baseUrl = snap.baseUrl
+        snap.provider.apiPath = snap.apiPath
+        snap.provider.useResponseApi = snap.useResponseApi
+        snap.provider.model = snap.model
+        snap.provider.logSessionId = snap.logSessionId
+    }
+
+    /**
+     * 识图轮专用 provider 解析。仅当当前聊天模型不支持 vision、且专用模型已配置且可用时返回
+     * 已填好连接字段、已对原单例做好快照的专用 provider；否则返回 null（表示无需切换、沿用 aiProvider）。
+     * 调用方必须在发送完请求的 finally 里调用 [restoreProvider] 用 [VisionRoundEnv.snapshot] 恢复。
+     */
+    private suspend fun resolveVisionFallbackProvider(): VisionRoundEnv? {
+        if (activeModelSupportsVision()) return null // 当前聊天模型就有原生能力，直接用之
+        if (!visionFallbackReady()) return null       // 无可用兜底，仍沿用 aiProvider（守卫已先行拦截并报错）
+        val providerId = visionModelSettingsRepository.getVisionProviderId().trim()
+        val model = visionModelSettingsRepository.getVisionModel().trim()
+        val config = aiProviderRepository.getProviderById(providerId)
+            ?: error("识图专用模型配置丢失")
+        if (config.apiKey.isBlank()) error("识图专用模型「${config.name}」未填写 API Key")
+        if (model.isBlank()) error("识图专用模型未指定模型")
+        // 切到专用 provider 实例（getProviderFor 会改写其单例字段），先对三个单例都做快照，finally 全量恢复——最稳。
+        val snapshots = listOf(snapshotProvider(anthropicProvider), snapshotProvider(openAIProvider), snapshotProvider(geminiProvider))
+        val provider = getProviderFor(config.copy(selectedModel = model), null)
+        return VisionRoundEnv(provider = provider, snapshots = snapshots)
+    }
+
+    /** 识图轮 provider 切换上下文：持有专用 provider 实例与三个单例的快照。inner 以便调用外层 [restoreProvider]。 */
+    private inner class VisionRoundEnv(val provider: AIProvider, val snapshots: List<ProviderSnapshot>) {
+        /** 恢复三个单例的可变字段。 */
+        fun restore() = snapshots.forEach { restoreProvider(it) }
     }
 
     private suspend fun runToolStream(

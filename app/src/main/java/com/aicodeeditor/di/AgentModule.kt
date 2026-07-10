@@ -237,7 +237,8 @@ object AgentModule {
         contextCompactor: com.aicodeeditor.feature.agent.domain.workflow.ContextCompactor,
         planApprovalManager: com.aicodeeditor.feature.agent.domain.tool.mode.PlanApprovalManager,
         toolOutputStore: ToolOutputStore,
-        modelMetadataService: ModelMetadataService
+        modelMetadataService: ModelMetadataService,
+        visionModelSettingsRepository: com.aicodeeditor.feature.settings.data.repository.VisionModelSettingsRepository
     ): AgentWorkflow {
         return com.aicodeeditor.feature.agent.domain.workflow.StatefulAgentWorkflow(
             toolRegistry,
@@ -251,7 +252,8 @@ object AgentModule {
             contextCompactor,
             planApprovalManager,
             toolOutputStore,
-            modelMetadataService
+            modelMetadataService,
+            visionModelSettingsRepository
         )
     }
 }
