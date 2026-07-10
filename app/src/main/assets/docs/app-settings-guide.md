@@ -5,7 +5,7 @@
 ## 目录与子文档索引
 当用户询问特定模块时，请使用 `readFile` 进一步读取对应的子文档：
 1. **基础概念与工作区**：见本文档第 1、2 节。
-2. **AI 服务商与模型配置 (Providers)**：请读取 `/root/.aicode/docs/providers-and-models.md`
+2. **AI 提供商与模型配置 (Providers)**：请读取 `/root/.aicode/docs/providers-and-models.md`
 3. **MCP 服务器与扩展工具 (MCP)**：请读取 `/root/.aicode/docs/mcp-and-skills.md`
 4. **远程服务器与云端工作区 (Remote Servers)**：请读取 `/root/.aicode/docs/remote-servers.md`
 5. **日志查看、私有目录挂载与后台保活**：请读取 `/root/.aicode/docs/logs-and-private-dir.md`
