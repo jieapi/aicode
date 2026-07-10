@@ -19,8 +19,8 @@ class WebFetchTool @Inject constructor() : AgentTool() {
 
     private companion object {
         const val TAG = "WebFetchTool"
-        const val USER_AGENT_BROWSER = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        const val USER_AGENT_FALLBACK = "aicode/1.0"
+        // 较新的桌面 Chrome 版本，搭配下方 sec-ch-ua / sec-fetch-* 请求头以贴近真实浏览器指纹
+        const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
         const val MAX_LENGTH = 100_000 // 限制最大提取字符数，防止撑爆上下文
     }
 
@@ -55,18 +55,12 @@ class WebFetchTool @Inject constructor() : AgentTool() {
         return withContext(Dispatchers.IO) {
             try {
                 FileLogger.i(TAG, "正在抓取网页: $url, format=$format")
-                
-                // 第一次尝试用 Chrome UA
-                var doc = fetchDocument(url, USER_AGENT_BROWSER)
-                
-                // 简单的 Cloudflare / 防爬 403 兜底重试机制
-                if (doc == null) {
-                    FileLogger.i(TAG, "网页抓取疑似被拦截，尝试使用备用身份...")
-                    doc = fetchDocument(url, USER_AGENT_FALLBACK)
-                }
 
-                if (doc == null) {
-                    return@withContext ToolResult.Error("抓取失败：服务器拒绝连接或返回错误 (可能是高强度反爬拦截)。")
+                // 从顶层捕获非 HTTP 的连接异常（DNS、超时、SSL 等），直接把具体原因回传给 AI，不做兜底猜测
+                val doc = try {
+                    fetchDocument(url)
+                } catch (e: FetchException) {
+                    return@withContext ToolResult.Error(e.detailedMessage(url))
                 }
 
                 // 按要求提取
@@ -89,23 +83,53 @@ class WebFetchTool @Inject constructor() : AgentTool() {
         }
     }
 
-    private fun fetchDocument(url: String, userAgent: String): Document? {
+    private fun fetchDocument(url: String): Document {
         return try {
             Jsoup.connect(url)
-                .userAgent(userAgent)
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .header("Accept-Language", "en-US,en;q=0.5")
-                .timeout(15000) // 15秒超时
+                .userAgent(USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                // 真桌面 Chrome 一定会发送的 sec-ch-ua 系列客户端提示
+                .header("Sec-Ch-Ua", "\"Chromium\";v=\"132\", \"Not A(Brand\";v=\"99\", \"Google Chrome\";v=\"132\"")
+                .header("Sec-Ch-Ua-Mobile", "?0")
+                .header("Sec-Ch-Ua-Platform", "\"Windows\"")
+                // Fetch Metadata 请求头，现代浏览器发页面请求时必带
+                .header("Sec-Fetch-Dest", "document")
+                .header("Sec-Fetch-Mode", "navigate")
+                .header("Sec-Fetch-Site", "none")
+                .header("Sec-Fetch-User", "?1")
+                .header("Upgrade-Insecure-Requests", "1")
+                // 3xx 重定向默认即跟随，显式声明；限制响应体大小避免超大页面吃满内存
                 .followRedirects(true)
+                .maxBodySize(5 * 1024 * 1024) // 5MB
+                .timeout(15000) // 15秒超时
                 .ignoreContentType(true)
                 .get()
         } catch (e: org.jsoup.HttpStatusException) {
-            FileLogger.e(TAG, "HTTP 状态码异常: ${e.statusCode} - $url")
-            null
-        } catch (e: Exception) {
-            FileLogger.e(TAG, "网络连接异常: ${e.message} - $url")
-            null
+            FileLogger.e(TAG, "HTTP 状态码异常: ${e.statusCode} - ${e.getUrl()}", e)
+            // 把真实状态码和原始异常描述回传给 AI，不做任何模糊化处理
+            throw FetchException("HTTP ${e.statusCode}: ${e.message ?: "无状态描述"}")
+        } catch (e: org.jsoup.UnsupportedMimeTypeException) {
+            FileLogger.e(TAG, "不支持的响应类型: ${e.getMimeType()} - ${e.getUrl()}", e)
+            throw FetchException("不支持的响应 MIME 类型: ${e.getMimeType()}")
+        } catch (e: java.net.SocketTimeoutException) {
+            FileLogger.e(TAG, "请求超时: $url", e)
+            throw FetchException("请求超时（15 秒内未响应）")
+        } catch (e: java.net.UnknownHostException) {
+            FileLogger.e(TAG, "DNS 解析失败: $url", e)
+            throw FetchException("无法解析主机名：${url}")
+        } catch (e: javax.net.ssl.SSLException) {
+            FileLogger.e(TAG, "SSL 握手失败: $url", e)
+            throw FetchException("SSL/TLS 握手失败：${e.message ?: "未知原因"}")
+        } catch (e: java.io.IOException) {
+            FileLogger.e(TAG, "网络 I/O 异常: ${e.message} - $url", e)
+            throw FetchException("网络 I/O 异常：${e.message ?: "未知原因"}")
         }
+    }
+
+    /** 把抓取过程中的失败包装成携带具体信息的异常，以便回传给 AI 而非模糊提示。 */
+    private class FetchException(val detail: String) : RuntimeException(detail) {
+        fun detailedMessage(url: String): String = "抓取 $url 失败：$detail"
     }
 
     /**
