@@ -6,8 +6,20 @@ name: CI
 on:
   push:
     branches: [ main ]
+    # 纯文档/资源改动不影响构建产物，跳过 CI 省时间（public 仓库虽不扣额度，但省 11 分钟等待）。
+    # 注意：只要本次 push 含任一非忽略路径的改动，CI 仍会触发。
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
 
 # 同分支新提交到来时取消正在跑的旧 run，省 CI 额度。
 concurrency:
