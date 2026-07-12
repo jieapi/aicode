@@ -17,6 +17,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - 远程服务器与同步设置变更 → `remote-servers.md`
   - 工作区与模式配置变更 → `app-settings-guide.md`
 
+## Git 提交规范
+
+项目采用 **Conventional Commits**，由 `.githooks/commit-msg` 在本地校验（启用见仓库根 `.githooks/`）。格式：
+
+```
+<type>(<scope>): <subject>
+
+<可选正文，空行隔开>
+```
+
+- **type** ∈ `feat | fix | refactor | docs | style | chore | ci | build | perf | test`
+- **scope** 可选，建议用功能模块：`agent | settings | terminal | workspace | git | ui | mcp | db | core | deps`
+- **subject** 一行简述，中英文均可，句末不加句号。
+- 跳过校验（仅紧急）：`git commit --no-verify ...`
+
+示例：`feat(agent): 支持流式工具调用` / `fix(settings): 修复 provider 保存时校验失败` / `ci: 删除签名校验步骤`
+
+## 版本号规范
+
+- **唯一来源**：`app/build.gradle.kts` 的 `versionCode`（整数）与 `versionName`（`主.次.修`，如 `1.0.0`）。
+- **何时递增**：
+  - `versionName` 次版本号（中间位）：新增功能 / 行为变化 → 提交时一并升 `x.Y.0`。
+  - `versionName` 修订号（末位）：仅修 bug 或纯文档/重构 → `x.y.Z`。
+  - `versionCode`：每次 `versionName` 变化都必须 +1（单调递增，用于升级判定）。
+- **与 Release 绑定**：发版时打的 git tag 必须与 `versionName` 完全一致——tag 写 `v<versionName>`（如 versionName=`1.0.0` → tag=`v1.0.0`）。CI 触发靠 tag 名 `v*`，错了会发到错误版本号上。
+
 ## Build and Run
 
 This is an Android application built with Kotlin, Jetpack Compose, and Hilt. It uses Gradle as the build system.
@@ -30,7 +56,7 @@ This is an Android application built with Kotlin, Jetpack Compose, and Hilt. It 
 
 ### Release Packaging & Signing
 The release signing configuration is automatically handled in `app/build.gradle.kts`:
-- **Keystore File:** `app/aicodeeditor.jks`
+- **Keystore File:** `app/aicode.jks`
 - **Credentials:** Loaded from `app/keystore.properties` (`storePassword`, `keyAlias`, `keyPassword`).
 - **Target ABI:** Only `arm64-v8a` is packaged to keep APK size reasonable while supporting Termux/PRoot rootfs.
 

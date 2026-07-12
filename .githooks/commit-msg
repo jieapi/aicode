@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# commit-msg hook：校验提交信息符合 Conventional Commits。
+# 不合规则时打印提示并返回非零阻断提交；可用 `git commit --no-verify` 跳过。
+#
+# 启用：仓库根执行 `git config core.hooksPath .githooks`
+# 关闭：`git config --unset core.hooksPath`
+#
+# 规范：<type>(<scope>): <subject>
+#   <type>  ∈ feat fix refactor docs style chore ci build perf test
+#   <scope> 可选，建议用功能模块：agent settings terminal workspace git ui mcp db core docs build deps
+#   <subject> 一行简述，中文/英文均可，不加句号
+#
+# 多行提交信息：只校验首行（subject 之前）。`git revert` / merge 自动生成的提交跳过。
+
+set -u
+
+msg_file="$1"
+first_line=$(sed -n '1p' "$msg_file")
+
+# 跳过自动生成的提交：merge / revert / fixup / squash / 修复记录
+case "$first_line" in
+  "Merge "*|"Revert "*|"fixup!"*|"squash!"*) exit 0 ;;
+esac
+
+# 允许的 type
+types='feat|fix|refactor|docs|style|chore|ci|build|perf|test'
+
+# Conventional Commits 正则：
+#   ^<type>(<scope>)?: <subject>   其中 :后至少一个非空白字符
+pattern="^($types)(\([A-Za-z0-9._-]+\))?!?: .+"
+
+if printf '%s' "$first_line" | LC_ALL=C grep -Eq "$pattern"; then
+  exit 0
+fi
+
+# 不合规：打印帮助并阻断
+cat >&2 <<EOF
+
+❌ 提交信息不符合 Conventional Commits 规范：
+
+   $first_line
+
+期望格式：  <type>(<scope>): <subject>
+
+允许的 type：
+  feat      新功能
+  fix       修 bug
+  refactor  重构（不改变行为）
+  docs      文档
+  style     格式/排版（不改逻辑）
+  chore      杂务（构建脚本、依赖版本等）
+  ci        CI 配置
+  build      构建系统/依赖
+  perf      性能优化
+  test      测试
+
+scope 可选，建议用：agent settings terminal workspace git ui mcp db core deps
+
+示例：
+  feat(agent): 支持流式工具调用
+  fix(settings): 修复 provider 保存时效验失败
+  refactor: 把 AILogger 抽到 core/util
+  ci: 删除签名校验步骤
+
+跳过校验（紧急情况）：git commit --no-verify ...
+
+EOF
+exit 1
