@@ -19,6 +19,22 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// versionCode 从 git 提交数自动生成：随每次提交单调递增，无需手动维护，
+// 杜绝"升 versionName 忘升 versionCode"导致升级判定失效。
+// 工作目录用 rootProject.projectDir（仓库根），无 git 环境（如下载 zip 构建）时 fallback 到 1。
+// CI 额外校验 versionCode 单调（见 .github/workflows/android-release.yml），防 rebase/squash 改写历史导致回退。
+fun gitCommitCount(): Int = try {
+    val process = Runtime.getRuntime().exec(
+        arrayOf("git", "rev-list", "--count", "HEAD"),
+        null,
+        rootProject.projectDir
+    )
+    process.waitFor()
+    process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 1
+} catch (e: Exception) {
+    1
+}
+
 android {
     namespace = "com.aicode"
     compileSdk = 36
@@ -40,7 +56,7 @@ android {
         // 锁定 targetSdk 28：Android 10+（API 29+）的 W^X/SELinux 策略禁止执行 App 可写
         // 数据目录里的文件，PRoot 二进制将无法运行（同 Termux 的取舍）。代价：不能上 Google Play。
         targetSdk = 28
-        versionCode = 2
+        versionCode = gitCommitCount()
         versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
