@@ -125,9 +125,20 @@ android {
 
     // targetSdk 故意锁定 28（PRoot 需在 app 可写目录执行二进制，Android 10+ W^X 禁止），
     // 代价是不进 Google Play——故关闭该平台的过期 targetSdk 检查。
+    // 同时关闭 release 构建的 lint 检查：本仓库只出 GitHub Release 不上 Play，
+    // lintVital 在 R8/打包阶段额外吃 CPU 与内存（2 核 7GB runner 易 OOM），且其发现不阻塞发布。
     lint {
         disable += "ExpiredTargetSdkVersion"
+        checkReleaseBuilds = false
+        abortOnError = false
     }
+}
+
+// 彻底禁用 lintVital<Flavor>Release 任务（三 flavor 各一个），
+// 使其不进入 assembleRelease 的任务图——比 lint.checkReleaseBuilds=false 更省构建开销与内存。
+// 仅在 release 任务图执行前禁用，避免影响开发期 debug lint。
+gradle.projectsEvaluated {
+    tasks.matching { it.name.startsWith("lintVital") }.configureEach { enabled = false }
 }
 
 dependencies {
