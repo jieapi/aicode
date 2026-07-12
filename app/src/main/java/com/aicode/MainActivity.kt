@@ -236,9 +236,11 @@ fun AppNavigation() {
                 )
             }
             composable("settings") {
-                val settingsVm: SettingsViewModel = hiltViewModel()
+                // 复用 Activity 级 settingsViewModel（MainActivity 顶部已创建并 init），
+                // 避免进入设置页时再建一个 NavBackStackEntry 级实例、重复跑 init 与 9 路 flow 订阅，
+                // 这是侧边栏点设置「卡一下」的主因。
                 SettingsScreen(
-                    viewModel = settingsVm,
+                    viewModel = settingsViewModel,
                     onNavigateBack = { 
                         navController.popBackStack() 
                         scope.launch { drawerState.open() }
