@@ -69,7 +69,7 @@ app/
 
 # 或命令行
 ./gradlew installDebug
-adb shell am start -n com.aicodeeditor/.MainActivity
+adb shell am start -n com.aicode/.MainActivity
 ```
 
 ## 💡 代码示例
