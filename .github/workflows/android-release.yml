@@ -22,6 +22,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # versionCode 由 build.gradle.kts 的 gitCommitCount() 取 git rev-list --count HEAD，
+          # 浅克隆（默认 depth=1）会得到 1，必须拉完整历史，否则 Release APK 版本号错乱。
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -58,6 +62,30 @@ jobs:
           fi
           echo "✓ tag 与 versionName 一致: $ver_in_code（tag 后缀: ${tag_ver#$tag_base}）"
 
+      # 校验 versionCode 单调递增：versionCode = git commit count，rebase/squash 改写历史
+      # 可能让 commit count 变小，导致新版本 versionCode <= 旧版本、升级判定失效。
+      # 取按提交时间倒序最近的非当前 tag，算其 commit count，要求当前 HEAD 更大。
+      # 仅打 tag 触发时校验；workflow_dispatch（手动，无 tag）跳过。
+      - name: Verify versionCode monotonic
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -e
+          cur_vc=$(git rev-list --count HEAD)
+          prev_tag=$(git tag --sort=-creatordate | grep -vE "^${GITHUB_REF_NAME}$" | head -1)
+          if [[ -z "$prev_tag" ]]; then
+            echo "无历史 tag，跳过 versionCode 单调校验（首次发版）"
+            echo "当前 versionCode(commit count) = $cur_vc"
+            exit 0
+          fi
+          prev_vc=$(git rev-list --count "$prev_tag")
+          echo "上个 Release($prev_tag) versionCode = $prev_vc"
+          echo "当前(${GITHUB_REF_NAME}) versionCode     = $cur_vc"
+          if [[ "$cur_vc" -le "$prev_vc" ]]; then
+            echo "::error::versionCode 回退: 当前 $cur_vc <= 上个 Release($prev_tag) $prev_vc。通常因 rebase/squash 改写历史使 commit count 变小。请确保新版本在旧 tag 之上线性推进。"
+            exit 1
+          fi
+          echo "✓ versionCode 单调递增: $prev_vc -> $cur_vc"
+
       - name: Restore release keystore
         env:
           # keystore 文件以 base64 存入 Secret，避免二进制文件被破坏。
@@ -83,6 +111,11 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
+
+      # 发版质量门禁：跑单元测试，失败即中止，避免发出回归包。
+      # 只跑 universal debug 变体：单测逻辑与 flavor 无关，跑全 flavor 6 变体是重复编译。
+      - name: Run unit tests
+        run: ./gradlew :app:testUniversalDebugUnitTest
 
       # 一次性构建全部 flavor 的 release APK（universal/armsolo/x86solo）
       # --stacktrace：构建失败时输出完整调用栈，便于在 CI 定位 OOM/内存类根因。

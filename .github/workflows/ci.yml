@@ -1,0 +1,54 @@
+name: CI
+
+# push 到 main 或 PR 时触发：构建 universal debug（单 flavor 冒烟）+ 跑单元测试。
+# 目的是合入前的兜底门禁，避免编译错误/回归推迟到打 tag 发版当天才暴露。
+# 打 v* tag 的发版构建走 android-release.yml，不在这里。
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# 同分支新提交到来时取消正在跑的旧 run，省 CI 额度。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # versionCode 由 build.gradle.kts 的 gitCommitCount() 在配置阶段取
+          # git rev-list --count HEAD，浅克隆（默认 depth=1）会得到 1，必须拉完整历史。
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # PR 用只读缓存，仅 main 的 push 写回缓存，避免被 PR 污染。
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      # 单 flavor 冒烟：只构 universal debug（CLAUDE.md 规范：AI 改完编译型代码默认跑这个），
+      # 不构全量三 flavor，省三倍 Kotlin 编译。
+      - name: Build universal debug (smoke)
+        run: ./gradlew :app:assembleUniversalDebug --stacktrace
+
+      # 单元测试（app/src/test 下的 Kotlin 单测）。
+      # 只跑 universal debug 变体：单测逻辑与 flavor 无关（flavor 仅影响 abiFilters/assets），
+      # 跑全 flavor 6 变体是重复编译，无额外覆盖。
+      - name: Run unit tests
+        run: ./gradlew :app:testUniversalDebugUnitTest
