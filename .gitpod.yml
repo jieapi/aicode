@@ -1,0 +1,13 @@
+image:
+  file: .gitpod.Dockerfile
+
+tasks:
+  - name: gradle
+    command: |
+      chmod +x ./gradlew
+      echo "Run: ./gradlew :app:assembleUniversalDebug"
+
+vscode:
+  extensions:
+    - fwcd.kotlin
+    - redhat.java
