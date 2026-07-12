@@ -66,7 +66,8 @@ internal enum class SettingsSection(val title: String) {
     Log("日志等级"),
     LogViewer("日志查看"),
     Permissions("工具授权"),
-    RemoteServers("远程工作区")
+    RemoteServers("远程工作区"),
+    About("关于")
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -259,6 +260,7 @@ fun SettingsScreen(
                 )
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
                 SettingsSection.RemoteServers -> {} // 已在上方 early return 处理
+                SettingsSection.About -> AboutSection()
             }
         }
     }
@@ -379,6 +381,12 @@ internal fun SettingsMenu(
             subtitle = "显示前台通知，避免退到后台时系统杀进程",
             checked = keepaliveEnabled,
             onCheckedChange = onToggleKeepalive
+        )
+        MenuRow(
+            icon = FeatherIcons.Info,
+            title = SettingsSection.About.title,
+            subtitle = "版本检查 · GitHub · 许可证",
+            onClick = { onOpen(SettingsSection.About) }
         )
     }
 }
