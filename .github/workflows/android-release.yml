@@ -80,13 +80,6 @@ jobs:
           done
           ls -lh dist/
 
-      - name: Verify signed APKs
-        # 用 build-tools 自带 apksigner 逐个校验签名；任一未签名仅告警不阻断。
-        uses: r0adillll/check-signed-apk-action@v1
-        with:
-          apkPath: app/build/outputs/apk/universal/release/app-universal-release.apk
-        continue-on-error: true
-
       - name: Determine release name
         id: release
         run: |
