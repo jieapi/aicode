@@ -35,26 +35,28 @@ jobs:
           # 复用 Gradle 构建缓存，加速后续构建。
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      # 在构建前校验：tag 名必须与 app/build.gradle.kts 的 versionName 完全一致。
+      # 在构建前校验：tag 名的版本部分必须与 app/build.gradle.kts 的 versionName 一致。
       # 防止"改了发版 tag 但忘记改 versionName"导致 Release 版本号与 APK 实际版本对不上。
       # 仅打 tag 触发时校验；workflow_dispatch（手动，无 tag）跳过。
+      # 兼容 rc 后缀：v1.0.0 与 v1.0.0-rc2 都要求 versionName=1.0.0。
       - name: Verify tag matches versionName
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           set -e
           ver_in_code=$(grep -E '^\s*versionName\s*=' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          ver_in_tag="${GITHUB_REF_NAME#v}"
+          tag_ver="${GITHUB_REF_NAME#v}"            # 1.0.0 / 1.0.0-rc2 / ...
+          tag_base="${tag_ver%%-*}"                  # 1.0.0（去掉 -rc2 后缀）
           echo "build.gradle.kts versionName = $ver_in_code"
-          echo "tag (without v prefix)      = $ver_in_tag"
+          echo "tag version part (without v)        = $tag_ver"
           if [[ -z "$ver_in_code" ]]; then
             echo "::error::未能从 app/build.gradle.kts 解析出 versionName，检查格式是否为 versionName = \"x.y.z\""
             exit 1
           fi
-          if [[ "$ver_in_code" != "$ver_in_tag" ]]; then
-            echo "::error::tag ($ver_in_tag) 与 versionName ($ver_in_code) 不一致。请先在 app/build.gradle.kts 改好 versionName，再重新打 tag 或用正确的 tag。"
+          if [[ "$tag_base" != "$ver_in_code" ]]; then
+            echo "::error::tag 版本部分 ($tag_base) 与 versionName ($ver_in_code) 不一致。请先在 app/build.gradle.kts 改好 versionName，再重新打 tag 或用正确的 tag。"
             exit 1
           fi
-          echo "✓ tag 与 versionName 一致: $ver_in_code"
+          echo "✓ tag 与 versionName 一致: $ver_in_code（tag 后缀: ${tag_ver#$tag_base}）"
 
       - name: Restore release keystore
         env:
