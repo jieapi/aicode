@@ -51,15 +51,22 @@
 ### Build
 
 ```bash
-# Debug
+# Debug（默认走 universal 变体）
 ./gradlew assembleDebug
 
-# Release（需配置签名）
+# Release（需配置签名；构全部三个 flavor）
 ./gradlew assembleRelease
+
+# 仅构单一 flavor
+./gradlew assembleArmsoloRelease     # 仅 arm64-v8a + arm 镜像
+./gradlew assembleX86soloRelease     # 仅 x86_64 + x86 镜像
+./gradlew assembleUniversalRelease   # arm64-v8a + x86_64，含两套镜像
 
 # Release AAB
 ./gradlew bundleRelease
 ```
+
+> 三个 flavor 的产物路径：`app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk`
 
 <details>
 <summary>Release 签名配置</summary>
@@ -67,7 +74,7 @@
 在 `app/keystore.properties` 中添加：
 
 ```properties
-storeFile=aicodeeditor.jks
+storeFile=aicode.jks
 storePassword=your_password
 keyAlias=your_alias
 keyPassword=your_key_password
@@ -85,7 +92,7 @@ keyPassword=your_key_password
 ## Project Structure
 
 ```
-app/src/main/java/com/aicodeeditor/
+app/src/main/java/com/aicode/
 ├── core/                # 核心模块（主题、通用组件）
 ├── feature/
 │   ├── agent/           # AI Agent（提示词、MCP、工具注册、多提供商适配）
@@ -100,7 +107,22 @@ app/src/main/java/com/aicodeeditor/
 ## Known Limitations
 
 - `targetSdk` 锁定为 28 以绕过 Android 10+ W^X 策略，使 PRoot 可执行。**无法上架 Google Play**。
-- APK 仅打包 `arm64-v8a` ABI。
+- Release 按 CPU/容器镜像拆三个 variant：
+  - `armsolo`：仅 `arm64-v8a` + arm 镜像（真机首选）
+  - `x86solo`：仅 `x86_64` + x86 镜像（模拟器 / Chromebook）
+  - `universal`：`arm64-v8a` + `x86_64`，含两套镜像（通用但体积更大）
+  - 容器镜像随系统 ABI 选择，错架构设备安装单架构包后无法运行 PRoot。
+
+## CI 自动构建
+
+打 `v*` tag（如 `v1.0.0`）触发 GitHub Actions 构建三个签名的 Release APK 并发布到 GitHub Releases：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+CI 会校验 tag 与 `app/build.gradle.kts` 的 `versionName` 一致（tag 版本部分须等于 versionName）。需配置的 GitHub Secrets 见 [`.github/workflows/README.md`](.github/workflows/README.md)。
 
 ## Acknowledgements
 

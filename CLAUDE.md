@@ -49,8 +49,8 @@ This is an Android application built with Kotlin, Jetpack Compose, and Hilt. It 
 
 - **Build the project:** `./gradlew build`
 - **Assemble Debug APK:** `./gradlew assembleDebug`
-- **Assemble Release APK:** `./gradlew assembleRelease` (Outputs to `app/build/outputs/apk/release/app-release.apk`)
-- **Assemble Release AAB:** `./gradlew bundleRelease` (Outputs to `app/build/outputs/bundle/release/app-release.aab`)
+- **Assemble Release APK:** `./gradlew assembleRelease` —— 按容器镜像/CPU 拆三个 flavor，输出到 `app/build/outputs/apk/<flavor>/release/app-<flavor>-release.apk`（flavor ∈ universal/armsolo/x86solo）
+- **Assemble Release AAB:** `./gradlew bundleRelease` —— 输出到 `app/build/outputs/bundle/<flavor>/release/app-<flavor>-release.aab`
 - **Run Unit Tests:** `./gradlew test`
 - **Run Android Tests:** `./gradlew connectedAndroidTest`
 
@@ -69,7 +69,7 @@ The application is structured using a feature-based architecture with Domain-Dri
 ### Key Components
 
 - **App Core:** `AIEditorApp` initializes core services like `FileLogger`, `TerminalKeepaliveService`, and `McpManager`.
-- **Feature Modules:** Code is organized by feature under `app/src/main/java/com/aicodeeditor/feature/`:
+- **Feature Modules:** Code is organized by feature under `app/src/main/java/com/aicode/feature/`:
     - `agent`: The core AI agent system. Includes prompt management, MCP (Model Context Protocol) integration, tool registry (file tools, shell execution, etc.), permission handling, and adapters for different AI providers (Anthropic, OpenAI).
     - `git`: Git integration and operations.
     - `settings`: Application configuration, including AI provider setup, logging, and keepalive settings.
