@@ -126,17 +126,6 @@ app/src/main/java/com/aicode/
   - `universal`：`arm64-v8a` + `x86_64`，含两套镜像（通用但体积更大）
   - 容器镜像随系统 ABI 选择，错架构设备安装单架构包后无法运行 PRoot。
 
-## CI 自动构建
-
-打 `v*` tag（如 `v1.0.0`）触发 GitHub Actions 构建三个签名的 Release APK 并发布到 GitHub Releases：
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-CI 会校验 tag 与 `app/build.gradle.kts` 的 `versionName` 一致（tag 版本部分须等于 versionName）。需配置的 GitHub Secrets 见 [`.github/workflows/README.md`](.github/workflows/README.md)。
-
 ## Acknowledgements
 
 - [OpenCode](https://github.com/anomalyco/opencode) — 终端 AI 编码工具，本项目的核心灵感来源

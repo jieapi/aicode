@@ -36,12 +36,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 版本号规范
 
-- **唯一来源**：`app/build.gradle.kts` 的 `versionCode`（整数）与 `versionName`（`主.次.修`，如 `1.0.0`）。
+- **唯一来源**：`app/build.gradle.kts` 的 `versionName`（`主.次.修`，如 `1.0.0`，手写）与 `versionCode`（由 `gitCommitCount()` 从 git 提交数自动生成，无需手写）。
 - **何时递增**：
   - `versionName` 次版本号（中间位）：新增功能 / 行为变化 → 提交时一并升 `x.Y.0`。
   - `versionName` 修订号（末位）：仅修 bug 或纯文档/重构 → `x.y.Z`。
-  - `versionCode`：每次 `versionName` 变化都必须 +1（单调递增，用于升级判定）。
+  - `versionCode`：随每次 git 提交自动 +1（commit count 单调递增），**无需手动维护**。rebase/squash 改写历史可能让 commit count 变小，CI（`android-release.yml` 的 Verify versionCode monotonic 步骤）会校验当前 > 上个 Release 防回退。
 - **与 Release 绑定**：发版时打的 git tag 必须与 `versionName` 完全一致——tag 写 `v<versionName>`（如 versionName=`1.0.0` → tag=`v1.0.0`）。CI 触发靠 tag 名 `v*`，错了会发到错误版本号上。
+
+## 发版流程（RC 判定）
+
+本项目不能上 Google Play、靠 GitHub Release 分发且无灰度，发出去即终态，RC 是主要兜底。发版前按改动面判断是否先发 RC：
+
+- **必须先发 RC**：新功能 / 行为变化（升 `x.Y.0`）；构建链路 / 签名 / flavor / CI 改动；容器镜像、PRoot、ABI 相关改动。
+- **可直接发正式**：纯文档 / typo / 资源文案。
+- **看改动面**：纯 bug 修复（升 `x.y.Z`）--小改直接正式，触碰启动/容器的仍先 RC。
+
+### 操作步骤
+
+1. 在 `app/build.gradle.kts` 设好 `versionName`（如 `"1.2.0"`），commit。
+2. `git tag v<versionName>-rc1`（如 `v1.2.0-rc1`）并 push。CI 校验 tag 版本部分 == `versionName`，构三 flavor 发 Release。
+3. **真机装 rc 包**，至少跑通 AI 对话 + 终端 + 容器启动三条主线。
+4. 有问题 -> 修 -> 升 rc 序号（`-rc2`）重发；没问题 -> `git tag v<versionName>` push 发正式。
+
+RC 与正式版共享同一 `versionName`，`versionCode` 由 commit count 自动生成，天然 rc1 < rc2 < ... < 正式版，用户从任意 rc 都能直接升级到正式版，无需手动管 versionCode。
+
+> RC 发出后必须真机验证再转正，否则 RC 无意义。
 
 ## Build and Run
 
