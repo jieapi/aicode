@@ -126,9 +126,11 @@ jobs:
           tag_name: ${{ steps.release.outputs.tag }}
           name: Release ${{ steps.release.outputs.tag }}
           generate_release_notes: true
+          # 产物名约定 aicode-<abi>-<版本>.apk（见 Rename 步骤），故 glob 把 ABI 段放 aicode- 紧后、版本段用 * 兜底。
+          # 不要写成 aicode-*-<abi>.apk——那会把 abi 误放末段，与 aicode-<abi>-<ver> 永远匹配不上（rc3 翻车原因）。
           files: |
-            dist/aicode-*-universal.apk
-            dist/aicode-*-arm64.apk
-            dist/aicode-*-x86_64.apk
+            dist/aicode-universal-*.apk
+            dist/aicode-arm64-*.apk
+            dist/aicode-x86_64-*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
