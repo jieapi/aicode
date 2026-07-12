@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">AI Code Editor</h1>
+  <h1 align="center">AiCode</h1>
   <p align="center">
     在 Android 设备上运行的 AI 驱动代码编辑器
     <br />
@@ -13,6 +13,19 @@
   <img src="https://img.shields.io/badge/Language-Kotlin-purple.svg" alt="Language" />
   <img src="https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg" alt="UI" />
   <img src="https://img.shields.io/badge/MinSDK-26-orange.svg" alt="MinSDK" />
+</p>
+
+<p align="center">
+  <table>
+    <tr>
+      <td align="center"><img src="docs/screenshots/home.png" alt="主页 · AI 对话" width="270"/></td>
+      <td align="center"><img src="docs/screenshots/terminal.png" alt="终端 · Alpine Linux" width="270"/></td>
+    </tr>
+    <tr>
+      <td align="center">主页 · AI 对话</td>
+      <td align="center">终端 · Alpine Linux</td>
+    </tr>
+  </table>
 </p>
 
 ---
