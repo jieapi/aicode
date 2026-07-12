@@ -49,34 +49,34 @@ android {
         }
     }
 
-        // 按容器镜像拆包：universal 同时含 arm + x86 两套 Alpine rootfs/proot（兼容所有设备但体积大），
-        // armsolo 仅含 arm（对应 arm64-v8a），x86solo 仅含 x86（对应 x86_64）
-        // ——单架构包体积约为通用包的一半。assets/container/... 由各 flavor 的 sourceSet 提供，
-        // ContainerInstaller.ASSET_DIR 在 universal 下按设备 ABI 选其一，在 solo 包里只剩一套故一定命中。
-        //
-        // 注意：defaultConfig 不再固定 abiFilters，改由各 flavor 维度决定；universal 默认含全部
-        // 依赖的 ABI（arm64-v8a + x86_64），单架构包各自收敛到单一 ABI，避免错架构设备加载错误的镜像。
-        flavorDimensions += "container"
-        productFlavors {
-            create("universal") {
-                dimension = "container"
-                ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
-            }
-            create("armsolo") {
-                dimension = "container"
-                ndk { abiFilters += "arm64-v8a" }
-                // 只打 arm 镜像，排除 x86 整套 rootfs/proot 以削体积。
-                // 用 dir: 前缀：aapt2 的 ignoreAssetsPattern 按目录条目 basename 匹配
-                // （不含路径分隔符），写 "container/x86" 会失效；dir:x86 命中目录后整棵子树跳过。
-                androidResources { ignoreAssetsPattern = "dir:x86" }
-            }
-            create("x86solo") {
-                dimension = "container"
-                ndk { abiFilters += "x86_64" }
-                // 只打 x86 镜像，排除 arm 整套（同上，dir:arm 整树跳过）。
-                androidResources { ignoreAssetsPattern = "dir:arm" }
-            }
+    // 按容器镜像拆包：universal 同时含 arm + x86 两套 Alpine rootfs/proot（兼容所有设备但体积大），
+    // armsolo 仅含 arm（对应 arm64-v8a），x86solo 仅含 x86（对应 x86_64）
+    // ——单架构包体积约为通用包的一半。assets/container/... 由各 flavor 的 sourceSet 提供，
+    // ContainerInstaller.ASSET_DIR 在 universal 下按设备 ABI 选其一，在 solo 包里只剩一套故一定命中。
+    //
+    // 注意：defaultConfig 不再固定 abiFilters，改由各 flavor 维度决定；universal 默认含全部
+    // 依赖的 ABI（arm64-v8a + x86_64），单架构包各自收敛到单一 ABI，避免错架构设备加载错误的镜像。
+    flavorDimensions += "container"
+    productFlavors {
+        create("universal") {
+            dimension = "container"
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         }
+        create("armsolo") {
+            dimension = "container"
+            ndk { abiFilters += "arm64-v8a" }
+            // 只打 arm 镜像，排除 x86 整套 rootfs/proot 以削体积。
+            // 用 dir: 前缀：aapt2 的 ignoreAssetsPattern 按目录条目 basename 匹配
+            // （不含路径分隔符），写 "container/x86" 会失效；dir:x86 命中目录后整棵子树跳过。
+            androidResources { ignoreAssetsPattern = "dir:x86" }
+        }
+        create("x86solo") {
+            dimension = "container"
+            ndk { abiFilters += "x86_64" }
+            // 只打 x86 镜像，排除 arm 整套（同上，dir:arm 整树跳过）。
+            androidResources { ignoreAssetsPattern = "dir:arm" }
+        }
+    }
 
     buildTypes {
         release {
