@@ -35,6 +35,27 @@ jobs:
           # 复用 Gradle 构建缓存，加速后续构建。
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
+      # 在构建前校验：tag 名必须与 app/build.gradle.kts 的 versionName 完全一致。
+      # 防止"改了发版 tag 但忘记改 versionName"导致 Release 版本号与 APK 实际版本对不上。
+      # 仅打 tag 触发时校验；workflow_dispatch（手动，无 tag）跳过。
+      - name: Verify tag matches versionName
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -e
+          ver_in_code=$(grep -E '^\s*versionName\s*=' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          ver_in_tag="${GITHUB_REF_NAME#v}"
+          echo "build.gradle.kts versionName = $ver_in_code"
+          echo "tag (without v prefix)      = $ver_in_tag"
+          if [[ -z "$ver_in_code" ]]; then
+            echo "::error::未能从 app/build.gradle.kts 解析出 versionName，检查格式是否为 versionName = \"x.y.z\""
+            exit 1
+          fi
+          if [[ "$ver_in_code" != "$ver_in_tag" ]]; then
+            echo "::error::tag ($ver_in_tag) 与 versionName ($ver_in_code) 不一致。请先在 app/build.gradle.kts 改好 versionName，再重新打 tag 或用正确的 tag。"
+            exit 1
+          fi
+          echo "✓ tag 与 versionName 一致: $ver_in_code"
+
       - name: Restore release keystore
         env:
           # keystore 文件以 base64 存入 Secret，避免二进制文件被破坏。
