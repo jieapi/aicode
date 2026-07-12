@@ -114,6 +114,14 @@ class AIAgentViewModel @Inject constructor(
         list.find { it.id == id }?.mode ?: com.aicode.feature.agent.domain.model.AgentMode.BUILD
     }.stateIn(viewModelScope, SharingStarted.Eagerly, com.aicode.feature.agent.domain.model.AgentMode.BUILD)
 
+    /** 当前会话绑定的 providerId/model（null 表示未绑定，回退全局 active provider）。 */
+    val currentSessionProviderModel: StateFlow<Pair<String?, String?>> = kotlinx.coroutines.flow.combine(
+        _currentSessionId, sessions
+    ) { id, list ->
+        val s = list.find { it.id == id }
+        (s?.providerId ?: "") to (s?.model ?: "")
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null as String? to null as String?)
+
     /**
      * 当前会话的消息状态：会话切换时自动切换到对应历史，并携带所属会话 id 与 loaded 标志，
      * 使 UI 能区分「切换/冷启动加载中」与「空会话」——避免先闪 Welcome 或上一个会话的消息再突然刷新。
@@ -639,6 +647,13 @@ class AIAgentViewModel @Inject constructor(
         val sid = _currentSessionId.value ?: return
         viewModelScope.launch {
             sessionUseCase.updateMode(sid, mode.name)
+        }
+    }
+
+    fun setSessionProviderModel(providerId: String, model: String) {
+        val sid = _currentSessionId.value ?: return
+        viewModelScope.launch {
+            sessionUseCase.updateProviderModel(sid, providerId, model)
         }
     }
 

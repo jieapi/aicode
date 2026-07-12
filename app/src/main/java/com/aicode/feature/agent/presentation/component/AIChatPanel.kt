@@ -269,9 +269,20 @@ fun AIChatPanel(
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
     val pendingQuestion by viewModel.pendingUserQuestion.collectAsStateWithLifecycle()
-    val activeProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
+    val globalActiveProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
     val providers = (settingsViewModel?.providers?.collectAsStateWithLifecycle()?.value ?: emptyList()).filter { it.isEnabled }
     val modelMetadata = settingsViewModel?.modelMetadata?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val sessionProviderModel by viewModel.currentSessionProviderModel.collectAsStateWithLifecycle()
+    val activeProvider = run {
+        val (boundProviderId, boundModel) = sessionProviderModel
+        if (!boundProviderId.isNullOrBlank()) {
+            providers.find { it.id == boundProviderId }?.let {
+                if (!boundModel.isNullOrBlank()) it.copy(selectedModel = boundModel) else it
+            } ?: globalActiveProvider
+        } else {
+            globalActiveProvider
+        }
+    }
     val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     val projectRoot = currentWorkspace?.path ?: ""
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
@@ -636,11 +647,7 @@ fun AIChatPanel(
                 activeProvider = activeProvider,
                 providers = providers,
                 onSelectModel = { p, m ->
-                    val svm = settingsViewModel ?: return@ChatInputBar
-                    if (p != activeProvider?.id) {
-                        svm.setActiveProvider(p)
-                    }
-                    svm.selectModel(p, m)
+                    viewModel.setSessionProviderModel(p, m)
                 },
                 onNavigateToSettings = onNavigateToSettings,
                 currentMode = currentMode,
