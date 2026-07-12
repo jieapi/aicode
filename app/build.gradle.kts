@@ -86,6 +86,13 @@ android {
     }
 
     buildTypes {
+        // debug 加包名后缀 .debug → applicationId 变 com.aicode.debug，与 release（com.aicode）
+        // 可同机共存、互不覆盖。IDE 跑 debug 不再因签名不同卸载已装的正式版。
+        // 注意：因 applicationId 不同，debug 变体私有目录为 /data/data/com.aicode.debug/，
+        // release 已解压的容器 rootfs 与工作区项目在 debug 下不可见（需重新解压/clone），属预期隔离行为。
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
