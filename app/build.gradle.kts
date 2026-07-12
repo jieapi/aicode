@@ -65,17 +65,24 @@ android {
         create("armsolo") {
             dimension = "container"
             ndk { abiFilters += "arm64-v8a" }
-            // 只打 arm 镜像，排除 x86 整套 rootfs/proot 以削体积。
-            // 用 dir: 前缀：aapt2 的 ignoreAssetsPattern 按目录条目 basename 匹配
-            // （不含路径分隔符），写 "container/x86" 会失效；dir:x86 命中目录后整棵子树跳过。
-            androidResources { ignoreAssetsPattern = "dir:x86" }
         }
         create("x86solo") {
             dimension = "container"
             ndk { abiFilters += "x86_64" }
-            // 只打 x86 镜像，排除 arm 整套（同上，dir:arm 整树跳过）。
-            androidResources { ignoreAssetsPattern = "dir:arm" }
         }
+    }
+
+    // 容器镜像按 flavor 共享 sourceSet：
+    //   _armAssets 仅物理一份 arm 镜像，由 universal + armsolo 共享
+    //   _x86Assets 仅物理一份 x86 镜像，由 universal + x86solo 共享
+    // 这样单架构包天然只含一套镜像（AGP 资源并集合并：未被引用的目录不参与），
+    // universal 含两套；镜像二进制在仓库里也只各一份，无重复。
+    // 放弃 ignoreAssetsPattern=dir:x86：实测对 container/x86 整树无效（rc1 已证实）。
+    sourceSets {
+        getByName("universal") { assets.srcDir("src/_armAssets") }
+        getByName("universal") { assets.srcDir("src/_x86Assets") }
+        getByName("armsolo") { assets.srcDir("src/_armAssets") }
+        getByName("x86solo") { assets.srcDir("src/_x86Assets") }
     }
 
     buildTypes {
