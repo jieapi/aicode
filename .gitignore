@@ -25,3 +25,4 @@ keystore.properties
 /skills-lock.json
 /AGENTS.md
 /CLAUDE.md
+build-smoke-debug.log
