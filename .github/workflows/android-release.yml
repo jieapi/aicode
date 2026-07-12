@@ -85,18 +85,25 @@ jobs:
         run: chmod +x ./gradlew
 
       # 一次性构建全部 flavor 的 release APK（universal/armsolo/x86solo）
+      # --stacktrace：构建失败时输出完整调用栈，便于在 CI 定位 OOM/内存类根因。
       - name: Build all flavor Release APKs
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --stacktrace
 
-      # 给三个 APK 加上更可读的文件名，便于用户在 Release 页区分架构。
+      # 给三个 APK 重命名为「包名-架构-版本」格式，架构用真实 ABI 名便于用户识别：
+      #   aicode-arm64-v1.0.0-rc1.apk      (armsolo)
+      #   aicode-x86_64-v1.0.0-rc1.apk     (x86solo)
+      #   aicode-universal-v1.0.0-rc1.apk  (universal，含两套镜像)
       - name: Rename APKs by flavor
         run: |
           mkdir -p dist
+          ver="${GITHUB_REF_NAME:-manual}"   # tag 如 v1.0.0-rc1；手动触发时为 manual-N
+          declare -A abi=( [armsolo]=arm64 [x86solo]=x86_64 [universal]=universal )
           for f in universal armsolo x86solo; do
             src="app/build/outputs/apk/$f/release/app-$f-release.apk"
             if [[ -f "$src" ]]; then
-              cp "$src" "dist/aicode-${GITHUB_REF_NAME:-manual}-${f}.apk"
-              echo "packaged dist/aicode-${GITHUB_REF_NAME:-manual}-${f}.apk"
+              out="dist/aicode-${abi[$f]}-${ver}.apk"
+              cp "$src" "$out"
+              echo "packaged $out"
             else
               echo "::warning::missing $src"
             fi
@@ -121,7 +128,7 @@ jobs:
           generate_release_notes: true
           files: |
             dist/aicode-*-universal.apk
-            dist/aicode-*-armsolo.apk
-            dist/aicode-*-x86solo.apk
+            dist/aicode-*-arm64.apk
+            dist/aicode-*-x86_64.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
