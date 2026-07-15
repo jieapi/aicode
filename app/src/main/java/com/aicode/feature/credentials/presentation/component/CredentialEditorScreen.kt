@@ -33,7 +33,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.TextButton
 import com.aicode.core.theme.Spacing
 import com.aicode.feature.credentials.domain.model.GitCredential
-import com.aicode.feature.credentials.presentation.newCredentialId
+import com.aicode.feature.credentials.domain.model.newCredentialId
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowLeft
 import compose.icons.feathericons.Eye

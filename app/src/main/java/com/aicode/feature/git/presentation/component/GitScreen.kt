@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +54,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aicode.core.theme.Radius
@@ -162,6 +166,8 @@ fun GitScreen(
                 return@Column
             }
             if (showCredentials) {
+                // 每次进入凭据页重新读署名：用户可能在终端改过项目级/全局署名，避免回显陈旧空值。
+                LaunchedEffect(Unit) { credentialViewModel.refreshIdentity() }
                 CredentialListSection(
                     credentials = credState.credentials,
                     userName = credState.userName,
@@ -201,6 +207,7 @@ fun GitScreen(
                         status = state.status,
                         busy = state.busy,
                         hasRemote = state.hasRemote,
+                        hasIdentity = state.hasIdentity,
                         onStage = viewModel::stage,
                         onUnstage = viewModel::unstage,
                         onStageAll = viewModel::stageAll,
@@ -230,6 +237,88 @@ fun GitScreen(
             }
         )
     }
+
+    // push/pull 缺凭据时：VM 置位 pendingCredentialHost，此处弹登录框，填完保存落盘 + 自动重试原操作。
+    state.pendingCredentialHost?.let { host ->
+        CredentialPromptDialog(
+            host = host,
+            onConfirm = { username, token ->
+                viewModel.saveCredentialAndRetry(host, username, token)
+            },
+            onDismiss = { viewModel.cancelPendingCredential() }
+        )
+    }
+}
+
+/**
+ * 拉取/推送缺 https 凭据时的登录弹窗。host 只读预填（来自当前 remote），用户填 username/token；
+ * 填完确认后 VM 存 Room + 落盘到容器持久挂载 + 自动重试原操作。仿 Win git 无凭据弹窗登录体验。
+ * 新存的凭据自动设为该 host 默认（与 findForHost 的 isDefault 优先语义一致）。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CredentialPromptDialog(
+    host: String,
+    onConfirm: (username: String, token: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var username by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+    var tokenVisible by remember { mutableStateOf(false) }
+    val canSave = username.trim().isNotBlank() && token.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("需要 $host 的登录凭据") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = { /* host 来自 remote，只读 */ },
+                    label = { Text("远程主机") },
+                    singleLine = true,
+                    readOnly = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("用户名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("访问令牌 Token / PAT") },
+                    singleLine = true,
+                    visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        IconButton(onClick = { tokenVisible = !tokenVisible }) {
+                            Icon(
+                                if (tokenVisible) FeatherIcons.EyeOff else FeatherIcons.Eye,
+                                contentDescription = if (tokenVisible) "隐藏" else "显示"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "填完即保存并自动重试。该凭据同时会保存到容器内 git，终端与 AI 执行裸 git 命令时也可直接使用。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (canSave) onConfirm(username.trim(), token) },
+                enabled = canSave
+            ) { Text("保存并重试") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @Composable
@@ -237,6 +326,7 @@ private fun StatusTab(
     status: GitStatus?,
     busy: Boolean,
     hasRemote: Boolean,
+    hasIdentity: Boolean,
     onStage: (String) -> Unit,
     onUnstage: (String) -> Unit,
     onStageAll: () -> Unit,
@@ -253,6 +343,7 @@ private fun StatusTab(
             busy = busy,
             hasStagedChanges = s?.staged?.isNotEmpty() == true,
             hasRemote = hasRemote,
+            hasIdentity = hasIdentity,
             onStageAll = onStageAll,
             onCommit = onCommit,
             onPull = onPull,
@@ -405,15 +496,24 @@ private fun StatusActionsBar(
     busy: Boolean,
     hasStagedChanges: Boolean,
     hasRemote: Boolean,
+    hasIdentity: Boolean,
     onStageAll: () -> Unit,
     onCommit: () -> Unit,
     onPull: () -> Unit,
     onPush: () -> Unit
 ) {
+    val canCommit = !busy && hasStagedChanges && hasIdentity
     BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.sm)) {
         if (maxWidth < 420.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = !busy && hasStagedChanges, onClick = onCommit, modifier = Modifier.fillMaxWidth())
+                ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = canCommit, onClick = onCommit, modifier = Modifier.fillMaxWidth())
+                if (!hasIdentity) {
+                    Text(
+                        "未配置署名，无法提交。请在「凭据」页填写 user.name / user.email。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
                     ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy && hasRemote, onClick = onPull, modifier = Modifier.weight(1f))
@@ -421,11 +521,20 @@ private fun StatusActionsBar(
                 }
             }
         } else {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = !busy && hasStagedChanges, onClick = onCommit, modifier = Modifier.weight(1.4f))
-                ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
-                ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy && hasRemote, onClick = onPull, modifier = Modifier.weight(1f))
-                ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy && hasRemote, onClick = onPush, modifier = Modifier.weight(1f))
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = canCommit, onClick = onCommit, modifier = Modifier.weight(1.4f))
+                    ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
+                    ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy && hasRemote, onClick = onPull, modifier = Modifier.weight(1f))
+                    ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy && hasRemote, onClick = onPush, modifier = Modifier.weight(1f))
+                }
+                if (!hasIdentity) {
+                    Text(
+                        "未配置署名，无法提交。请在「凭据」页填写 user.name / user.email。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
     }

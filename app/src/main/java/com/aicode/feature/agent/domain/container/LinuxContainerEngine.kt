@@ -103,7 +103,7 @@ class LinuxContainerEngine @Inject constructor(
          * 独立于 [ContainerInstaller] 的 rootfs INSTALL_VERSION：rootfs 版本升级会删 rootfs
          * （连带清掉本标记），故新 rootfs 必然重跑配置；同 rootfs 下改包清单则靠本版本号触发。
          */
-        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-rg-v2"
+        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-rg-gitcredhelper-v3"
 
         /** `apk add` 下载基础包的超时（毫秒）：首次配置需联网拉包，给足时间。 */
         private const val PROVISION_TIMEOUT_MS = 600_000L
@@ -207,6 +207,20 @@ class LinuxContainerEngine @Inject constructor(
         // 懒安装：首次执行命令时解压 rootfs/proot 并配置基础包（python3/git/rg）
         ensureInstalled()
         execCaptured(command, projectPath, timeoutMs).output
+    }
+
+    /**
+     * 同 [runCommandSync]，但一并返回退出码（超时/异常时为 null）。供需要据退出码判成败的调用方
+     * 使用——如 git 写操作：git 非零退出码并非进程崩溃，[runCommandSync] 仅返回文本会让上层误报成功。
+     */
+    suspend fun runCommandSyncWithExit(
+        command: String,
+        projectPath: String? = null,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS
+    ): CommandResult = withContext(Dispatchers.IO) {
+        ensureInstalled()
+        val r = execCaptured(command, projectPath, timeoutMs)
+        CommandResult(r.output, r.exitCode)
     }
 
     /** 一次容器内执行的结果：限幅后的完整输出 + 退出码（超时/异常时为 null）。 */
@@ -325,6 +339,9 @@ class LinuxContainerEngine @Inject constructor(
             append("EOF\n")
             append("apk update\n")
             append("apk add --no-cache $PROVISION_PACKAGES\n")
+            // 装好 git 后配置全局 credential.helper，指向持久挂载的凭据文件，让终端/AI/UI 三端裸 git
+            // 自动带凭据（GIT_CONFIG_GLOBAL 已指 /root/.aicode/.gitconfig，写入不随升级丢失）。
+            append("git config --global credential.helper 'store --file=/root/.aicode/git-credentials'\n")
         }
 
         var exitCode: Int? = null
@@ -554,6 +571,10 @@ class LinuxContainerEngine @Inject constructor(
             // (PROOT_NO_SECCOMP=1) 反而在本设备触发过 ptrace(PEEKDATA) I/O error。
             "PATH" to "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME" to "/root",
+            // git 全局配置指向持久挂载里的 .gitconfig（/root/.aicode 绑定到宿主 filesDir/aicode，
+            // 跨 rootfs 升级不丢）。git-credentials 同放该目录，credential.helper=store 经此读。
+            // 让终端/AI/UI 三端 git 都读同一份配置与凭据，详见 GitCredentialsFileSync。
+            "GIT_CONFIG_GLOBAL" to "/root/.aicode/.gitconfig",
             "TERM" to "xterm-256color",
             "LANG" to "C.UTF-8"
         )

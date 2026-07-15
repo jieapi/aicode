@@ -10,7 +10,6 @@ import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,22 +31,37 @@ class GitRepository @Inject constructor(
     private val credentialRepository: CredentialRepository
 ) {
     /**
-     * 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。
-     *
-     * [extraConfig] 以 `key=value` 形式逐条注入为 `git -c <kv> ...`（在 args 之前），用于按命令
-     * 一次性注入 HTTP 认证头而不污染 .gitconfig；默认空，所有现有调用零改动。每条经 [shellQuote]
-     * 单引号转义，含空格/特殊字符的值（如 `http.extraHeader=Authorization: Basic xxx`）安全传递。
+     * 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。仅用于只读命令（status/branches/log/remote 等）：
+     * 这些靠输出解析、容错，git 非零退出码不会让 UI 误判（解析得空罢了）。凭据由 `credential.helper=store`
+     * 经落盘文件自动注入（见 [GitCredentialsFileSync]），不在此按命令塞 `http.extraHeader`。
+     * 每条参数经 [shellQuote] 单引号转义，含空格/特殊字符的值（提交消息、含空格路径等）安全传递。
      */
     private suspend fun git(
-        vararg args: String,
-        extraConfig: List<String> = emptyList()
+        vararg args: String
+    ): String = gitRaw(args)
+
+    /**
+     * 执行一条 `git` **写**子命令，据退出码判成败：非零（真实失败）抛 [GitCommandFailureException]
+     * 携带 git 输出文本，上层 [com.aicode.feature.git.presentation.GitViewModel.runAction] 据此如实显示
+     * 「失败 + 原因」而非误报成功。代表场景：未配置署名提交、未授权推送、合并冲突。空退出码（超时/异常）
+     * 同样按失败抛，避免静默成功。
+     */
+    private suspend fun gitChecked(
+        vararg args: String
     ): String {
         val cmd = buildString {
             append("git")
-            extraConfig.forEach {
-                append(" -c ")
-                append(shellQuote(it))
-            }
+            args.forEach { append(' '); append(shellQuote(it)) }
+        }
+        val result = engine.runCommandSyncWithExit(cmd, workspaceRepository.currentPath())
+        if (result.exitCode == 0) return result.output
+        throw GitCommandFailureException(result.output.ifBlank { "git 退出码 ${result.exitCode}" })
+    }
+
+    /** 拼命令并跑（不判退出码），[git] 与 [gitChecked] 复用。 */
+    private suspend fun gitRaw(args: Array<out String>): String {
+        val cmd = buildString {
+            append("git")
             args.forEach { append(' '); append(shellQuote(it)) }
         }
         return engine.runCommandSync(cmd, workspaceRepository.currentPath())
@@ -196,11 +210,11 @@ class GitRepository @Inject constructor(
         }
     }
 
-    suspend fun stage(path: String) = git("add", "--", path)
-    suspend fun unstage(path: String) = git("reset", "HEAD", "--", path)
-    suspend fun stageAll() = git("add", "-A")
-    suspend fun unstageAll() = git("reset")
-    suspend fun commit(message: String) = git("commit", "-m", message)
+    suspend fun stage(path: String) = gitChecked("add", "--", path)
+    suspend fun unstage(path: String) = gitChecked("reset", "HEAD", "--", path)
+    suspend fun stageAll() = gitChecked("add", "-A")
+    suspend fun unstageAll() = gitChecked("reset")
+    suspend fun commit(message: String) = gitChecked("commit", "-m", message)
 
     /**
      * 拉取：解析当前 remote，若为 https 且有匹配 host 的凭据则注入 `Authorization: Basic` 头；
@@ -209,38 +223,51 @@ class GitRepository @Inject constructor(
      */
     suspend fun pull(): String {
         val remote = resolveRemote()
-        return git("pull", extraConfig = authConfig(remote))
+        ensureHasCredential(remote)
+        return gitChecked("pull")
     }
 
     suspend fun push(): String {
         val remote = resolveRemote()
-        return git("push", extraConfig = authConfig(remote))
+        ensureHasCredential(remote)
+        return gitChecked("push")
     }
 
     /**
-     * 据 [remote] 构造 http.extraHeader 注入项。仅 https 且能匹配到凭据时返回非空；
-     * 否则返回空列表（沿用 git 默认凭据流程，不报错——公仓或已配置环境凭据情况下仍可正常）。
-     * SSH remote（isHttps=false）本期不注入。
+     * 前置凭据检查：https remote 缺匹配 host 的凭据时抛 [CredentialMissingException]，由上层弹登录框。
+     * 凭据不再按命令注入 `http.extraHeader`，而是经 `credential.helper=store` 落盘文件由 git 自动读取
+     * （见 [GitCredentialsFileSync]，UI/终端/AI 三端共用）。SSH remote（isHttps=false）不查、按默认流程
+     * （ssh-agent / 环境凭据）。公仓裸拉本就不会因凭据失败，此处查不到也只对 https 私仓有意义。
      */
-    private suspend fun authConfig(remote: RemoteInfo): List<String> {
-        if (!remote.isHttps || remote.host.isEmpty()) return emptyList()
-        val cred = credentialRepository.findForHost(remote.host) ?: return emptyList()
-        val basic = Base64.getEncoder().encodeToString("${cred.username}:${cred.token}".toByteArray(Charsets.UTF_8))
-        return listOf("http.extraHeader=Authorization: Basic $basic")
+    private suspend fun ensureHasCredential(remote: RemoteInfo) {
+        if (!remote.isHttps || remote.host.isEmpty()) return
+        if (credentialRepository.findForHost(remote.host) == null) {
+            throw CredentialMissingException(remote.host)
+        }
     }
 
     /**
-     * 写入 git 全局提交署名。容器 HOME=/root 固定，`--global` 落 `/root/.gitconfig`，跨工作区生效。
-     * 空值跳过对应项不动现有全局配置。由 UI 在用户保存身份时显式调用，DataStore 才是真源。
+     * 写入提交署名，**优先项目级**：当前工作区（/workspace/.git/config）已有项目级署名时写 local，
+     * 否则写 global（容器 `GIT_CONFIG_GLOBAL=/root/.aicode/.gitconfig`，持久挂载，跨 rootfs 升级不丢）作默认。
+     * 这样 UI 与终端 `git config user.name` 读到的同一份——优先项目级、无则退全局，对齐 git 自身解析顺序。
+     * 空值跳过对应项不动现有配置。由 UI 在用户保存身份时显式调用。
      */
-    suspend fun setUserGlobal(name: String, email: String) {
-        if (name.isNotBlank()) git("config", "--global", "user.name", name)
-        if (email.isNotBlank()) git("config", "--global", "user.email", email)
+    suspend fun setUserIdentity(name: String, email: String) {
+        if (name.isNotBlank()) gitChecked("config", if (hasLocalConfig("user.name")) "--local" else "--global", "user.name", name)
+        if (email.isNotBlank()) gitChecked("config", if (hasLocalConfig("user.email")) "--local" else "--global", "user.email", email)
     }
 
-    /** 读取容器内 `git config --global` 当前署名，用于 UI 回显「git 实际值」。失败返回空串。 */
-    suspend fun getGlobalUserName(): String =
-        runCatching { git("config", "--global", "--get", "user.name").trim() }.getOrDefault("").removeSuffix("\r")
+    /** 当前工作区是否有项目级（`--local`）配置值。非 git 仓库或无值时返回 false。 */
+    private suspend fun hasLocalConfig(key: String): Boolean =
+        runCatching { git("config", "--local", "--get", key).trim() }.getOrDefault("").isNotBlank()
+
+    /** 读取 git 当前实际生效的 user.name（按 git 解析顺序：local→global→system），UI 回显与提交按钮判空用。失败返回空串。 */
+    suspend fun getUserName(): String =
+        runCatching { git("config", "--get", "user.name").trim() }.getOrDefault("").removeSuffix("\r")
+
+    /** 读取 git 当前实际生效的 user.email（local→global→system），UI 回显与编辑框初值。失败返回空串。 */
+    suspend fun getUserEmail(): String =
+        runCatching { git("config", "--get", "user.email").trim() }.getOrDefault("").removeSuffix("\r")
 
 
     /**

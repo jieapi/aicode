@@ -3,7 +3,7 @@ package com.aicode.feature.credentials.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicode.core.util.FileLogger
-import com.aicode.feature.credentials.data.GitUserSettingsRepository
+import com.aicode.feature.credentials.data.GitCredentialsFileSync
 import com.aicode.feature.credentials.domain.model.GitCredential
 import com.aicode.feature.credentials.domain.repository.CredentialRepository
 import com.aicode.feature.git.domain.GitRepository
@@ -11,70 +11,76 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import kotlin.random.Random
 
 /**
  * 凭据页 UI 编排：凭据 CRUD + 提交署名(user.name/email) 配置。
  *
- * 提交署名以 [GitUserSettingsRepository](DataStore) 为真源；用户保存后同步落 `git config --global`
- * （[GitRepository.setUserGlobal]）。进页 init 时若 DataStore 有值则补一次同步，保证 rootfs 升级丢
- * `.gitconfig` 后能自动恢复——单向「DataStore → git」，DataStore 空时不动容器既有配置。
+ * 提交署名读写走 `git config`（[GitRepository.setUserIdentity] / [getUserName] / [getUserEmail]）：
+ * **优先项目级**（当前工作区 /workspace/.git/config），无则退全局（持久挂载 /root/.aicode/.gitconfig）。
+ * UI 与终端敲 `git config user.name` 读到的是同一份署名——优先项目级、无则退全局，无两套源头竞争。
  */
 @HiltViewModel
 class CredentialViewModel @Inject constructor(
     private val credentialRepository: CredentialRepository,
-    private val userSettings: GitUserSettingsRepository,
-    private val gitRepository: GitRepository
+    private val gitRepository: GitRepository,
+    private val fileSync: GitCredentialsFileSync
 ) : ViewModel() {
 
     private companion object { const val TAG = "CredentialViewModel" }
 
     data class UiState(
         val credentials: List<GitCredential> = emptyList(),
+        /** 容器 git config 当前 user.name，作编辑框初值。 */
         val userName: String = "",
+        /** 容器 git config 当前 user.email，作编辑框初值。 */
         val userEmail: String = "",
-        /** 容器内 `git config --global` 实际的 user.name，用于回显「git 实际值」。 */
+        /** 容器 `git config --global` 实际 user.name，回显「git 实际值」（与 userName 同源）。 */
         val globalUserName: String = "",
         val toast: String? = null
     )
 
-    // combine 持久流外，单独用一个 MutableStateFlow 承载「全局实际值」与 toast 这类非 DataStore 来源的状态。
+    // 非反应式来源的状态：git config 读出的署名、toast。credentials 走 Room Flow。
     private val _extra = MutableStateFlow(Extra())
-    private data class Extra(val globalUserName: String = "", val toast: String? = null)
+    private data class Extra(
+        val userName: String = "",
+        val userEmail: String = "",
+        val globalUserName: String = "",
+        val toast: String? = null
+    )
 
-    val state: StateFlow<UiState> = combine(
-        credentialRepository.getAll(),
-        userSettings.userNameFlow,
-        userSettings.userEmailFlow,
-        _extra
-    ) { creds, name, email, extra ->
+    val state: StateFlow<UiState> = combine(credentialRepository.getAll(), _extra) { creds, extra ->
         UiState(
             credentials = creds,
-            userName = name,
-            userEmail = email,
+            userName = extra.userName,
+            userEmail = extra.userEmail,
             globalUserName = extra.globalUserName,
             toast = extra.toast
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
 
-    init { syncGlobalIdentity() }
+    init {
+        refreshIdentity()
+        // 兜底：把 Room 凭据落盘到容器持久挂载，保证升级后或文件被删时仍就位（详见 GitCredentialsFileSync）。
+        viewModelScope.launch { fileSync.syncAll() }
+    }
 
-    /** 把 DataStore 的署名（若非空）同步进容器 git 全局配置，并刷新实际值回显。 */
-    private fun syncGlobalIdentity() {
+    /** 从容器 git config 读取当前署名刷新 UI（编辑框初值 + 实际值回显）。可重入，进凭据页时调一次兜住终端改动。 */
+    fun refreshIdentity() {
         viewModelScope.launch {
             runCatching {
-                val name = userSettings.userNameFlow.first()
-                val email = userSettings.userEmailFlow.first()
-                if (name.isNotBlank() || email.isNotBlank()) gitRepository.setUserGlobal(name, email)
-                _extra.update { it.copy(globalUserName = gitRepository.getGlobalUserName()) }
-            }.onFailure { FileLogger.w(TAG, "同步全局署名失败: ${it.message}") }
+                _extra.update {
+                    it.copy(
+                        userName = gitRepository.getUserName(),
+                        userEmail = gitRepository.getUserEmail(),
+                        globalUserName = gitRepository.getUserName()
+                    )
+                }
+            }.onFailure { FileLogger.w(TAG, "读取 git 全局署名失败: ${it.message}") }
         }
     }
 
@@ -82,6 +88,7 @@ class CredentialViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 credentialRepository.save(credential)
+                fileSync.syncAll() // 落盘到容器持久挂载，UI/终端/AI 三端共用
                 toast("凭据已保存")
             } catch (e: Exception) {
                 FileLogger.e(TAG, "保存凭据失败", e)
@@ -93,21 +100,24 @@ class CredentialViewModel @Inject constructor(
     fun deleteCredential(id: String) {
         viewModelScope.launch {
             credentialRepository.delete(id)
+            fileSync.syncAll() // 删凭据后从落盘文件移除，否则终端/AI 仍能用旧凭据
             toast("凭据已删除")
         }
     }
 
     fun setDefault(id: String, isDefault: Boolean) {
-        viewModelScope.launch { credentialRepository.setDefault(id, isDefault) }
+        viewModelScope.launch {
+            credentialRepository.setDefault(id, isDefault)
+            fileSync.syncAll() // 切默认后落盘文件随之更新，三端按新默认条带凭据
+        }
     }
 
-    /** 保存提交署名：写 DataStore 真源 + 同步落 git 全局配置 + 刷新实际值回显。 */
+    /** 保存提交署名：跑 `git config --global` 写入 .gitconfig 真源 + 刷新回显。UI 与命令行同一文件。 */
     fun saveUserIdentity(name: String, email: String) {
         viewModelScope.launch {
             try {
-                userSettings.setUserIdentity(name, email)
-                gitRepository.setUserGlobal(name, email)
-                _extra.update { it.copy(globalUserName = gitRepository.getGlobalUserName()) }
+                gitRepository.setUserIdentity(name, email)
+                refreshIdentity()
                 toast("署名已保存到 git 全局配置")
             } catch (e: Exception) {
                 FileLogger.e(TAG, "保存署名失败", e)
@@ -120,6 +130,3 @@ class CredentialViewModel @Inject constructor(
 
     private fun toast(msg: String) = _extra.update { it.copy(toast = msg) }
 }
-
-/** 生成新凭据 id：时间戳 + 随机后缀（避免同毫秒冲突），仿现有 entity 主键风格。 */
-internal fun newCredentialId(): String = "${System.currentTimeMillis()}${Random.nextInt(1000, 9999)}"

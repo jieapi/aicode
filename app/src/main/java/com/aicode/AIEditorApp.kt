@@ -7,6 +7,7 @@ import android.os.Build
 import com.aicode.core.util.AILogger
 import com.aicode.core.util.FileLogger
 import com.aicode.feature.agent.domain.container.ContainerInstaller
+import com.aicode.feature.credentials.data.GitCredentialsFileSync
 import com.aicode.feature.agent.domain.mcp.McpManager
 import com.aicode.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicode.feature.settings.data.repository.LogSettingsRepository
@@ -35,6 +36,11 @@ class AIEditorApp : Application() {
     @Inject
     lateinit var mcpManager: McpManager
 
+    /** git 凭据/署名落盘同步器：启动即把 Room 凭据 + DataStore 署名写到容器持久挂载目录，
+     *  供终端/AI/UI 三端 git 经 credential.helper=store 共用，兜底 rootfs 升级或文件被删。 */
+    @Inject
+    lateinit var gitCredentialsFileSync: GitCredentialsFileSync
+
     /** 长驻作用域：持续把持久化的日志等级同步到 FileLogger。 */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -47,6 +53,11 @@ class AIEditorApp : Application() {
         // 启动即把最新的内置指南手册提取到私有配置目录
         appScope.launch {
             ContainerInstaller.extractDocs(this@AIEditorApp)
+        }
+        // 启动即把 Room 凭据 + DataStore 署名落盘到容器持久挂载（/root/.aicode），
+        // 让终端裸 git / AI 工具 / UI 三端共用同一份凭据与署名配置。
+        appScope.launch {
+            gitCredentialsFileSync.syncAll()
         }
         // 启动即加载持久化等级，并随设置页改动实时生效（唯一同步点）。
         appScope.launch {
