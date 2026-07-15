@@ -269,9 +269,21 @@ fun AIChatPanel(
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
     val pendingQuestion by viewModel.pendingUserQuestion.collectAsStateWithLifecycle()
-    val activeProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
+    val globalActiveProvider = settingsViewModel?.activeProvider?.collectAsStateWithLifecycle()?.value
     val providers = (settingsViewModel?.providers?.collectAsStateWithLifecycle()?.value ?: emptyList()).filter { it.isEnabled }
     val modelMetadata = settingsViewModel?.modelMetadata?.collectAsStateWithLifecycle()?.value.orEmpty()
+    val sessionProviderModel by viewModel.currentSessionProviderModel.collectAsStateWithLifecycle()
+    val activeProvider = run {
+        val (boundProviderId, boundModel) = sessionProviderModel
+        if (!boundProviderId.isNullOrBlank()) {
+            // 与 workflow.resolveProviderConfig 保持一致：绑定 provider 须启用且已填 apiKey，否则回退全局
+            providers.find { it.id == boundProviderId }?.takeIf { it.apiKey.isNotBlank() }?.let {
+                if (!boundModel.isNullOrBlank()) it.copy(selectedModel = boundModel) else it
+            } ?: globalActiveProvider
+        } else {
+            globalActiveProvider
+        }
+    }
     val currentWorkspace = workspaceViewModel?.current?.collectAsStateWithLifecycle()?.value
     val projectRoot = currentWorkspace?.path ?: ""
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
@@ -637,11 +649,7 @@ fun AIChatPanel(
                 activeProvider = activeProvider,
                 providers = providers,
                 onSelectModel = { p, m ->
-                    val svm = settingsViewModel ?: return@ChatInputBar
-                    if (p != activeProvider?.id) {
-                        svm.setActiveProvider(p)
-                    }
-                    svm.selectModel(p, m)
+                    viewModel.setSessionProviderModel(p, m)
                 },
                 onNavigateToSettings = onNavigateToSettings,
                 currentMode = currentMode,

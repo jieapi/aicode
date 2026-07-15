@@ -34,6 +34,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 示例：`feat(agent): 支持流式工具调用` / `fix(settings): 修复 provider 保存时校验失败` / `ci: 删除签名校验步骤`
 
+## 分支与改动工作流
+
+**原则：不在 `main` 上直接写功能，`main` 只接收已验证的分支。** 本仓库无灰度、靠 GitHub Release 分发且发出去即终态，`versionCode` 又由 git commit count 自动生成——直接在 `main` 上堆改动会污染发版线和 commit count，改坏不好回退。
+
+- **改动分档**：
+  - **新功能 / 行为变化 / 多文件改动**：新建分支 `feat/xxx`，改完走发版流程（行为变化通常升 `x.Y.0`，须先发 RC）。
+  - **纯 bug 修复 / 重构**：新建分支 `fix/xxx`；极小且不触碰启动/容器的可在 `main` 上快速修，但优先走分支以便回退与验证。
+  - **纯文档 / typo / 资源文案**：可直接在 `main` 上改。
+- **命名**：`feat/` 与 `fix/` 前缀 + 短主题，如 `feat/session-model`、`fix/provider-injection`。
+- **从哪拉分支**：从 `main` 最新拉分支，不要从一个功能分支再分岔（除非确实依赖它）。一份功能一个分支，**不要在同一分支混入不相关改动**。
+- **提交前必跑冒烟**：改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前默认 `./gradlew :app:assembleUniversalDebug` 验证可编译（**勿跑 `assembleDebug`/`assembleRelease` 三 flavor**，详见 Build and Run）。**禁止推未编译验证的分支**——历史教训：构造函数加参数却漏改 DI `@Provides` 的传参，导致整条分支编译不过。
+- **不留净效果为零的提交**：改主意用 `git commit --amend` 或 `git rebase -i` 合并精简，不要留「加了又删」的来回提交。注意 rebase/squash 会改写历史，可能让 commit count 回退，触发 CI 的 versionCode 单调校验（见版本号规范）。
+- **合并入 main**：在 GitHub 开 PR 合并，或本地确认无冲突后合回 `main` 再 push；合并前确保分支冒烟通过。
+
 ## 版本号规范
 
 - **唯一来源**：`app/build.gradle.kts` 的 `versionName`（`主.次.修`，如 `1.0.0`，手写）与 `versionCode`（由 `gitCommitCount()` 从 git 提交数自动生成，无需手写）。

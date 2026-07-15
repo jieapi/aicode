@@ -238,7 +238,8 @@ object AgentModule {
         planApprovalManager: com.aicode.feature.agent.domain.tool.mode.PlanApprovalManager,
         toolOutputStore: ToolOutputStore,
         modelMetadataService: ModelMetadataService,
-        visionModelSettingsRepository: com.aicode.feature.settings.data.repository.VisionModelSettingsRepository
+        visionModelSettingsRepository: com.aicode.feature.settings.data.repository.VisionModelSettingsRepository,
+        sessionUseCase: com.aicode.feature.agent.domain.session.SessionUseCase
     ): AgentWorkflow {
         return com.aicode.feature.agent.domain.workflow.StatefulAgentWorkflow(
             toolRegistry,
@@ -253,7 +254,8 @@ object AgentModule {
             planApprovalManager,
             toolOutputStore,
             modelMetadataService,
-            visionModelSettingsRepository
+            visionModelSettingsRepository,
+            sessionUseCase
         )
     }
 }
