@@ -41,6 +41,8 @@ class GitViewModel @Inject constructor(
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
         val toast: String? = null,
+        /** 是否已配置远程仓库，控制拉取/推送按钮可用性。 */
+        val hasRemote: Boolean = false,
         /** 已展开的提交 hash 集合。 */
         val expandedCommits: Set<String> = emptySet(),
         /** 已懒加载的提交文件清单，按 hash 缓存。 */
@@ -65,14 +67,22 @@ class GitViewModel @Inject constructor(
                 return@launch
             }
             try {
-                val (status, branches, commits) = coroutineScope {
+                val status: GitStatus
+                val branches: List<GitBranch>
+                val commits: List<GitCommit>
+                val hasRemote: Boolean
+                coroutineScope {
                     val s = async { repository.status() }
                     val b = async { repository.branches() }
                     val c = async { repository.log() }
-                    Triple(s.await(), b.await(), c.await())
+                    val r = async { repository.hasRemote() }
+                    status = s.await()
+                    branches = b.await()
+                    commits = c.await()
+                    hasRemote = r.await()
                 }
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits)
+                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits, hasRemote = hasRemote)
                 }
             } catch (e: Exception) {
                 FileLogger.e(TAG, "刷新失败", e)
@@ -96,14 +106,21 @@ class GitViewModel @Inject constructor(
             // 刷新以反映新状态；失败也刷新，让 UI 与仓库一致。
             try {
                 if (repository.isRepo()) {
-                    val (status, branches, commits) = coroutineScope {
-                        Triple(
-                            async { repository.status() }.await(),
-                            async { repository.branches() }.await(),
-                            async { repository.log() }.await()
-                        )
+                    val status: GitStatus
+                    val branches: List<GitBranch>
+                    val commits: List<GitCommit>
+                    val hasRemote: Boolean
+                    coroutineScope {
+                        val s = async { repository.status() }
+                        val b = async { repository.branches() }
+                        val c = async { repository.log() }
+                        val r = async { repository.hasRemote() }
+                        status = s.await()
+                        branches = b.await()
+                        commits = c.await()
+                        hasRemote = r.await()
                     }
-                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, notARepo = false, toast = msg) }
+                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, hasRemote = hasRemote, notARepo = false, toast = msg) }
                 } else {
                     _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
                 }
@@ -118,8 +135,20 @@ class GitViewModel @Inject constructor(
     fun stageAll() = runAction("全部暂存", { repository.stageAll() })
     fun unstageAll() = runAction("全部取消暂存", { repository.unstageAll() })
     fun commit(message: String) = runAction("提交", { repository.commit(message) })
-    fun pull() = runAction("拉取", { repository.pull() })
-    fun push() = runAction("推送", { repository.push() })
+    fun pull() {
+        if (!_state.value.hasRemote) {
+            _state.update { it.copy(toast = "未配置远程仓库，无法拉取") }
+            return
+        }
+        runAction("拉取", { repository.pull() })
+    }
+    fun push() {
+        if (!_state.value.hasRemote) {
+            _state.update { it.copy(toast = "未配置远程仓库，无法推送") }
+            return
+        }
+        runAction("推送", { repository.push() })
+    }
 
     /**
      * 切换某条提交的展开状态。展开时若尚未加载文件清单则懒加载（不置 [GitUiState.busy]，
