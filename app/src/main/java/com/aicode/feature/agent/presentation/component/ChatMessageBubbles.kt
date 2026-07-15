@@ -557,17 +557,28 @@ internal fun StreamingBubble(text: String) {
     }
 }
 
+/** 思维链折叠阈值：超过此行数视为过长，自动折叠为前 N 行 + 「展开剩余 X 行」。 */
+internal const val REASONING_COLLAPSE_LINE_LIMIT = 8
+
 /**
  * 思考过程可折叠气泡：左对齐、浅色弱化，与正式回复区分。点击标题栏折叠/展开。
- * [initiallyExpanded]：流式实时展示时默认展开以便边想边看；落库后的历史气泡默认折叠，避免刷屏。
+ *
+ * 折叠判定按行数阈值：超过 [REASONING_COLLAPSE_LINE_LIMIT] 行视为「过长」，自动折叠为
+ * 前 N 行 + 「展开剩余 X 行」。流式实时展示时，短文本边想边看，一旦长度越过阈值即自动
+ * 折叠（折叠态下新内容仍持续追加，保持折叠不刷屏，用户可随时点开看最新）；落库后的历史
+ * 气泡默认折叠，避免刷屏。用户手动 toggle 后以用户选择为准，不再被自动折叠覆盖。
  */
 @Composable
 internal fun ReasoningBubble(
     text: String,
     initiallyExpanded: Boolean = true
 ) {
+    var userToggled by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(initiallyExpanded) }
-    val displayText = text
+    val lineCount = remember(text) { text.count { it == '\n' } + 1 }
+    val overThreshold = lineCount > REASONING_COLLAPSE_LINE_LIMIT
+    // 自动折叠：仅在用户尚未手动 toggle 过时生效；用户手动展开/折叠后以用户选择为准
+    val effectiveExpanded = if (userToggled) expanded else (initiallyExpanded && !overThreshold)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start
@@ -581,7 +592,10 @@ internal fun ReasoningBubble(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { expanded = !expanded },
+                        .clickable {
+                            userToggled = true
+                            expanded = !expanded
+                        },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -598,19 +612,56 @@ internal fun ReasoningBubble(
                         modifier = Modifier.weight(1f)
                     )
                     Icon(
-                        if (expanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
-                        contentDescription = if (expanded) "折叠" else "展开",
+                        if (effectiveExpanded) FeatherIcons.ChevronUp else FeatherIcons.ChevronDown,
+                        contentDescription = if (effectiveExpanded) "折叠" else "展开",
                         tint = Brand.IconGray,
                         modifier = Modifier.size(18.dp)
                     )
                 }
-                if (expanded) {
+                if (effectiveExpanded) {
                     Spacer(Modifier.height(Spacing.sm))
                     Text(
-                        text = displayText,
+                        text = text,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                } else if (overThreshold) {
+                    // 折叠态：前 N 行 + 「展开剩余 X 行」
+                    Spacer(Modifier.height(Spacing.sm))
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = REASONING_COLLAPSE_LINE_LIMIT,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val hidden = lineCount - REASONING_COLLAPSE_LINE_LIMIT
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(Radius.sm))
+                            .clickable {
+                                userToggled = true
+                                expanded = true
+                            }
+                            .padding(vertical = Spacing.xs),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            FeatherIcons.ChevronDown,
+                            contentDescription = "展开",
+                            tint = Brand.IconGray,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(
+                            text = "展开剩余 $hidden 行",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }

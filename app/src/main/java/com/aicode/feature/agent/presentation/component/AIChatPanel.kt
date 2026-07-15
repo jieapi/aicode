@@ -540,7 +540,8 @@ fun AIChatPanel(
                         val showReasoning = reasoning != null && reasoning.isNotEmpty()
                         if (showReasoning) {
                             item(key = "__reasoning__", contentType = "tail") {
-                                ReasoningBubble(text = reasoning!!)
+                                // 流式实时：短文本默认展开边想边看，过长（超 REASONING_COLLAPSE_LINE_LIMIT）时由气泡内部自动折叠，不刷屏
+                                ReasoningBubble(text = reasoning!!, initiallyExpanded = true)
                             }
                         }
                         val streaming = streamingText
