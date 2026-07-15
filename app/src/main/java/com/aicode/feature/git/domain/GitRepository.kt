@@ -43,6 +43,9 @@ class GitRepository @Inject constructor(
         return out.trim() == "true"
     }
 
+    /** 是否已配置至少一个远程仓库（`git remote` 输出非空）。拉取/推送前据此门控。 */
+    suspend fun hasRemote(): Boolean = git("remote").trim().isNotEmpty()
+
     /** `git status` 聚合视图。 */
     suspend fun status(): GitStatus {
         val raw = git("status", "--porcelain=v1", "-b")

@@ -136,6 +136,7 @@ fun GitScreen(
                     GitTab.STATUS -> StatusTab(
                         status = state.status,
                         busy = state.busy,
+                        hasRemote = state.hasRemote,
                         onStage = viewModel::stage,
                         onUnstage = viewModel::unstage,
                         onStageAll = viewModel::stageAll,
@@ -171,6 +172,7 @@ fun GitScreen(
 private fun StatusTab(
     status: GitStatus?,
     busy: Boolean,
+    hasRemote: Boolean,
     onStage: (String) -> Unit,
     onUnstage: (String) -> Unit,
     onStageAll: () -> Unit,
@@ -186,6 +188,7 @@ private fun StatusTab(
         StatusActionsBar(
             busy = busy,
             hasStagedChanges = s?.staged?.isNotEmpty() == true,
+            hasRemote = hasRemote,
             onStageAll = onStageAll,
             onCommit = onCommit,
             onPull = onPull,
@@ -337,6 +340,7 @@ private fun StatusMetric(label: String, count: Int, color: Color, modifier: Modi
 private fun StatusActionsBar(
     busy: Boolean,
     hasStagedChanges: Boolean,
+    hasRemote: Boolean,
     onStageAll: () -> Unit,
     onCommit: () -> Unit,
     onPull: () -> Unit,
@@ -348,16 +352,16 @@ private fun StatusActionsBar(
                 ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = !busy && hasStagedChanges, onClick = onCommit, modifier = Modifier.fillMaxWidth())
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                     ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
-                    ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
-                    ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
+                    ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy && hasRemote, onClick = onPull, modifier = Modifier.weight(1f))
+                    ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy && hasRemote, onClick = onPush, modifier = Modifier.weight(1f))
                 }
             }
         } else {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 ActionButton("提交更改", FeatherIcons.Check, prominent = true, enabled = !busy && hasStagedChanges, onClick = onCommit, modifier = Modifier.weight(1.4f))
                 ActionButton("暂存全部", FeatherIcons.Plus, enabled = !busy, onClick = onStageAll, modifier = Modifier.weight(1f))
-                ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy, onClick = onPull, modifier = Modifier.weight(1f))
-                ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy, onClick = onPush, modifier = Modifier.weight(1f))
+                ActionButton("拉取", FeatherIcons.DownloadCloud, enabled = !busy && hasRemote, onClick = onPull, modifier = Modifier.weight(1f))
+                ActionButton("推送", FeatherIcons.UploadCloud, enabled = !busy && hasRemote, onClick = onPush, modifier = Modifier.weight(1f))
             }
         }
     }
