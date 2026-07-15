@@ -276,7 +276,8 @@ fun AIChatPanel(
     val activeProvider = run {
         val (boundProviderId, boundModel) = sessionProviderModel
         if (!boundProviderId.isNullOrBlank()) {
-            providers.find { it.id == boundProviderId }?.let {
+            // 与 workflow.resolveProviderConfig 保持一致：绑定 provider 须启用且已填 apiKey，否则回退全局
+            providers.find { it.id == boundProviderId }?.takeIf { it.apiKey.isNotBlank() }?.let {
                 if (!boundModel.isNullOrBlank()) it.copy(selectedModel = boundModel) else it
             } ?: globalActiveProvider
         } else {
