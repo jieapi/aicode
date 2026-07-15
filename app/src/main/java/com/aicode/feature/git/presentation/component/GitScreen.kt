@@ -57,6 +57,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aicode.core.theme.Radius
 import com.aicode.core.theme.Spacing
+import com.aicode.feature.credentials.domain.model.GitCredential
+import com.aicode.feature.credentials.presentation.CredentialViewModel
+import com.aicode.feature.credentials.presentation.component.CredentialEditorScreen
+import com.aicode.feature.credentials.presentation.component.CredentialListSection
+import com.aicode.feature.credentials.presentation.component.GitUserIdentityCard
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
@@ -70,38 +75,65 @@ import compose.icons.feathericons.*
 @Composable
 fun GitScreen(
     viewModel: GitViewModel,
+    credentialViewModel: CredentialViewModel,
     onNavigateBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val credState by credentialViewModel.state.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     // toast → Snackbar 一次性消费。
-    LaunchedEffect(state.toast) {
+    LaunchedEffect(state.toast, credState.toast) {
         state.toast?.let {
             snackbarHostState.showSnackbar(it)
             viewModel.consumeToast()
         }
+        credState.toast?.let {
+            snackbarHostState.showSnackbar(it)
+            credentialViewModel.consumeToast()
+        }
     }
 
     var showCommitDialog by remember { mutableStateOf(false) }
+    var showCredentials by remember { mutableStateOf(false) }
+    // editingCredential != null -> 编辑现有；editingCredential == null && isAddingCredential -> 新增；否则列表态。
+    var editingCredential by remember { mutableStateOf<GitCredential?>(null) }
+    var isAddingCredential by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Git") },
+                title = { Text(if (showCredentials) "凭据与署名" else "Git") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onBackground
                 ),
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = {
+                        // 子页优先回上一级：编辑/新增 -> 凭据列表 -> 退出 Git 页
+                        when {
+                            editingCredential != null -> editingCredential = null
+                            isAddingCredential -> isAddingCredential = false
+                            showCredentials -> showCredentials = false
+                            else -> onNavigateBack()
+                        }
+                    }) {
                         Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { viewModel.refresh() }, enabled = !state.busy) {
-                        Icon(FeatherIcons.RefreshCw, contentDescription = "刷新")
+                    if (!showCredentials) {
+                        IconButton(onClick = { showCredentials = true }) {
+                            Icon(FeatherIcons.Key, contentDescription = "凭据与署名")
+                        }
+                        IconButton(onClick = { viewModel.refresh() }, enabled = !state.busy) {
+                            Icon(FeatherIcons.RefreshCw, contentDescription = "刷新")
+                        }
+                    } else if (editingCredential == null && !isAddingCredential) {
+                        IconButton(onClick = { isAddingCredential = true }) {
+                            Icon(FeatherIcons.Plus, contentDescription = "添加凭据")
+                        }
                     }
                 }
             )
@@ -109,6 +141,38 @@ fun GitScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // 凭据编辑/新增子页（全屏覆盖 Git tab 内容）
+            val editing = editingCredential
+            if (editing != null) {
+                CredentialEditorScreen(
+                    initial = editing,
+                    onBack = { editingCredential = null },
+                    onSave = { credentialViewModel.saveCredential(it) },
+                    onDelete = { credentialViewModel.deleteCredential(it) }
+                )
+                return@Column
+            }
+            if (isAddingCredential) {
+                CredentialEditorScreen(
+                    initial = null,
+                    onBack = { isAddingCredential = false },
+                    onSave = { credentialViewModel.saveCredential(it); isAddingCredential = false },
+                    onDelete = { /* 新增态无删除 */ }
+                )
+                return@Column
+            }
+            if (showCredentials) {
+                CredentialListSection(
+                    credentials = credState.credentials,
+                    userName = credState.userName,
+                    userEmail = credState.userEmail,
+                    globalUserName = credState.globalUserName,
+                    onEdit = { editingCredential = it },
+                    onToggleDefault = { id, isDefault -> credentialViewModel.setDefault(id, isDefault) },
+                    onSaveIdentity = { name, email -> credentialViewModel.saveUserIdentity(name, email) }
+                )
+                return@Column
+            }
             PrimaryTabRow(selectedTabIndex = state.tab.ordinal) {
                 GitTab.entries.forEach { tab ->
                     Tab(

@@ -256,8 +256,10 @@ fun AppNavigation() {
             }
             composable("git") {
                 val gitViewModel: GitViewModel = hiltViewModel()
+                val credentialViewModel: com.aicode.feature.credentials.presentation.CredentialViewModel = hiltViewModel()
                 GitScreen(
                     viewModel = gitViewModel,
+                    credentialViewModel = credentialViewModel,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

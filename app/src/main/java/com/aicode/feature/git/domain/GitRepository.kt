@@ -2,6 +2,7 @@ package com.aicode.feature.git.domain
 
 import com.aicode.core.util.FileLogger
 import com.aicode.feature.agent.domain.container.LinuxContainerEngine
+import com.aicode.feature.credentials.domain.repository.CredentialRepository
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
@@ -9,6 +10,7 @@ import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,16 +28,64 @@ private const val TAG = "GitRepository"
 @Singleton
 class GitRepository @Inject constructor(
     private val engine: LinuxContainerEngine,
-    private val workspaceRepository: WorkspaceRepository
+    private val workspaceRepository: WorkspaceRepository,
+    private val credentialRepository: CredentialRepository
 ) {
-    /** 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。 */
-    private suspend fun git(vararg args: String): String {
+    /**
+     * 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。
+     *
+     * [extraConfig] 以 `key=value` 形式逐条注入为 `git -c <kv> ...`（在 args 之前），用于按命令
+     * 一次性注入 HTTP 认证头而不污染 .gitconfig；默认空，所有现有调用零改动。每条经 [shellQuote]
+     * 单引号转义，含空格/特殊字符的值（如 `http.extraHeader=Authorization: Basic xxx`）安全传递。
+     */
+    private suspend fun git(
+        vararg args: String,
+        extraConfig: List<String> = emptyList()
+    ): String {
         val cmd = buildString {
             append("git")
+            extraConfig.forEach {
+                append(" -c ")
+                append(shellQuote(it))
+            }
             args.forEach { append(' '); append(shellQuote(it)) }
         }
         return engine.runCommandSync(cmd, workspaceRepository.currentPath())
     }
+
+    /**
+     * 解析当前仓库的「当前远程」信息，供 pull/push 注入凭据。
+     *
+     * 取 active remote：优先 `git rev-parse` 拿当前分支上游对应的 remote（@{upstream}），失败回退
+     * `git remote` 首个。解析 url 判 [isHttps] 与 host(小写归一)。SSH 形如 `git@host:` 由正则兜底取 host，
+     * 本期 SSH 不注入凭据（仅提示），但 host 仍返回便于 UI 显示。
+     */
+    private suspend fun resolveRemote(): RemoteInfo {
+        // 当前分支上游对应的 remote 名，失败则回退 remote 列表首个。
+        val name = runCatching { git("rev-parse", "--abbrev-ref", "@{upstream}").trim() }
+            .getOrDefault("")
+            .takeIf { it.isNotBlank() && it != "HEAD" && !it.startsWith("fatal") }
+            ?.substringBefore('/')
+            ?: git("remote").split('\n').firstOrNull { it.removeSuffix("\r").isNotBlank() }?.removeSuffix("\r")?.trim()
+            ?: throw IllegalStateException("未配置远程仓库")
+
+        val url = runCatching { git("remote", "get-url", name).trim() }
+            .getOrDefault("")
+            .removeSuffix("\r")
+            .trim()
+            .takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("无法解析远程地址: $name")
+
+        val lower = url.lowercase()
+        val isHttps = lower.startsWith("https://") || lower.startsWith("http://")
+        val host = when {
+            isHttps -> runCatching { java.net.URI(url).host }.getOrNull()?.lowercase()
+            else -> Regex("^(?:ssh://)?[^@]+@([^:/]+)").find(url)?.groupValues?.getOrNull(1)?.lowercase()
+        } ?: ""
+        return RemoteInfo(name = name, url = url, isHttps = isHttps, host = host)
+    }
+
+    private data class RemoteInfo(val name: String, val url: String, val isHttps: Boolean, val host: String)
 
     /** 当前工作区是否处于一个 git 工作树内。 */
     suspend fun isRepo(): Boolean {
@@ -151,8 +201,47 @@ class GitRepository @Inject constructor(
     suspend fun stageAll() = git("add", "-A")
     suspend fun unstageAll() = git("reset")
     suspend fun commit(message: String) = git("commit", "-m", message)
-    suspend fun pull() = git("pull")
-    suspend fun push() = git("push")
+
+    /**
+     * 拉取：解析当前 remote，若为 https 且有匹配 host 的凭据则注入 `Authorization: Basic` 头；
+     * 无凭据或非 https（SSH）则按默认流程执行（公仓裸拉 / ssh-agent / 环境凭据）。remote 不存在抛异常，
+     * 由上层 runAction 捕获后 toast。
+     */
+    suspend fun pull(): String {
+        val remote = resolveRemote()
+        return git("pull", extraConfig = authConfig(remote))
+    }
+
+    suspend fun push(): String {
+        val remote = resolveRemote()
+        return git("push", extraConfig = authConfig(remote))
+    }
+
+    /**
+     * 据 [remote] 构造 http.extraHeader 注入项。仅 https 且能匹配到凭据时返回非空；
+     * 否则返回空列表（沿用 git 默认凭据流程，不报错——公仓或已配置环境凭据情况下仍可正常）。
+     * SSH remote（isHttps=false）本期不注入。
+     */
+    private suspend fun authConfig(remote: RemoteInfo): List<String> {
+        if (!remote.isHttps || remote.host.isEmpty()) return emptyList()
+        val cred = credentialRepository.findForHost(remote.host) ?: return emptyList()
+        val basic = Base64.getEncoder().encodeToString("${cred.username}:${cred.token}".toByteArray(Charsets.UTF_8))
+        return listOf("http.extraHeader=Authorization: Basic $basic")
+    }
+
+    /**
+     * 写入 git 全局提交署名。容器 HOME=/root 固定，`--global` 落 `/root/.gitconfig`，跨工作区生效。
+     * 空值跳过对应项不动现有全局配置。由 UI 在用户保存身份时显式调用，DataStore 才是真源。
+     */
+    suspend fun setUserGlobal(name: String, email: String) {
+        if (name.isNotBlank()) git("config", "--global", "user.name", name)
+        if (email.isNotBlank()) git("config", "--global", "user.email", email)
+    }
+
+    /** 读取容器内 `git config --global` 当前署名，用于 UI 回显「git 实际值」。失败返回空串。 */
+    suspend fun getGlobalUserName(): String =
+        runCatching { git("config", "--global", "--get", "user.name").trim() }.getOrDefault("").removeSuffix("\r")
+
 
     /**
      * 对单个 shell 参数做单引号转义。含「安全字符」之外的字符（空格、`|`、`$`、反引号、`*` 等）时
