@@ -33,7 +33,7 @@
 
         <provider
             android:name=".feature.workspace.data.provider.WorkspaceDocumentsProvider"
-            android:authorities="com.aicode.documents"
+            android:authorities="${applicationId}.documents"
             android:exported="true"
             android:grantUriPermissions="true"
             android:permission="android.permission.MANAGE_DOCUMENTS">
