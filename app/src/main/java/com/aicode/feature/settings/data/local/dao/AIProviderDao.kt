@@ -13,6 +13,12 @@ interface AIProviderDao {
     @Query("SELECT * FROM ai_providers")
     fun getAllProviders(): Flow<List<AIProviderEntity>>
 
+    @Query("SELECT * FROM ai_providers")
+    suspend fun getAllProvidersOnce(): List<AIProviderEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllProviders(providers: List<AIProviderEntity>)
+
     @Query("SELECT * FROM ai_providers WHERE isActive = 1 LIMIT 1")
     fun getActiveProvider(): Flow<AIProviderEntity?>
 

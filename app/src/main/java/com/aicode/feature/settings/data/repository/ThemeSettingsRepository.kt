@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,5 +42,15 @@ class ThemeSettingsRepository @Inject constructor(
 
     suspend fun setThemeMode(mode: AppThemeMode) {
         context.themeDataStore.edit { it[THEME_MODE_KEY] = mode.name }
+    }
+
+    /** 备份快照：返回当前持久化的主题模式名（未设置时为 null，导入时回退默认）。 */
+    suspend fun snapshot(): String? = themeModeFlow.first().name
+
+    /** 从备份还原主题模式；null 时清除键回退默认。 */
+    suspend fun restore(value: String?) {
+        context.themeDataStore.edit {
+            if (value == null) it.remove(THEME_MODE_KEY) else it[THEME_MODE_KEY] = value
+        }
     }
 }

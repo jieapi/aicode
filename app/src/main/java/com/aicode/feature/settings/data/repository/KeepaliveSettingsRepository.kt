@@ -39,4 +39,10 @@ class KeepaliveSettingsRepository @Inject constructor(
 
     /** 读取一次当前值（冷启动恢复用）。 */
     suspend fun isEnabled(): Boolean = enabledFlow.first()
+
+    /** 备份快照：当前保活开关是否开启。 */
+    suspend fun snapshot(): Boolean = enabledFlow.first()
+
+    /** 从备份还原保活开关。 */
+    suspend fun restore(enabled: Boolean) = setEnabled(enabled)
 }

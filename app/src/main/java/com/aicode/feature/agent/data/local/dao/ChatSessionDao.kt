@@ -18,6 +18,12 @@ interface ChatSessionDao {
     @Query("SELECT * FROM chat_sessions WHERE workspacePath = :workspacePath ORDER BY updatedAt DESC")
     suspend fun getAllSessionsByWorkspaceOnce(workspacePath: String): List<ChatSessionEntity>
 
+    @Query("SELECT * FROM chat_sessions")
+    suspend fun getAllOnce(): List<ChatSessionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(sessions: List<ChatSessionEntity>)
+
     @Query("SELECT * FROM chat_sessions WHERE id = :id")
     suspend fun getById(id: String): ChatSessionEntity?
 
