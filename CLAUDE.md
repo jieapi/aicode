@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **原则：不在 `main` 上直接写功能，`main` 只接收已验证的分支。** 本仓库无灰度、靠 GitHub Release 分发且发出去即终态，`versionCode` 又由 git commit count 自动生成——直接在 `main` 上堆改动会污染发版线和 commit count，改坏不好回退。
 
 - **改动分档**：
-  - **新功能 / 行为变化 / 多文件改动**：新建分支 `feat/xxx`，改完走发版流程（行为变化通常升 `x.Y.0`，须先发 RC）。
+  - **新功能 / 行为变化 / 多文件改动**：新建分支 `feat/xxx`，改完走发版流程（属行为变化，发版时按新功能档升 `x.Y.0` 且须先发 RC；但提交本身**不要**动 `versionName`，见版本号规范）。
   - **纯 bug 修复 / 重构**：新建分支 `fix/xxx`；极小且不触碰启动/容器的可在 `main` 上快速修，但优先走分支以便回退与验证。
   - **纯文档 / typo / 资源文案**：可直接在 `main` 上改。
 - **命名**：`feat/` 与 `fix/` 前缀 + 短主题，如 `feat/session-model`、`fix/provider-injection`。
@@ -51,23 +51,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 版本号规范
 
 - **唯一来源**：`app/build.gradle.kts` 的 `versionName`（`主.次.修`，如 `1.0.0`，手写）与 `versionCode`（由 `gitCommitCount()` 从 git 提交数自动生成，无需手写）。
-- **何时递增**：
-  - `versionName` 次版本号（中间位）：新增功能 / 行为变化 → 提交时一并升 `x.Y.0`。
-  - `versionName` 修订号（末位）：仅修 bug 或纯文档/重构 → `x.y.Z`。
-  - `versionCode`：随每次 git 提交自动 +1（commit count 单调递增），**无需手动维护**。rebase/squash 改写历史可能让 commit count 变小，CI（`android-release.yml` 的 Verify versionCode monotonic 步骤）会校验当前 > 上个 Release 防回退。
+- **何时递增**：**`versionName` 只在发版的那一刻改一次，平时提交一律不碰**——平时提交不要动 `versionName`，避免每次改完功能都想去改版本号（提交时碰它没意义，真正的版本号是在打 tag 发版时确定的）。要发版时按下一版要承载的内容定档：
+  - 次版本号（中间位）：本发版周期含新增功能 / 行为变化 → 升 `x.Y.0`。
+  - 修订号（末位）：本发版周期仅 bug 修复 / 纯文档 / 重构 → `x.y.Z`。
+- **`versionCode` 无需手动维护**：随每次 git 提交自动 +1（commit count 单调递增）。rebase/squash 改写历史可能让 commit count 变小，CI（`android-release.yml` 的 Verify versionCode monotonic 步骤）会校验当前 > 上个 Release 防回退。
 - **与 Release 绑定**：发版时打的 git tag 必须与 `versionName` 完全一致——tag 写 `v<versionName>`（如 versionName=`1.0.0` → tag=`v1.0.0`）。CI 触发靠 tag 名 `v*`，错了会发到错误版本号上。
 
 ## 发版流程（RC 判定）
 
 本项目不能上 Google Play、靠 GitHub Release 分发且无灰度，发出去即终态，RC 是主要兜底。发版前按改动面判断是否先发 RC：
 
-- **必须先发 RC**：新功能 / 行为变化（升 `x.Y.0`）；构建链路 / 签名 / flavor / CI 改动；容器镜像、PRoot、ABI 相关改动。
-- **可直接发正式**：纯文档 / typo / 资源文案。
-- **看改动面**：纯 bug 修复（升 `x.y.Z`）--小改直接正式，触碰启动/容器的仍先 RC。
+- **必须先发 RC**：本发版周期含新功能 / 行为变化（定档 `x.Y.0`）；或构建链路 / 签名 / flavor / CI 改动；或容器镜像、PRoot、ABI 相关改动。
+- **可直接发正式**：本发版周期仅纯文档 / typo / 资源文案（定档 `x.y.Z`，无行为变化）。
+- **看改动面**：本发版周期仅纯 bug 修复（定档 `x.y.Z`）——小改直接正式，触碰启动/容器的仍先 RC。
+
+> 注：这一档只影响本发版版本号定档（`x.Y.0` vs `x.y.Z`）与是否先发 RC，**不要求在改动提交时改 `versionName`**——版本号等到实际发版时（按下面操作步骤第 1 步）一并改、commit、再打 tag。
 
 ### 操作步骤
 
-1. 在 `app/build.gradle.kts` 设好 `versionName`（如 `"1.2.0"`），commit。
+1. **此时才改 `versionName`**：按本发版周期承载的内容在 `app/build.gradle.kts` 定档（新功能/行为变化 → `x.Y.0`；仅 bug 修复/文档 → `x.y.Z`），设好 `versionName` 后 commit。这是版本号唯一的改动时机——平时功能提交不要碰它。
 2. `git tag v<versionName>-rc1`（如 `v1.2.0-rc1`）并 push。CI 校验 tag 版本部分 == `versionName`，构三 flavor 发 Release。
 3. **真机装 rc 包**，至少跑通 AI 对话 + 终端 + 容器启动三条主线。
 4. 有问题 -> 修 -> 升 rc 序号（`-rc2`）重发；没问题 -> `git tag v<versionName>` push 发正式。
