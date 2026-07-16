@@ -101,8 +101,31 @@ fun GitScreen(
     var showCommitDialog by remember { mutableStateOf(false) }
     var showCredentials by remember { mutableStateOf(false) }
     // editingCredential != null -> 编辑现有；editingCredential == null && isAddingCredential -> 新增；否则列表态。
+    // 编辑/新增态直接在 [Scaffold] 之外独立渲染全屏 [CredentialEditorScreen]（它自带 Scaffold/TopAppBar/BackHandler），
+    // 避免与本页 Scaffold 嵌套产生双层顶栏，返回由其自身 BackHandler 接管。
     var editingCredential by remember { mutableStateOf<GitCredential?>(null) }
     var isAddingCredential by remember { mutableStateOf(false) }
+
+    // 编辑/新增凭据：独立全屏页，不进入下方 GitScreen 的 Scaffold，避免双层顶栏。
+    if (editingCredential != null) {
+        val editing = editingCredential!!
+        CredentialEditorScreen(
+            initial = editing,
+            onBack = { editingCredential = null },
+            onSave = { credentialViewModel.saveCredential(it); editingCredential = null },
+            onDelete = { credentialViewModel.deleteCredential(it); editingCredential = null }
+        )
+        return
+    }
+    if (isAddingCredential) {
+        CredentialEditorScreen(
+            initial = null,
+            onBack = { isAddingCredential = false },
+            onSave = { credentialViewModel.saveCredential(it); isAddingCredential = false },
+            onDelete = { /* 新增态无删除 */ }
+        )
+        return
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -115,13 +138,8 @@ fun GitScreen(
                 ),
                 navigationIcon = {
                     IconButton(onClick = {
-                        // 子页优先回上一级：编辑/新增 -> 凭据列表 -> 退出 Git 页
-                        when {
-                            editingCredential != null -> editingCredential = null
-                            isAddingCredential -> isAddingCredential = false
-                            showCredentials -> showCredentials = false
-                            else -> onNavigateBack()
-                        }
+                        // 凭据列表态回 Git 页，否则退出 Git 页。编辑/新增态由 [CredentialEditorScreen] 自身 BackHandler 处理，不走此顶栏。
+                        if (showCredentials) showCredentials = false else onNavigateBack()
                     }) {
                         Icon(FeatherIcons.ArrowLeft, contentDescription = "返回")
                     }
@@ -134,7 +152,8 @@ fun GitScreen(
                         IconButton(onClick = { viewModel.refresh() }, enabled = !state.busy) {
                             Icon(FeatherIcons.RefreshCw, contentDescription = "刷新")
                         }
-                    } else if (editingCredential == null && !isAddingCredential) {
+                    } else {
+                        // showCredentials 列表态：显示添加凭据。编辑/新增态已 return，渲染顶栏时不会落到此分支。
                         IconButton(onClick = { isAddingCredential = true }) {
                             Icon(FeatherIcons.Plus, contentDescription = "添加凭据")
                         }
@@ -145,26 +164,6 @@ fun GitScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // 凭据编辑/新增子页（全屏覆盖 Git tab 内容）
-            val editing = editingCredential
-            if (editing != null) {
-                CredentialEditorScreen(
-                    initial = editing,
-                    onBack = { editingCredential = null },
-                    onSave = { credentialViewModel.saveCredential(it) },
-                    onDelete = { credentialViewModel.deleteCredential(it) }
-                )
-                return@Column
-            }
-            if (isAddingCredential) {
-                CredentialEditorScreen(
-                    initial = null,
-                    onBack = { isAddingCredential = false },
-                    onSave = { credentialViewModel.saveCredential(it); isAddingCredential = false },
-                    onDelete = { /* 新增态无删除 */ }
-                )
-                return@Column
-            }
             if (showCredentials) {
                 // 每次进入凭据页重新读署名：用户可能在终端改过项目级/全局署名，避免回显陈旧空值。
                 LaunchedEffect(Unit) { credentialViewModel.refreshIdentity() }
@@ -201,7 +200,7 @@ fun GitScreen(
                 state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-                state.notARepo -> EmptyState("当前工作区不是 Git 仓库")
+                state.notARepo -> NotARepoState(onInit = viewModel::initRepo)
                 else -> when (state.tab) {
                     GitTab.STATUS -> StatusTab(
                         status = state.status,
@@ -237,88 +236,6 @@ fun GitScreen(
             }
         )
     }
-
-    // push/pull 缺凭据时：VM 置位 pendingCredentialHost，此处弹登录框，填完保存落盘 + 自动重试原操作。
-    state.pendingCredentialHost?.let { host ->
-        CredentialPromptDialog(
-            host = host,
-            onConfirm = { username, token ->
-                viewModel.saveCredentialAndRetry(host, username, token)
-            },
-            onDismiss = { viewModel.cancelPendingCredential() }
-        )
-    }
-}
-
-/**
- * 拉取/推送缺 https 凭据时的登录弹窗。host 只读预填（来自当前 remote），用户填 username/token；
- * 填完确认后 VM 存 Room + 落盘到容器持久挂载 + 自动重试原操作。仿 Win git 无凭据弹窗登录体验。
- * 新存的凭据自动设为该 host 默认（与 findForHost 的 isDefault 优先语义一致）。
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CredentialPromptDialog(
-    host: String,
-    onConfirm: (username: String, token: String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var username by remember { mutableStateOf("") }
-    var token by remember { mutableStateOf("") }
-    var tokenVisible by remember { mutableStateOf(false) }
-    val canSave = username.trim().isNotBlank() && token.isNotBlank()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("需要 $host 的登录凭据") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                OutlinedTextField(
-                    value = host,
-                    onValueChange = { /* host 来自 remote，只读 */ },
-                    label = { Text("远程主机") },
-                    singleLine = true,
-                    readOnly = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("用户名") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it },
-                    label = { Text("访问令牌 Token / PAT") },
-                    singleLine = true,
-                    visualTransformation = if (tokenVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = {
-                        IconButton(onClick = { tokenVisible = !tokenVisible }) {
-                            Icon(
-                                if (tokenVisible) FeatherIcons.EyeOff else FeatherIcons.Eye,
-                                contentDescription = if (tokenVisible) "隐藏" else "显示"
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    text = "填完即保存并自动重试。该凭据同时会保存到容器内 git，终端与 AI 执行裸 git 命令时也可直接使用。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { if (canSave) onConfirm(username.trim(), token) },
-                enabled = canSave
-            ) { Text("保存并重试") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
 }
 
 @Composable
@@ -1187,6 +1104,33 @@ private fun ActionButton(
 private fun EmptyState(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** 非仓库态：文案 + 「初始化 Git 仓库」按钮（跑 `git init`，成功后自动刷新进仓库态）。 */
+@Composable
+private fun NotARepoState(onInit: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+            Text(
+                "当前工作区不是 Git 仓库",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "初始化后会在此创建 .git，之后可暂存、提交、关联远程。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            FilledTonalButton(onClick = onInit) {
+                Icon(FeatherIcons.GitBranch, contentDescription = null)
+                Spacer(Modifier.width(Spacing.sm))
+                Text("初始化 Git 仓库")
+            }
+        }
     }
 }
 
