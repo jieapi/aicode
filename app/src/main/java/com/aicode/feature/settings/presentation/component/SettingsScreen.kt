@@ -63,8 +63,7 @@ internal enum class SettingsSection(val title: String) {
     ProviderEditor("提供商"),
     VisionModel("识图模型"),
     Mcp("MCP 服务器"),
-    Log("日志等级"),
-    LogViewer("日志查看"),
+    SystemLogs("系统日志"),
     Permissions("工具授权"),
     RemoteServers("远程工作区"),
     About("关于")
@@ -101,7 +100,7 @@ fun SettingsScreen(
     BackHandler(enabled = section != SettingsSection.Menu) {
         when (section) {
             SettingsSection.ProviderEditor -> section = SettingsSection.Providers
-            SettingsSection.LogViewer -> section = logReturnSection
+            SettingsSection.SystemLogs -> section = logReturnSection
             else -> section = SettingsSection.Menu
         }
     }
@@ -143,7 +142,7 @@ fun SettingsScreen(
                     IconButton(onClick = {
                         if (section == SettingsSection.Menu) {
                             onNavigateBack()
-                        } else if (section == SettingsSection.LogViewer) {
+                        } else if (section == SettingsSection.SystemLogs) {
                             section = logReturnSection
                         } else {
                             section = SettingsSection.Menu
@@ -175,7 +174,7 @@ fun SettingsScreen(
                                 Icon(FeatherIcons.Plus, contentDescription = "添加 MCP 服务器")
                             }
                         }
-                        SettingsSection.LogViewer -> {
+                        SettingsSection.SystemLogs -> {
                             IconButton(onClick = { viewModel.refreshLogs() }) {
                                 Icon(FeatherIcons.RefreshCw, contentDescription = "刷新日志")
                             }
@@ -206,7 +205,7 @@ fun SettingsScreen(
                     keepaliveEnabled = keepaliveEnabled,
                     onToggleKeepalive = { viewModel.setKeepaliveEnabled(it) },
                     onOpen = {
-                        if (it == SettingsSection.LogViewer) {
+                        if (it == SettingsSection.SystemLogs) {
                             logReturnSection = SettingsSection.Menu
                             viewModel.refreshLogs(filterServerName = null)
                         }
@@ -242,12 +241,10 @@ fun SettingsScreen(
                     },
                     onDelete = { viewModel.deleteMcpServer(it) }
                 )
-                SettingsSection.Log -> LogSection(
-                    current = logLevel,
-                    onSelect = { viewModel.setLogLevel(it) }
-                )
-                SettingsSection.LogViewer -> LogViewerSection(
-                    state = logViewerState,
+                SettingsSection.SystemLogs -> SystemLogsSection(
+                    currentLogLevel = logLevel,
+                    onSelectLogLevel = { viewModel.setLogLevel(it) },
+                    logViewerState = logViewerState,
                     onSelectFile = { viewModel.selectLogFile(it) }
                 )
                 SettingsSection.Permissions -> PermissionsSection(
@@ -275,7 +272,7 @@ fun SettingsScreen(
                     showMcpDialog = false
                     logReturnSection = SettingsSection.Mcp
                     viewModel.refreshLogs(filterServerName = existing.name)
-                    section = SettingsSection.LogViewer
+                    section = SettingsSection.SystemLogs
                 }
             },
             onDismiss = { showMcpDialog = false },
@@ -317,6 +314,7 @@ internal fun SettingsMenu(
             .padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
+        SettingsSectionHeader("AI 与模型")
         MenuRow(
             icon = FeatherIcons.Cloud,
             title = SettingsSection.Providers.title,
@@ -337,6 +335,8 @@ internal fun SettingsMenu(
             },
             onClick = { onOpen(SettingsSection.VisionModel) }
         )
+        
+        SettingsSectionHeader("扩展与工作区")
         MenuRow(
             icon = FeatherIcons.Box,
             title = SettingsSection.Mcp.title,
@@ -344,16 +344,10 @@ internal fun SettingsMenu(
             onClick = { onOpen(SettingsSection.Mcp) }
         )
         MenuRow(
-            icon = FeatherIcons.FileText,
-            title = SettingsSection.Log.title,
-            subtitle = "当前：${logLevel.name}",
-            onClick = { onOpen(SettingsSection.Log) }
-        )
-        MenuRow(
-            icon = FeatherIcons.FileText,
-            title = SettingsSection.LogViewer.title,
-            subtitle = "查看最近日志，支持 MCP 名称过滤",
-            onClick = { onOpen(SettingsSection.LogViewer) }
+            icon = FeatherIcons.Server,
+            title = SettingsSection.RemoteServers.title,
+            subtitle = "管理 SFTP / FTP 工作区同步",
+            onClick = { onOpen(SettingsSection.RemoteServers) }
         )
         MenuRow(
             icon = FeatherIcons.Lock,
@@ -361,13 +355,8 @@ internal fun SettingsMenu(
             subtitle = if (permissionRuleCount == 0) "未保存授权规则" else "已保存 $permissionRuleCount 条",
             onClick = { onOpen(SettingsSection.Permissions) }
         )
-        MenuRow(
-            icon = FeatherIcons.Server,
-            title = SettingsSection.RemoteServers.title,
-            subtitle = "管理 SFTP / FTP 工作区同步",
-            onClick = { onOpen(SettingsSection.RemoteServers) }
-        )
 
+        SettingsSectionHeader("常规与外观")
         ThemeModeRow(
             icon = FeatherIcons.Moon,
             title = "外观主题",
@@ -382,6 +371,14 @@ internal fun SettingsMenu(
             checked = keepaliveEnabled,
             onCheckedChange = onToggleKeepalive
         )
+        
+        SettingsSectionHeader("开发者与关于")
+        MenuRow(
+            icon = FeatherIcons.FileText,
+            title = SettingsSection.SystemLogs.title,
+            subtitle = "日志等级：${logLevel.name} · 查看系统与 MCP 日志",
+            onClick = { onOpen(SettingsSection.SystemLogs) }
+        )
         MenuRow(
             icon = FeatherIcons.Info,
             title = SettingsSection.About.title,
@@ -389,6 +386,16 @@ internal fun SettingsMenu(
             onClick = { onOpen(SettingsSection.About) }
         )
     }
+}
+
+@Composable
+internal fun SettingsSectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = Spacing.sm, bottom = Spacing.xs)
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
