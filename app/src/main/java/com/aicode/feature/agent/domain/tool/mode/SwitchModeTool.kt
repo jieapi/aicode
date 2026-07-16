@@ -3,7 +3,7 @@ package com.aicode.feature.agent.domain.tool.mode
 import com.aicode.feature.agent.data.local.dao.ChatSessionDao
 import com.aicode.feature.agent.domain.model.AgentContext
 import com.aicode.feature.agent.domain.model.AgentMode
-import com.aicode.feature.agent.domain.tool.AgentTool
+import com.aicode.feature.agent.domain.tool.AbstractContextualTool
 import com.aicode.feature.agent.domain.tool.ParameterType
 import com.aicode.feature.agent.domain.tool.PendingToolPermission
 import com.aicode.feature.agent.domain.tool.ToolParameter
@@ -21,7 +21,7 @@ import javax.inject.Inject
  */
 class SwitchModeTool @Inject constructor(
     private val chatSessionDao: ChatSessionDao
-) : AgentTool() {
+) : AbstractContextualTool() {
 
     override val name = "switchMode"
     override val description = "切换当前会话的模式。如果你当前处于 BUILD（构建）模式并认为你需要进入 PLAN（计划）模式来构思复杂逻辑，或者当前在 PLAN 模式下计划已经完成需要进入 BUILD 模式修改代码时，调用此工具主动申请切换。切换前需要用户授权。"
@@ -43,10 +43,6 @@ class SwitchModeTool @Inject constructor(
             required = true
         )
     )
-
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
-        return ToolResult.Error("SwitchModeTool requires context", "MISSING_CONTEXT")
-    }
 
     override suspend fun executeWithContext(
         args: Map<String, JsonElement>,

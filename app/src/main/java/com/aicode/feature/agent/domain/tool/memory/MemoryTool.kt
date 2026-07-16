@@ -4,7 +4,7 @@ import com.aicode.core.util.FileLogger
 import com.aicode.feature.agent.domain.memory.MemoryRepository
 import com.aicode.feature.agent.domain.memory.MemoryScope
 import com.aicode.feature.agent.domain.model.AgentContext
-import com.aicode.feature.agent.domain.tool.AgentTool
+import com.aicode.feature.agent.domain.tool.AbstractContextualTool
 import com.aicode.feature.agent.domain.tool.ParameterType
 import com.aicode.feature.agent.domain.tool.ToolCapability
 import com.aicode.feature.agent.domain.tool.ToolParameter
@@ -18,7 +18,7 @@ import javax.inject.Inject
 
 class MemoryTool @Inject constructor(
     private val memoryRepository: MemoryRepository
-) : AgentTool() {
+) : AbstractContextualTool() {
     private companion object {
         const val TAG = "MemoryTool"
     }
@@ -63,10 +63,6 @@ class MemoryTool @Inject constructor(
             required = false
         )
     )
-
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
-        return ToolResult.Error("MemoryTool 需要 context", "MISSING_CONTEXT")
-    }
 
     override suspend fun executeWithContext(
         args: Map<String, JsonElement>,

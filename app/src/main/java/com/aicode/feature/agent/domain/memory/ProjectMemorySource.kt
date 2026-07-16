@@ -31,8 +31,8 @@ class ProjectMemorySource(private val projectRoot: String) : MemorySource {
         if (projectRoot.isBlank()) return false
         return try {
             if (!memoryRoot.exists()) memoryRoot.mkdirs()
-            val file = File(memoryRoot, "$name.md")
-            file.writeText(MemoryParser.format(name, description, content))
+            val file = MemorySource.resolveMemoryFile(memoryRoot, name)
+            file.writeText(MemoryParser.format(MemorySource.sanitizeName(name), description, content))
             true
         } catch (e: Exception) {
             FileLogger.e("ProjectMemorySource", "Failed to save memory: $name", e)
@@ -42,7 +42,7 @@ class ProjectMemorySource(private val projectRoot: String) : MemorySource {
 
     override fun deleteMemory(name: String): Boolean {
         if (projectRoot.isBlank()) return false
-        val file = File(memoryRoot, "$name.md")
+        val file = MemorySource.resolveMemoryFile(memoryRoot, name)
         return if (file.exists()) file.delete() else false
     }
 }

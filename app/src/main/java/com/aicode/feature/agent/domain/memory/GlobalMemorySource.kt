@@ -32,8 +32,8 @@ class GlobalMemorySource @Inject constructor(
     override fun saveMemory(name: String, description: String, content: String): Boolean {
         return try {
             if (!memoryRoot.exists()) memoryRoot.mkdirs()
-            val file = File(memoryRoot, "$name.md")
-            file.writeText(MemoryParser.format(name, description, content))
+            val file = MemorySource.resolveMemoryFile(memoryRoot, name)
+            file.writeText(MemoryParser.format(MemorySource.sanitizeName(name), description, content))
             true
         } catch (e: Exception) {
             FileLogger.e("GlobalMemorySource", "Failed to save memory: $name", e)
@@ -42,7 +42,7 @@ class GlobalMemorySource @Inject constructor(
     }
 
     override fun deleteMemory(name: String): Boolean {
-        val file = File(memoryRoot, "$name.md")
+        val file = MemorySource.resolveMemoryFile(memoryRoot, name)
         return if (file.exists()) file.delete() else false
     }
 }
