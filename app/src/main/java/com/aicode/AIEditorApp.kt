@@ -41,6 +41,11 @@ class AIEditorApp : Application() {
     @Inject
     lateinit var gitCredentialsFileSync: GitCredentialsFileSync
 
+    /** 三端 git 缺凭据的统一弹窗桥：监听容器内 credential helper 经文件 IPC 发来的未登录请求，
+     *  暴露 StateFlow 供全局弹窗回填后回喂 git。必须在主线程启动（FileObserver 绑定主 Looper）。 */
+    @Inject
+    lateinit var credentialRequestBridge: com.aicode.feature.credentials.data.CredentialRequestBridge
+
     /** 长驻作用域：持续把持久化的日志等级同步到 FileLogger。 */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -50,6 +55,9 @@ class AIEditorApp : Application() {
         AILogger.init(this)
         installCrashHandler()
         createNotificationChannels()
+        // 主线程启动凭据请求监听（FileObserver 必须主线程创建与 startWatching），
+        // 监听容器内 credential helper 写来的 cred-req-* → 全局弹窗回填 → 回喂 git 续跑。
+        credentialRequestBridge.start()
         // 启动即把最新的内置指南手册提取到私有配置目录
         appScope.launch {
             ContainerInstaller.extractDocs(this@AIEditorApp)

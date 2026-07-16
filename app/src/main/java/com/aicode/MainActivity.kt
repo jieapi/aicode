@@ -68,6 +68,10 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var themeSettings: ThemeSettingsRepository
 
+    /** 三端（UI/AI Bash/交互终端）git 缺凭据统一弹窗桥：在 AIEditorApp 启动后监听 helper 的文件 IPC 请求。 */
+    @Inject
+    lateinit var credentialRequestBridge: com.aicode.feature.credentials.data.CredentialRequestBridge
+
     private val storagePermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
@@ -114,6 +118,10 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     AppNavigation()
+                    // 全局凭据弹窗：覆盖所有页面，命令行 git 缺凭据在任意页面都能弹。
+                    com.aicode.feature.credentials.presentation.component.GlobalCredentialDialogHost(
+                        bridge = credentialRequestBridge
+                    )
                 }
             }
         }

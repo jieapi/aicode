@@ -2,7 +2,6 @@ package com.aicode.feature.git.domain
 
 import com.aicode.core.util.FileLogger
 import com.aicode.feature.agent.domain.container.LinuxContainerEngine
-import com.aicode.feature.credentials.domain.repository.CredentialRepository
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
@@ -27,8 +26,7 @@ private const val TAG = "GitRepository"
 @Singleton
 class GitRepository @Inject constructor(
     private val engine: LinuxContainerEngine,
-    private val workspaceRepository: WorkspaceRepository,
-    private val credentialRepository: CredentialRepository
+    private val workspaceRepository: WorkspaceRepository
 ) {
     /**
      * 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。仅用于只读命令（status/branches/log/remote 等）：
@@ -67,45 +65,14 @@ class GitRepository @Inject constructor(
         return engine.runCommandSync(cmd, workspaceRepository.currentPath())
     }
 
-    /**
-     * 解析当前仓库的「当前远程」信息，供 pull/push 注入凭据。
-     *
-     * 取 active remote：优先 `git rev-parse` 拿当前分支上游对应的 remote（@{upstream}），失败回退
-     * `git remote` 首个。解析 url 判 [isHttps] 与 host(小写归一)。SSH 形如 `git@host:` 由正则兜底取 host，
-     * 本期 SSH 不注入凭据（仅提示），但 host 仍返回便于 UI 显示。
-     */
-    private suspend fun resolveRemote(): RemoteInfo {
-        // 当前分支上游对应的 remote 名，失败则回退 remote 列表首个。
-        val name = runCatching { git("rev-parse", "--abbrev-ref", "@{upstream}").trim() }
-            .getOrDefault("")
-            .takeIf { it.isNotBlank() && it != "HEAD" && !it.startsWith("fatal") }
-            ?.substringBefore('/')
-            ?: git("remote").split('\n').firstOrNull { it.removeSuffix("\r").isNotBlank() }?.removeSuffix("\r")?.trim()
-            ?: throw IllegalStateException("未配置远程仓库")
-
-        val url = runCatching { git("remote", "get-url", name).trim() }
-            .getOrDefault("")
-            .removeSuffix("\r")
-            .trim()
-            .takeIf { it.isNotBlank() }
-            ?: throw IllegalStateException("无法解析远程地址: $name")
-
-        val lower = url.lowercase()
-        val isHttps = lower.startsWith("https://") || lower.startsWith("http://")
-        val host = when {
-            isHttps -> runCatching { java.net.URI(url).host }.getOrNull()?.lowercase()
-            else -> Regex("^(?:ssh://)?[^@]+@([^:/]+)").find(url)?.groupValues?.getOrNull(1)?.lowercase()
-        } ?: ""
-        return RemoteInfo(name = name, url = url, isHttps = isHttps, host = host)
-    }
-
-    private data class RemoteInfo(val name: String, val url: String, val isHttps: Boolean, val host: String)
-
     /** 当前工作区是否处于一个 git 工作树内。 */
     suspend fun isRepo(): Boolean {
         val out = git("rev-parse", "--is-inside-work-tree")
         return out.trim() == "true"
     }
+
+    /** 在当前工作区初始化 git 仓库（`git init`）。据退出码判成败，失败抛 [GitCommandFailureException]。 */
+    suspend fun initRepo(): String = gitChecked("init")
 
     /** 是否已配置至少一个远程仓库（`git remote` 输出非空）。拉取/推送前据此门控。 */
     suspend fun hasRemote(): Boolean = git("remote").trim().isNotEmpty()
@@ -217,33 +184,30 @@ class GitRepository @Inject constructor(
     suspend fun commit(message: String) = gitChecked("commit", "-m", message)
 
     /**
-     * 拉取：解析当前 remote，若为 https 且有匹配 host 的凭据则注入 `Authorization: Basic` 头；
-     * 无凭据或非 https（SSH）则按默认流程执行（公仓裸拉 / ssh-agent / 环境凭据）。remote 不存在抛异常，
-     * 由上层 runAction 捕获后 toast。
+     * 拉取：直接 `git pull`，凭据由容器 `credential.helper` 链自动注入——`store` 命中已有凭据秒过，
+     * 未命中时自定义 helper 经文件 IPC 触发 app 弹窗回填，git 自动续跑（见 [CredentialRequestBridge]）。
+     * 故不再在此预查 host 凭据：三端（UI/终端/AI）共用同一 helper 兜底，逻辑单一来源。remote 不存在
+     * 或真实失败由 [gitChecked] 据退出码抛 [GitCommandFailureException]，上层 toast。
      */
-    suspend fun pull(): String {
-        val remote = resolveRemote()
-        ensureHasCredential(remote)
-        return gitChecked("pull")
-    }
-
-    suspend fun push(): String {
-        val remote = resolveRemote()
-        ensureHasCredential(remote)
-        return gitChecked("push")
-    }
+    suspend fun pull(): String = gitChecked("pull")
 
     /**
-     * 前置凭据检查：https remote 缺匹配 host 的凭据时抛 [CredentialMissingException]，由上层弹登录框。
-     * 凭据不再按命令注入 `http.extraHeader`，而是经 `credential.helper=store` 落盘文件由 git 自动读取
-     * （见 [GitCredentialsFileSync]，UI/终端/AI 三端共用）。SSH remote（isHttps=false）不查、按默认流程
-     * （ssh-agent / 环境凭据）。公仓裸拉本就不会因凭据失败，此处查不到也只对 https 私仓有意义。
+     * 推送：有上游则 `git push`；当前分支无上游时自动 `git push --set-upstream <remote> <branch>` 首推建关联，
+     * 仿 Win/Mac git 客户端「首次推送自动建上游」体验，避免用户撞到 `fatal: has no upstream branch` 原始报错。
+     * remote 取 `git remote` 首个（多 remote 默认第一；无 remote 已被上层 hasRemote 门控挡掉）；
+     * 分支取 `git rev-parse --abbrev-ref HEAD`。凭据仍由容器 credential.helper 链兜底注入。
      */
-    private suspend fun ensureHasCredential(remote: RemoteInfo) {
-        if (!remote.isHttps || remote.host.isEmpty()) return
-        if (credentialRepository.findForHost(remote.host) == null) {
-            throw CredentialMissingException(remote.host)
-        }
+    suspend fun push(): String {
+        val hasUpstream = runCatching { git("rev-parse", "--abbrev-ref", "@{upstream}").trim() }
+            .getOrDefault("")
+            .takeIf { it.isNotBlank() && it != "HEAD" && !it.startsWith("fatal") } != null
+        if (hasUpstream) return gitChecked("push")
+        val remote = git("remote").split('\n').firstOrNull { it.removeSuffix("\r").isNotBlank() }?.removeSuffix("\r")?.trim()
+            ?: throw GitCommandFailureException("未配置远程仓库")
+        val branch = git("rev-parse", "--abbrev-ref", "HEAD").removeSuffix("\r").trim()
+            .takeIf { it.isNotBlank() && it != "HEAD" }
+            ?: throw GitCommandFailureException("无法确定当前分支（处于 detached HEAD）")
+        return gitChecked("push", "--set-upstream", remote, branch)
     }
 
     /**

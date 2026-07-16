@@ -3,9 +3,6 @@ package com.aicode.feature.git.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicode.core.util.FileLogger
-import com.aicode.feature.credentials.data.GitCredentialsFileSync
-import com.aicode.feature.credentials.domain.model.newCredentialId
-import com.aicode.feature.git.domain.CredentialMissingException
 import com.aicode.feature.git.domain.GitRepository
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
@@ -30,15 +27,10 @@ import javax.inject.Inject
  */
 @HiltViewModel
 class GitViewModel @Inject constructor(
-    private val repository: GitRepository,
-    private val credentialRepository: com.aicode.feature.credentials.domain.repository.CredentialRepository,
-    private val fileSync: GitCredentialsFileSync
+    private val repository: GitRepository
 ) : ViewModel() {
 
     private companion object { const val TAG = "GitViewModel" }
-
-    /** push/pull 缺凭据后，待自动重试的操作类型。 */
-    enum class GitRetry { PULL, PUSH }
 
     data class GitUiState(
         val loading: Boolean = true,
@@ -53,10 +45,6 @@ class GitViewModel @Inject constructor(
         val hasRemote: Boolean = false,
         /** 是否已配置全局署名 user.name（git config --global），控制提交按钮可用性；无署名提交会成为失败提交。 */
         val hasIdentity: Boolean = false,
-        /** push/pull 缺凭据时置位，UI 据此弹登录框；null 表示无待处理。 */
-        val pendingCredentialHost: String? = null,
-        /** 待重试的写操作类型，配 [pendingCredentialHost] 用。填完凭据自动重试。 */
-        val pendingRetry: GitRetry? = null,
         /** 已展开的提交 hash 集合。 */
         val expandedCommits: Set<String> = emptySet(),
         /** 已懒加载的提交文件清单，按 hash 缓存。 */
@@ -111,8 +99,7 @@ class GitViewModel @Inject constructor(
     /** 执行一个写操作：置 busy → 跑命令 → 刷新 → 反馈。操作间互斥。 */
     private fun runAction(
         name: String,
-        action: suspend () -> String,
-        onCredentialMissing: ((CredentialMissingException) -> Unit)? = null
+        action: suspend () -> String
     ) {
         if (_state.value.busy) return
         _state.update { it.copy(busy = true, toast = null) }
@@ -120,14 +107,6 @@ class GitViewModel @Inject constructor(
             val msg = try {
                 action()
                 "${name}成功"
-            } catch (e: CredentialMissingException) {
-                if (onCredentialMissing != null) {
-                    onCredentialMissing(e)
-                    _state.update { it.copy(busy = false) }
-                    return@launch
-                }
-                FileLogger.e(TAG, "${name}失败", e)
-                "${name}失败: ${e.message}"
             } catch (e: Exception) {
                 FileLogger.e(TAG, "${name}失败", e)
                 "${name}失败: ${e.message}"
@@ -164,56 +143,22 @@ class GitViewModel @Inject constructor(
     fun stageAll() = runAction("全部暂存", { repository.stageAll() })
     fun unstageAll() = runAction("全部取消暂存", { repository.unstageAll() })
     fun commit(message: String) = runAction("提交", { repository.commit(message) })
+    /** 在当前工作区执行 `git init` 初始化仓库；成功后 runAction 末尾自动刷新（notARepo 翻 false）。 */
+    fun initRepo() = runAction("初始化", { repository.initRepo() })
     fun pull() {
         if (!_state.value.hasRemote) {
             _state.update { it.copy(toast = "未配置远程仓库，无法拉取") }
             return
         }
-        runAction("拉取", { repository.pull() }) { e ->
-            _state.update { it.copy(pendingCredentialHost = e.host, pendingRetry = GitRetry.PULL) }
-        }
+        runAction("拉取", { repository.pull() })
     }
     fun push() {
         if (!_state.value.hasRemote) {
             _state.update { it.copy(toast = "未配置远程仓库，无法推送") }
             return
         }
-        runAction("推送", { repository.push() }) { e ->
-            _state.update { it.copy(pendingCredentialHost = e.host, pendingRetry = GitRetry.PUSH) }
-        }
+        runAction("推送", { repository.push() })
     }
-
-    /**
-     * push/pull 缺凭据弹窗填完后调用：保存凭据 -> 清待处理态 -> 自动重试原操作。
-     * 仿 Win git 填完即继续的无缝体验。
-     */
-    fun saveCredentialAndRetry(host: String, username: String, token: String) {
-        val retry = _state.value.pendingRetry
-        _state.update { it.copy(pendingCredentialHost = null, pendingRetry = null) }
-        viewModelScope.launch {
-            // 注入链路只认 host + username + token；弹窗专为该 host 存，设为默认（与 findForHost 的
-            // ORDER BY isDefault DESC 语义一致，避免被同 host 旧默认条盖过）。
-            val cred = com.aicode.feature.credentials.domain.model.GitCredential(
-                id = newCredentialId(),
-                host = host.trim().lowercase(),
-                username = username.trim(),
-                token = token,
-                isDefault = true
-            )
-            credentialRepository.save(cred)
-            // 先把凭据落盘到容器持久挂载，再重试——git helper=store 读这份文件，终端/AI/UI 三端共用。
-            fileSync.syncAll()
-            when (retry) {
-                GitRetry.PULL -> pull()
-                GitRetry.PUSH -> push()
-                null -> Unit
-            }
-        }
-    }
-
-    /** 用户取消凭据弹窗。 */
-    fun cancelPendingCredential() =
-        _state.update { it.copy(pendingCredentialHost = null, pendingRetry = null) }
 
     /**
      * 切换某条提交的展开状态。展开时若尚未加载文件清单则懒加载（不置 [GitUiState.busy]，

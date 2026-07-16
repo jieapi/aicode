@@ -76,6 +76,21 @@ class LinuxContainerEngine @Inject constructor(
     /** 串行化 ensureInstalled，避免多入口并发触发重复解压/配置；后到者等待后看到就绪直接置 Ready。 */
     private val initMutex = Mutex()
 
+    /**
+     * 当前正在途的凭据请求计数（自定义 credential helper 阻塞等 app 弹窗回填的对数）。
+     *
+     * 由 [com.aicode.feature.credentials.data.CredentialRequestBridge] 在收到 helper 的 cred-req 时 inc、
+     * 写回 cred-resp 时 dec。[launchKillWatchdog] 据此放宽超时——helper 在途时用户的 git 命令是「正等
+     * 用户填凭据」而非「卡死」，watchdog 不应按常规超时强杀，详见其改造注释。
+     */
+    private val credentialPromptInFlight = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 凭据请求进入途（bridge 收到 helper 的 cred-req 时调）。 */
+    fun incPromptInFlight() { credentialPromptInFlight.incrementAndGet() }
+
+    /** 凭据请求结束途（bridge 写回 cred-resp 时调）。 */
+    fun decPromptInFlight() { credentialPromptInFlight.decrementAndGet() }
+
     companion object {
         private const val TAG = "LinuxContainerEngine"
 
@@ -103,7 +118,7 @@ class LinuxContainerEngine @Inject constructor(
          * 独立于 [ContainerInstaller] 的 rootfs INSTALL_VERSION：rootfs 版本升级会删 rootfs
          * （连带清掉本标记），故新 rootfs 必然重跑配置；同 rootfs 下改包清单则靠本版本号触发。
          */
-        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-rg-gitcredhelper-v3"
+        private const val PROVISION_VERSION = "py3.12-pip-node-bash-curl-rg-gitcredhelper-v4"
 
         /** `apk add` 下载基础包的超时（毫秒）：首次配置需联网拉包，给足时间。 */
         private const val PROVISION_TIMEOUT_MS = 600_000L
@@ -339,9 +354,13 @@ class LinuxContainerEngine @Inject constructor(
             append("EOF\n")
             append("apk update\n")
             append("apk add --no-cache $PROVISION_PACKAGES\n")
-            // 装好 git 后配置全局 credential.helper，指向持久挂载的凭据文件，让终端/AI/UI 三端裸 git
-            // 自动带凭据（GIT_CONFIG_GLOBAL 已指 /root/.aicode/.gitconfig，写入不随升级丢失）。
-            append("git config --global credential.helper 'store --file=/root/.aicode/git-credentials'\n")
+            // 装好 git 后配置两个 credential.helper：store（命中已有凭据秒过）+ aicode 自定义 helper
+            // （store 未命中时经文件 IPC 通知 app 弹窗回填），让终端/AI/UI 三端裸 git 共用同一注入链。
+            // credential.helper 是 multi-valued，存量设备重配时若直接 `--add` 会与旧 store 行重复，
+            // 故先 `--replace-all` 清掉已有 helper 值再 `--add` aicode，保证顺序幂等（store 唯一在前、aicode 唯一在后）。
+            // 脚本由 [ContainerInstaller.extractCredentialHelper] 启动即提取到 /root/.aicode/git-credential-aicode。
+            append("git config --global --replace-all credential.helper 'store --file=/root/.aicode/git-credentials'\n")
+            append("git config --global --add credential.helper '/root/.aicode/git-credential-aicode'\n")
         }
 
         var exitCode: Int? = null
@@ -368,6 +387,12 @@ class LinuxContainerEngine @Inject constructor(
     /**
      * 启动看门狗：等待 [timeoutMs] 后若进程仍存活，则标记超时并优雅→强制终止，借此解除
      * 调用方阻塞中的 readLine。返回的 [Job] 由调用方在正常结束时 cancel 掉。
+     *
+     * **凭据弹窗在途时暂停**：到点若 [credentialPromptInFlight] > 0（自定义 git credential helper
+     * 正阻塞等 app 弹窗回填用户的凭据请求），watchdog 不杀——这条 git 命令是「正等用户填凭据」
+     * 而非「卡死」，按常规超时强杀会让用户离开几分钟回来发现推送已失败、得重来。改为每轮重查：
+     * 在途则宽限一段（1min）再查，直至不在途才杀；绝对上限 [MAX_TIMEOUT_MS]（30min）即便在途
+     * 也兜底杀，避免事实无限等待。终端 PTY 路径不经 watchdog（[TerminalSessionManager] 裸 tty），天然最耐等。
      */
     private fun launchKillWatchdog(
         scope: CoroutineScope,
@@ -376,13 +401,26 @@ class LinuxContainerEngine @Inject constructor(
         timedOut: AtomicBoolean,
         command: String
     ): Job = scope.launch {
-        delay(timeoutMs)
-        if (process.isAlive) {
+        var remaining = timeoutMs
+        var totalWaited = 0L
+        while (true) {
+            delay(remaining)
+            if (!process.isAlive) return@launch
+            totalWaited += remaining
+            val inflight = credentialPromptInFlight.get()
+            if (inflight > 0 && totalWaited < MAX_TIMEOUT_MS) {
+                // 凭据弹窗在途：宽限 1min（不超过绝对上限），再回查。
+                FileLogger.i(TAG, "凭据弹窗在途(${inflight})，watchdog 暂缓，再等 60000ms: $command")
+                remaining = minOf(60_000L, MAX_TIMEOUT_MS - totalWaited)
+                continue
+            }
+            // 不在途，或已达 30min 绝对上限：正常超时终止。
             timedOut.set(true)
-            FileLogger.w(TAG, "命令执行超过 ${timeoutMs}ms，终止进程: $command")
+            FileLogger.w(TAG, "命令执行超过 ${timeoutMs}ms（累计等待 ${totalWaited}ms，inflight=${inflight}），终止进程: $command")
             runCatching { process.destroy() }
             delay(TIMEOUT_KILL_GRACE_MS)
             if (process.isAlive) runCatching { process.destroyForcibly() }
+            return@launch
         }
     }
 

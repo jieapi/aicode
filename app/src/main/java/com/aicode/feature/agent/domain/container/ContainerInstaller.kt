@@ -48,6 +48,33 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
+         * 从 assets 提取自定义 git credential helper 到 ~/.aicode/git-credential-aicode 并赋可执行位。
+         *
+         * 经 [LinuxContainerEngine] 的 -b 绑定即容器内 /root/.aicode/git-credential-aicode，
+         * 由 [LinuxContainerEngine.provisionIfNeeded] 在 `.gitconfig` 里登记为第二个 credential.helper，
+         * 排在 `store` 之后兜底未登录（双保险）。helper 详行为见 assets/aicode/git-credential-aicode。
+         *
+         * 启动即提取、独立于 provisioning 成败：provisioning 失败时 git 没装上，helper 配置不存在也无所谓；
+         * 一旦 git 装好且配置登记，helper 立即可用。提取失败仅告警不抛（helper 缺席仅导致未登录时无弹窗，
+         * git 仍能裸跑报认证失败，不致命）。
+         */
+        fun extractCredentialHelper(context: Context) {
+            val dest = File(File(context.filesDir, "aicode"), "git-credential-aicode")
+            runCatching {
+                dest.parentFile?.mkdirs()
+                context.assets.open("aicode/git-credential-aicode").use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+                // 对所有用户赋可执行位（proot 进程以 App uid 运行，参照 [copyAsset] 的 0o111 模式）。
+                if (!dest.setExecutable(true, false)) {
+                    FileLogger.w(TAG, "setExecutable 返回 false: ${dest.absolutePath}")
+                }
+            }.onFailure {
+                FileLogger.w(TAG, "提取 git credential helper 失败: ${it.message}", it)
+            }
+        }
+
+        /**
          * 与 assets 里 alpine-rootfs 版本对应的 apk 分支，用于拼镜像源地址。
          * 固定 v3.21：与 [INSTALL_VERSION]（alpine-3.21.3）一致；该版本 apk-tools 2.14 在 proot 下可靠。
          */
@@ -170,11 +197,15 @@ class ContainerInstaller @Inject constructor(
     init {
         CoroutineScope(Dispatchers.IO).launch {
             extractDocs(context)
+            extractCredentialHelper(context)
         }
     }
 
     /** 从 assets 提取文档到 ~/.aicode/docs (内置使用指导) */
     fun extractDocs() = extractDocs(context)
+
+    /** 从 assets 提取 git credential helper 到 ~/.aicode/git-credential-aicode 并赋可执行位。 */
+    fun extractCredentialHelper() = extractCredentialHelper(context)
 
     /** 从 assets 复制 proot 全套（二进制 + loader + 动态依赖库）到私有目录并赋权限 */
     private fun installProot() {
