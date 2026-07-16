@@ -147,7 +147,17 @@ fun ProviderEditorScreen(
         useResponseApi = useResponseApi
     )
 
+    // 新建场景下判断用户是否填写了实质内容：名称、API Key、Base URL 任一非空白，或已添加模型。
+    // 全空白时退出不应落库，否则会存入一条名为“新提供商”的空记录。
+    fun hasSubstantiveInput(): Boolean =
+        initialProvider != null ||
+            name.isNotBlank() ||
+            apiKey.isNotBlank() ||
+            baseUrl.isNotBlank() ||
+            models.isNotEmpty()
+
     fun saveCurrent() {
+        if (!hasSubstantiveInput()) return
         onSave(currentConfig())
     }
 
