@@ -82,6 +82,7 @@ internal fun ChatInputBar(
     isBusy: Boolean,
     workspaceViewModel: WorkspaceViewModel?,
     hasRunningSessions: () -> Boolean,
+    onSwitchWorkspaceConfirmed: () -> Unit = {},
     activeProvider: AIProviderConfig?,
     providers: List<AIProviderConfig>,
     onSelectModel: (String, String) -> Unit,
@@ -189,7 +190,8 @@ internal fun ChatInputBar(
                     if (workspaceViewModel != null) {
                         WorkspaceIconButton(
                             viewModel = workspaceViewModel,
-                            hasRunningSessions = hasRunningSessions
+                            hasRunningSessions = hasRunningSessions,
+                            onSwitchConfirmed = onSwitchWorkspaceConfirmed
                         )
                     }
 

@@ -651,6 +651,7 @@ fun AIChatPanel(
                 isBusy = isBusy,
                 workspaceViewModel = workspaceViewModel,
                 hasRunningSessions = { viewModel.hasRunningSessionsInCurrentWorkspace() },
+                onSwitchWorkspaceConfirmed = { viewModel.stopAllAndCloseTerminal() },
                 activeProvider = activeProvider,
                 providers = providers,
                 onSelectModel = { p, m ->

@@ -61,7 +61,8 @@ class AIAgentViewModel @Inject constructor(
     private val containerEngine: LinuxContainerEngine,
     private val sessionUseCase: SessionUseCase,
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
-    private val planApprovalManager: com.aicode.feature.agent.domain.tool.mode.PlanApprovalManager
+    private val planApprovalManager: com.aicode.feature.agent.domain.tool.mode.PlanApprovalManager,
+    private val terminalSessionManager: com.aicode.feature.terminal.domain.TerminalSessionManager
 ) : ViewModel() {
 
     private val sessionJobs = mutableMapOf<String, Job>()
@@ -586,6 +587,24 @@ class AIAgentViewModel @Inject constructor(
      * 主动打断正在运行的 agent：取消协程（会一并取消挂起的网络请求与容器命令进程），
      * 并把「执行中」的工具占位行收尾为「已停止」，避免悬挂的 spinner 与孤儿记录。
      */
+    /** 停止当前工作区所有正在运行的 AI 会话并关闭所有终端标签（切换工作区前调用）。 */
+    fun stopAllAndCloseTerminal() {
+        stopAllAgents()
+        terminalSessionManager.tabs.value.map { it.id }.forEach { terminalSessionManager.closeTab(it) }
+    }
+
+    /** 停止当前工作区所有正在运行的 AI 会话（切换工作区前调用）。 */
+    fun stopAllAgents() {
+        val jobs = sessionJobs.values.filter { it.isActive }
+        jobs.forEach { it.cancel() }
+        sessionJobs.clear()
+        _agentStates.value = _agentStates.value.mapValues { AgentUIState.Idle }
+        _streamingTexts.value = emptyMap()
+        _streamingReasonings.value = emptyMap()
+        _runningTools.value = emptyMap()
+        _retryStates.value = emptyMap()
+    }
+
     fun stopAgent() {
         val sessionId = _currentSessionId.value ?: return
         val job = sessionJobs[sessionId] ?: return
@@ -594,6 +613,12 @@ class AIAgentViewModel @Inject constructor(
         val streamingText = _streamingTexts.value[sessionId]
         val streamingReasoning = _streamingReasonings.value[sessionId]
         job.cancel()
+        setAgentState(sessionId, AgentUIState.Idle)
+        setRunningTool(sessionId, null)
+        setStreamingText(sessionId, null)
+        setStreamingReasoning(sessionId, null)
+        setCompacting(sessionId, false)
+        setRetryState(sessionId, null)
         viewModelScope.launch {
             if (running != null) {
                 val partial = running.text.trimEnd()

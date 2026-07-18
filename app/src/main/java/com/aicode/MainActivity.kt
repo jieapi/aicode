@@ -252,7 +252,8 @@ fun AppNavigation() {
                     onNavigateBack = { 
                         navController.popBackStack() 
                         scope.launch { drawerState.open() }
-                    }
+                    },
+                    onStopAllAndCloseTerminal = { agentViewModel.stopAllAndCloseTerminal() }
                 )
             }
             composable("terminal") {

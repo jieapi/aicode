@@ -197,7 +197,8 @@ fun RemoteConnectionCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)) {
                     val isLocal = conn.protocol == RemoteProtocol.LOCAL
                     Icon(
                         if (isLocal) FeatherIcons.HardDrive else FeatherIcons.Cloud,
@@ -209,7 +210,8 @@ fun RemoteConnectionCard(
                         Text(
                             text = if (isLocal) "LOCAL://${conn.host}" else "${conn.protocol}://${conn.username}@${conn.host}:${conn.port}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
                     }
                 }

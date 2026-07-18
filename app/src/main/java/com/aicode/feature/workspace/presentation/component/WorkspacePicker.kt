@@ -50,6 +50,7 @@ import compose.icons.feathericons.*
 fun WorkspaceChip(
     viewModel: WorkspaceViewModel,
     hasRunningSessions: () -> Boolean = { false },
+    onSwitchConfirmed: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
@@ -96,6 +97,7 @@ fun WorkspaceChip(
                 if (hasRunningSessions()) {
                     pendingWorkspaceSelect = it
                 } else {
+                    onSwitchConfirmed()
                     viewModel.selectWorkspace(it.name)
                     showSheet = false
                 }
@@ -110,9 +112,10 @@ fun WorkspaceChip(
         AlertDialog(
             onDismissRequest = { pendingWorkspaceSelect = null },
             title = { Text("切换工作区") },
-            text = { Text("当前工作区有正在运行的会话，切换工作区后它们将在后台继续运行。确定要切换吗？") },
+            text = { Text("切换工作区会停止当前工作区所有正在运行的 AI 会话并关闭终端标签。确定要切换吗？") },
             confirmButton = {
                 TextButton(onClick = {
+                    onSwitchConfirmed()
                     viewModel.selectWorkspace(ws.name)
                     pendingWorkspaceSelect = null
                     showSheet = false
@@ -133,6 +136,7 @@ fun WorkspaceChip(
 fun WorkspaceIconButton(
     viewModel: WorkspaceViewModel,
     hasRunningSessions: () -> Boolean = { false },
+    onSwitchConfirmed: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val workspaces by viewModel.workspaces.collectAsStateWithLifecycle()
@@ -160,6 +164,7 @@ fun WorkspaceIconButton(
                 if (hasRunningSessions()) {
                     pendingWorkspaceSelect = it
                 } else {
+                    onSwitchConfirmed()
                     viewModel.selectWorkspace(it.name)
                     showSheet = false
                 }
@@ -174,9 +179,10 @@ fun WorkspaceIconButton(
         AlertDialog(
             onDismissRequest = { pendingWorkspaceSelect = null },
             title = { Text("切换工作区") },
-            text = { Text("当前工作区有正在运行的会话，切换工作区后它们将在后台继续运行。确定要切换吗？") },
+            text = { Text("切换工作区会停止当前工作区所有正在运行的 AI 会话并关闭终端标签。确定要切换吗？") },
             confirmButton = {
                 TextButton(onClick = {
+                    onSwitchConfirmed()
                     viewModel.selectWorkspace(ws.name)
                     pendingWorkspaceSelect = null
                     showSheet = false

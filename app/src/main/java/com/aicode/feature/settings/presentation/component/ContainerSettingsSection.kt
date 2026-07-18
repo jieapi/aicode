@@ -57,11 +57,13 @@ internal fun ContainerSection(
     onSelect: (String) -> Unit,
     onSaveCustom: (ContainerProfile) -> Unit,
     onEditCustom: (ContainerProfile) -> Unit,
-    onDeleteCustom: (ContainerProfile) -> Unit
+    onDeleteCustom: (ContainerProfile) -> Unit,
+    onSwitchConfirmed: () -> Unit = {}
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<ContainerProfile?>(null) }
     var deletingProfile by remember { mutableStateOf<ContainerProfile?>(null) }
+    var pendingSwitch by remember { mutableStateOf<ContainerProfile?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -92,7 +94,9 @@ internal fun ContainerSection(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onSelect(profile.id) }
+                        .clickable {
+                            if (!active) pendingSwitch = profile
+                        }
                         .padding(Spacing.lg),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -123,14 +127,7 @@ internal fun ContainerSection(
                             )
                         }
                     }
-                    if (active) {
-                        Icon(
-                            imageVector = FeatherIcons.Check,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    } else if (!profile.isBuiltin) {
+                    if (!profile.isBuiltin) {
                         IconButton(onClick = { editingProfile = profile }) {
                             Icon(
                                 imageVector = FeatherIcons.Edit3,
@@ -145,6 +142,14 @@ internal fun ContainerSection(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                    if (active) {
+                        Icon(
+                            imageVector = FeatherIcons.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
                 }
             }
@@ -235,6 +240,22 @@ internal fun ContainerSection(
                 }) { Text("删除") }
             },
             dismissButton = { TextButton(onClick = { deletingProfile = null }) { Text("取消") } }
+        )
+    }
+
+    pendingSwitch?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingSwitch = null },
+            title = { Text("切换容器镜像") },
+            text = { Text("切换到「${target.name}」后，当前正在运行的 AI 会话将被停止、终端标签将被关闭。是否继续切换？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onSwitchConfirmed()
+                    onSelect(target.id)
+                    pendingSwitch = null
+                }) { Text("切换") }
+            },
+            dismissButton = { TextButton(onClick = { pendingSwitch = null }) { Text("取消") } }
         )
     }
 }
