@@ -19,5 +19,7 @@ data class ChatSession(
     val workspacePath: String = "",
     val mode: AgentMode = AgentMode.BUILD,
     val providerId: String? = null,
-    val model: String? = null
+    val model: String? = null,
+    val totalInputTokens: Int = 0,
+    val totalOutputTokens: Int = 0
 )

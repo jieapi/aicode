@@ -18,7 +18,7 @@ import com.aicode.feature.workspace.data.local.entity.RemoteMountEntity
 
 @Database(
     entities = [AgentMessageEntity::class, ChatSessionEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, GitCredentialEntity::class],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AgentDatabase : RoomDatabase() {

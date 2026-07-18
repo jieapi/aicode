@@ -38,4 +38,7 @@ interface ChatSessionDao {
 
     @Query("UPDATE chat_sessions SET providerId = :providerId, model = :model WHERE id = :id")
     suspend fun updateProviderModel(id: String, providerId: String?, model: String?)
+
+    @Query("UPDATE chat_sessions SET totalInputTokens = totalInputTokens + :inputTokens, totalOutputTokens = totalOutputTokens + :outputTokens WHERE id = :id")
+    suspend fun addTokenUsage(id: String, inputTokens: Int, outputTokens: Int)
 }

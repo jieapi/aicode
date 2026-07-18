@@ -14,7 +14,9 @@ data class ChatSessionEntity(
     val workspacePath: String = "",
     val mode: String = AgentMode.BUILD.name,
     val providerId: String? = null,
-    val model: String? = null
+    val model: String? = null,
+    val totalInputTokens: Int = 0,
+    val totalOutputTokens: Int = 0
 ) {
     fun toDomain(): ChatSession = ChatSession(
         id = id,
@@ -24,7 +26,9 @@ data class ChatSessionEntity(
         workspacePath = workspacePath,
         mode = runCatching { AgentMode.valueOf(mode) }.getOrDefault(AgentMode.BUILD),
         providerId = providerId,
-        model = model
+        model = model,
+        totalInputTokens = totalInputTokens,
+        totalOutputTokens = totalOutputTokens
     )
 
     companion object {
@@ -36,7 +40,9 @@ data class ChatSessionEntity(
             workspacePath = session.workspacePath,
             mode = session.mode.name,
             providerId = session.providerId,
-            model = session.model
+            model = session.model,
+            totalInputTokens = session.totalInputTokens,
+            totalOutputTokens = session.totalOutputTokens
         )
     }
 }

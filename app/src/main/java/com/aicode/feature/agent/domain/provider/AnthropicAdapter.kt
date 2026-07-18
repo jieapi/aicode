@@ -95,7 +95,7 @@ class AnthropicAdapter @Inject constructor(
             }
         }
 
-        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = response.stop_reason)
+        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = response.stop_reason, inputTokens = response.usage.input_tokens, outputTokens = response.usage.output_tokens)
     }
 
     override fun completeStream(
@@ -132,6 +132,8 @@ class AnthropicAdapter @Inject constructor(
             // content block index -> 累积中的 tool_use（仅 tool_use 块建条目，保序）。
             val toolBlocks = LinkedHashMap<Int, ToolBlockAcc>()
             var stopReason: String? = null
+            var streamInputTokens = 0
+            var streamOutputTokens = 0
 
             val body = api.streamMessage(url = url, apiKey = apiKey, request = request)
 
@@ -162,6 +164,10 @@ class AnthropicAdapter @Inject constructor(
                         // 单行异常不应中断整条流——宽松解析，出错仅跳过该行；必须放行 CancellationException。
                         try {
                             when (obj.get("type")?.asString) {
+                                "message_start" -> {
+                                    val usage = obj.getAsJsonObject("message")?.getAsJsonObject("usage")
+                                    streamInputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+                                }
                                 "content_block_start" -> {
                                     val index = obj.get("index")?.asInt ?: continue
                                     val block = obj.getAsJsonObject("content_block")
@@ -205,6 +211,10 @@ class AnthropicAdapter @Inject constructor(
                                     delta?.get("stop_reason")?.takeIf { !it.isJsonNull }?.asString?.let {
                                         stopReason = it
                                     }
+                                    val usage = obj.getAsJsonObject("usage")
+                                    usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt?.let {
+                                        streamOutputTokens = it
+                                    }
                                 }
                             }
                         } catch (e: CancellationException) {
@@ -223,9 +233,8 @@ class AnthropicAdapter @Inject constructor(
             val toolCalls = toolBlocks.values.map { acc ->
                 ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString()))
             }
-            // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
                 },
                 onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )

@@ -451,7 +451,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             } else aiResponse
 
                             if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
-                                emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
+                                emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString(), aiResponse.inputTokens, aiResponse.outputTokens))
                             }
                             actionQueue.addLast(AgentAction.LlmResponse(responseWithReasoning))
                         } catch (e: CancellationException) {

@@ -99,7 +99,11 @@ class GeminiAdapter @Inject constructor(
             }
         }
 
-        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = finishReason)
+        val usageMetadata = response.getAsJsonObject("usageMetadata")
+        val inputTokens = usageMetadata?.get("promptTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+        val outputTokens = usageMetadata?.get("candidatesTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+
+        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = finishReason, inputTokens = inputTokens, outputTokens = outputTokens)
     }
 
     override fun completeStream(
@@ -141,6 +145,8 @@ class GeminiAdapter @Inject constructor(
                 val textBuilder = StringBuilder()
                 val toolCalls = mutableListOf<ToolCall>()
                 var currentFinishReason: String? = null
+                var streamInputTokens = 0
+                var streamOutputTokens = 0
 
                 val body = api.streamGenerateContent(url = url, apiKey = apiKey, request = request)
 
@@ -164,6 +170,10 @@ class GeminiAdapter @Inject constructor(
                             val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                             
                             try {
+                                obj.getAsJsonObject("usageMetadata")?.let { um ->
+                                    streamInputTokens = um.get("promptTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
+                                    streamOutputTokens = um.get("candidatesTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: streamOutputTokens
+                                }
                                 val chunkCandidates = obj.getAsJsonArray("candidates")
                                 chunkCandidates?.firstOrNull()?.asJsonObject?.let { candidate ->
                                     val reason = candidate.get("finishReason")?.takeIf { !it.isJsonNull }?.asString
@@ -204,7 +214,7 @@ class GeminiAdapter @Inject constructor(
                 }
 
                 onProduced()
-                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason)))
+                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
                 },
                 onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )

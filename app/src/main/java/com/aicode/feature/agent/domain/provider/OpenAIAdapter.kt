@@ -25,6 +25,7 @@ import kotlinx.serialization.json.jsonObject
 import com.aicode.feature.agent.data.remote.openai.OpenAIToolCall
 import com.aicode.feature.agent.data.remote.openai.OpenAIToolDefinition
 import com.aicode.feature.agent.data.remote.openai.OpenAIFunctionDefinition
+import com.aicode.feature.agent.data.remote.openai.StreamOptions
 
 class OpenAIAdapter @Inject constructor(
     private val api: OpenAIApi
@@ -106,7 +107,10 @@ class OpenAIAdapter @Inject constructor(
             }
             // status of output items is completed
             finishReason = "stop" // simplify for Responses API
-            return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason)
+            val usage = response.getAsJsonObject("usage")
+            val inputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+            val outputTokens = usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+            return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, inputTokens = inputTokens, outputTokens = outputTokens)
         }
 
         val request = ChatCompletionRequest(
@@ -136,8 +140,9 @@ class OpenAIAdapter @Inject constructor(
         val content = message?.content.asTextContent()
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
         val reasoning = message?.reasoning_content?.takeIf { it.isNotEmpty() }
+        val usage = response.usage
 
-        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning)
+        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0)
     }
 
     override fun completeStream(
@@ -178,6 +183,8 @@ class OpenAIAdapter @Inject constructor(
                     val textBuilder = StringBuilder()
                     val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
                     var finishReason: String? = null
+                    var streamInputTokens = 0
+                    var streamOutputTokens = 0
 
                     val body = api.streamResponses(
                         url = url,
@@ -235,6 +242,9 @@ class OpenAIAdapter @Inject constructor(
                                             }
                                         }
                                         finishReason = "stop"
+                                        val usageObj = obj.getAsJsonObject("response")?.getAsJsonObject("usage")
+                                        streamInputTokens = usageObj?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+                                        streamOutputTokens = usageObj?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                     }
                                 } catch (e: CancellationException) {
                                     throw e
@@ -252,7 +262,7 @@ class OpenAIAdapter @Inject constructor(
                         .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                         .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
                     onProduced()
-                    emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
+                    emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
                 },
                 onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )
@@ -272,7 +282,8 @@ class OpenAIAdapter @Inject constructor(
             messages = openAIMessages,
             tools = toolDefs,
             tool_choice = if (toolDefs != null) "auto" else null,
-            stream = true
+            stream = true,
+            stream_options = StreamOptions(include_usage = true)
         )
         AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
@@ -286,6 +297,8 @@ class OpenAIAdapter @Inject constructor(
             // tool_call index -> 累积中的工具调用（保序）。
             val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
             var finishReason: String? = null
+            var streamInputTokens = 0
+            var streamOutputTokens = 0
 
             val body = api.streamChatCompletion(
                 url = url,
@@ -322,6 +335,11 @@ class OpenAIAdapter @Inject constructor(
                         // 单行异常不应中断整条流——这里宽松解析，出错仅跳过该行；已累积的文本与后续行不受影响。
                         // 必须放行 CancellationException，否则会吞掉协程取消信号。
                         try {
+                            // 最后一帧 choices 为空但带 usage（stream_options.include_usage），先读 usage 再跳过
+                            obj.getAsJsonObject("usage")?.let { u ->
+                                streamInputTokens = u.get("prompt_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
+                                streamOutputTokens = u.get("completion_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamOutputTokens
+                            }
                             val choice = obj.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject ?: continue
                             val delta = choice.getAsJsonObject("delta") ?: continue
 
@@ -377,9 +395,8 @@ class OpenAIAdapter @Inject constructor(
             val toolCalls = toolAccs.values
                 .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                 .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
-            // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
             },
             onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )

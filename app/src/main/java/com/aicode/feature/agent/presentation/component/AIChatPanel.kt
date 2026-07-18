@@ -261,7 +261,10 @@ fun AIChatPanel(
 
     val currentSessionId by viewModel.currentSessionId.collectAsStateWithLifecycle()
     val sessions by viewModel.sessions.collectAsStateWithLifecycle()
-    val sessionTitle = sessions.find { it.id == currentSessionId }?.title?.takeIf { it.isNotBlank() } ?: "新会话"
+    val currentSession = sessions.find { it.id == currentSessionId }
+    val sessionTitle = currentSession?.title?.takeIf { it.isNotBlank() } ?: "新会话"
+    val sessionInputTokens = currentSession?.totalInputTokens ?: 0
+    val sessionOutputTokens = currentSession?.totalOutputTokens ?: 0
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
@@ -513,6 +516,8 @@ fun AIChatPanel(
             ChatHeader(
                 sessionTitle = sessionTitle,
                 modelName = activeProvider?.effectiveModel,
+                inputTokens = sessionInputTokens,
+                outputTokens = sessionOutputTokens,
                 onOpenDrawer = {
                     keyboardController?.hide()
                     scope.launch { drawerState.open() }
@@ -794,6 +799,8 @@ internal fun formatBytes(bytes: Long): String {
 internal fun ChatHeader(
     sessionTitle: String,
     modelName: String?,
+    inputTokens: Int,
+    outputTokens: Int,
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
     onNavigateToTerminal: () -> Unit,
@@ -829,13 +836,27 @@ internal fun ChatHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = modelName?.takeIf { it.isNotBlank() } ?: "未选择模型",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+                    ) {
+                        Text(
+                            text = modelName?.takeIf { it.isNotBlank() } ?: "未选择模型",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (inputTokens > 0 || outputTokens > 0) {
+                            val inStr = if (inputTokens >= 1000) "${inputTokens / 1000}.${(inputTokens % 1000) / 100}k" else inputTokens.toString()
+                            val outStr = if (outputTokens >= 1000) "${outputTokens / 1000}.${(outputTokens % 1000) / 100}k" else outputTokens.toString()
+                            Text(
+                                text = "↑$inStr ↓$outStr",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
                 IconButton(onClick = onNewChat) {
                     Icon(

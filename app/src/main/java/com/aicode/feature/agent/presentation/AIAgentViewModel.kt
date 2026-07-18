@@ -485,6 +485,11 @@ class AIAgentViewModel @Inject constructor(
                             toolCalls = event.toolCalls,
                             reasoning = reasoning
                         )
+                        if (event.inputTokens > 0 || event.outputTokens > 0) {
+                            viewModelScope.launch {
+                                runCatching { chatSessionDao.addTokenUsage(sessionId, event.inputTokens, event.outputTokens) }
+                            }
+                        }
                         setStreamingReasoning(sessionId, null)
                         setStreamingText(sessionId, normalized.ifEmpty { null })
                     }

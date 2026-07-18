@@ -1,0 +1,2 @@
+ALTER TABLE chat_sessions ADD COLUMN totalInputTokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions ADD COLUMN totalOutputTokens INTEGER NOT NULL DEFAULT 0;

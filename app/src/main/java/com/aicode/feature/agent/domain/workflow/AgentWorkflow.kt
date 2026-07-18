@@ -16,7 +16,9 @@ sealed class AgentEvent {
     data class AssistantText(
         val content: String,
         val toolCalls: List<ToolCall> = emptyList(),
-        val reasoning: String = ""
+        val reasoning: String = "",
+        val inputTokens: Int = 0,
+        val outputTokens: Int = 0
     ) : AgentEvent()
 
     /** 流式过程中模型逐字吐出的文字（[accumulated] 为本轮已累积的完整文本，用于 UI 实时渲染，不落库）。 */
