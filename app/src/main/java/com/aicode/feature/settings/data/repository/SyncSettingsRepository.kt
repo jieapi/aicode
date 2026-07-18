@@ -44,4 +44,26 @@ class SyncSettingsRepository @Inject constructor(
         prefs.edit { putInt("max_sync_batch_size", size) }
         _maxSyncBatchSize.value = size
     }
+
+    /** 备份快照：同步偏好三键。 */
+    fun snapshot(): SyncSettingsSnapshot = SyncSettingsSnapshot(
+        ignoredPatterns = _ignoredPatterns.value,
+        useGitIgnore = _useGitIgnore.value,
+        maxSyncBatchSize = _maxSyncBatchSize.value
+    )
+
+    /** 从备份还原同步偏好。 */
+    fun restore(snapshot: SyncSettingsSnapshot) {
+        setIgnoredPatterns(snapshot.ignoredPatterns)
+        setUseGitIgnore(snapshot.useGitIgnore)
+        setMaxSyncBatchSize(snapshot.maxSyncBatchSize)
+    }
 }
+
+/** 同步偏好的可序列化快照。 */
+@kotlinx.serialization.Serializable
+data class SyncSettingsSnapshot(
+    val ignoredPatterns: String,
+    val useGitIgnore: Boolean,
+    val maxSyncBatchSize: Int
+)

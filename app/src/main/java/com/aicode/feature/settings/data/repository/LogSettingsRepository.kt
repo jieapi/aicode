@@ -7,6 +7,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.aicode.core.util.LogLevel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -36,5 +37,14 @@ class LogSettingsRepository @Inject constructor(
     /** 写入新的日志等级。 */
     suspend fun setLevel(level: LogLevel) {
         context.logDataStore.edit { it[LEVEL_KEY] = level.name }
+    }
+
+    /** 备份快照：当前日志等级名。 */
+    suspend fun snapshot(): String = levelFlow.first().name
+
+    /** 从备份还原日志等级；解析失败时忽略。 */
+    suspend fun restore(value: String?) {
+        val level = value?.let { runCatching { LogLevel.valueOf(it) }.getOrNull() } ?: return
+        setLevel(level)
     }
 }

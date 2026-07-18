@@ -21,6 +21,9 @@ interface TodoItemDao {
     @Query("SELECT * FROM todo_items WHERE sessionId = :sessionId ORDER BY `order` ASC, priority DESC")
     suspend fun getBySessionOnce(sessionId: String): List<TodoItemEntity>
 
+    @Query("SELECT * FROM todo_items")
+    suspend fun getAllOnce(): List<TodoItemEntity>
+
     @Query("DELETE FROM todo_items WHERE id = :id")
     suspend fun delete(id: String)
 

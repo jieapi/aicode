@@ -114,6 +114,20 @@ class PermissionRulesRepository @Inject constructor(
         emitAll(globalState.filterNotNull())
     }
 
+    /** 一次性读取全部全局规则（备份用）。 */
+    suspend fun getGlobalRulesOnce(): List<PermissionRule> {
+        ensureGlobalLoaded()
+        return globalState.value ?: emptyList()
+    }
+
+    /** 全量替换全局规则（备份导入用），原子写文件并更新缓存。 */
+    suspend fun setGlobalRules(rules: List<PermissionRule>) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) { writeToFile(globalFile, rules) }
+            globalState.value = rules
+        }
+    }
+
     /** 指定项目的规则流，供管理界面观察。 */
     fun projectRulesFlow(projectName: String): Flow<List<PermissionRule>> {
         val workspacePath = workspaceRepository.currentPath()

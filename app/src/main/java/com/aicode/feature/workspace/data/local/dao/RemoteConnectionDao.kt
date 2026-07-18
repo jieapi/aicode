@@ -17,6 +17,12 @@ interface RemoteConnectionDao {
     @Query("SELECT * FROM remote_connections")
     fun getAllConnections(): Flow<List<RemoteConnectionEntity>>
 
+    @Query("SELECT * FROM remote_connections")
+    suspend fun getAllConnectionsOnce(): List<RemoteConnectionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllConnections(connections: List<RemoteConnectionEntity>)
+
     @Query("SELECT * FROM remote_connections WHERE id = :id")
     suspend fun getConnectionById(id: String): RemoteConnectionEntity?
 
@@ -41,6 +47,12 @@ interface RemoteConnectionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMount(mount: RemoteMountEntity)
+
+    @Query("SELECT * FROM remote_mounts")
+    suspend fun getAllMountsOnce(): List<RemoteMountEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAllMounts(mounts: List<RemoteMountEntity>)
 
     @Update
     suspend fun updateMount(mount: RemoteMountEntity)

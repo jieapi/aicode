@@ -68,6 +68,7 @@ internal enum class SettingsSection(val title: String) {
     LogViewer("日志查看"),
     Permissions("工具授权"),
     RemoteServers("远程工作区"),
+    Backup("备份与还原"),
     About("关于")
 }
 
@@ -270,6 +271,11 @@ fun SettingsScreen(
                     onPromote = { viewModel.promoteRuleToGlobal(it) },
                     onDeleteGlobal = { viewModel.deleteGlobalRule(it) }
                 )
+                SettingsSection.Backup -> {
+                    val backupViewModel: com.aicode.feature.backup.presentation.BackupViewModel =
+                        androidx.hilt.navigation.compose.hiltViewModel()
+                    BackupSection(viewModel = backupViewModel)
+                }
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
                 SettingsSection.RemoteServers -> {} // 已在上方 early return 处理
                 SettingsSection.About -> AboutSection()
@@ -400,6 +406,12 @@ internal fun SettingsMenu(
             subtitle = "显示前台通知，避免退到后台时系统杀进程",
             checked = keepaliveEnabled,
             onCheckedChange = onToggleKeepalive
+        )
+        MenuRow(
+            icon = FeatherIcons.Save,
+            title = SettingsSection.Backup.title,
+            subtitle = "加密导出/导入配置、聊天历史与凭据",
+            onClick = { onOpen(SettingsSection.Backup) }
         )
         MenuRow(
             icon = FeatherIcons.Info,

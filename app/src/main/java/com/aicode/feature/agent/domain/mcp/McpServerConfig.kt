@@ -1,6 +1,9 @@
 package com.aicode.feature.agent.domain.mcp
 
+import kotlinx.serialization.Serializable
+
 // 远程 HTTP（含 url）或本地 stdio（含 command）两种形态，由 isStdio 推断。
+@Serializable
 data class McpServerConfig(
     val name: String,
     val url: String? = null,

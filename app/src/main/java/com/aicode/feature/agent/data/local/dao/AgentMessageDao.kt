@@ -55,4 +55,7 @@ interface AgentMessageDao {
 
     @Query("SELECT * FROM agent_messages WHERE content LIKE '%' || :query || '%' ORDER BY timestamp ASC")
     suspend fun searchMessages(query: String): List<AgentMessageEntity>
+
+    @Query("SELECT * FROM agent_messages ORDER BY timestamp ASC")
+    suspend fun getAllOnce(): List<AgentMessageEntity>
 }

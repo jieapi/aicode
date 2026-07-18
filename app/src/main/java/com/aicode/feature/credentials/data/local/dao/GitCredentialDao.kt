@@ -12,6 +12,12 @@ interface GitCredentialDao {
     @Query("SELECT * FROM git_credentials ORDER BY updatedAt DESC")
     fun getAll(): Flow<List<GitCredentialEntity>>
 
+    @Query("SELECT * FROM git_credentials")
+    suspend fun getAllOnce(): List<GitCredentialEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(entities: List<GitCredentialEntity>)
+
     @Query("SELECT * FROM git_credentials WHERE id = :id")
     suspend fun getById(id: String): GitCredentialEntity?
 
