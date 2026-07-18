@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import java.io.File
 import java.util.zip.GZIPInputStream
 import javax.inject.Inject
@@ -194,6 +195,68 @@ class ContainerInstaller @Inject constructor(
         FileLogger.i(TAG, "容器 rootfs 安装完成")
     }
 
+    /**
+     * 按 [profile] 返回 rootfs 目录：内置仍是 [rootfsDir]（不动），自定义用 filesDir/rootfs_<id>。
+     * 目录隔离——内置与自定义互不共享、互不删除，切回内置时其 rootfs 原封不动。
+     */
+    fun rootfsDirFor(profile: ContainerProfile): File =
+        if (profile.isBuiltin) rootfsDir else File(context.filesDir, "rootfs_${profile.id}")
+
+    /** 自定义镜像的已安装标记（独立于内置 .installed，避免混淆）。 */
+    private fun customInstalledMarker(profile: ContainerProfile): File =
+        File(rootfsDirFor(profile), ".installed_custom")
+
+    /** 按 [profile] 判断是否已安装就绪：内置走现有版本校验，自定义看目录与标记是否存在。 */
+    fun isInstalledFor(profile: ContainerProfile): Boolean =
+        if (profile.isBuiltin) isInstalled()
+        else prootBin.exists() && rootfsDirFor(profile).isDirectory && customInstalledMarker(profile).exists()
+
+    /**
+     * 按 [profile] 解压安装 rootfs。内置调现有全流程（proot/resolv/apk 源）；自定义只解压 tar.gz + 装 proot，
+     * **不写 resolv.conf / apk 源、不 provision**——镜像源与所需工具由用户自行在容器内处理。
+     */
+    suspend fun installRootfsIfNeed(
+        profile: ContainerProfile,
+        onProgress: (ContainerInitState) -> Unit = {}
+    ) = withContext(Dispatchers.IO) {
+        if (isInstalledFor(profile)) return@withContext
+
+        if (profile.isBuiltin) {
+            installRootfsIfNeed(onProgress)
+            return@withContext
+        }
+
+        val dest = rootfsDirFor(profile)
+        FileLogger.i(TAG, "安装自定义容器 rootfs：${profile.id} -> ${dest.absolutePath}")
+        if (dest.exists()) dest.deleteRecursively()
+        dest.mkdirs()
+
+        onProgress(ContainerInitState.DeployingProot)
+        installProot()
+        when (val src = profile.rootfsSource) {
+            is RootfsSource.Asset -> context.assets.open("${ASSET_DIR}/${src.path}").use {
+                extractRootfsTo(dest, it, CompressedFormat.GZIP, onProgress)
+            }
+            is RootfsSource.LocalFile -> {
+                val uri = android.net.Uri.parse(src.uri)
+                val format = if (src.uri.endsWith(".xz") || src.uri.endsWith(".txz"))
+                    CompressedFormat.XZ else CompressedFormat.GZIP
+                context.contentResolver.openInputStream(uri)?.use {
+                    extractRootfsTo(dest, it, format, onProgress)
+                } ?: FileLogger.w(TAG, "打开导入的 rootfs uri 失败: ${src.uri}")
+            }
+        }
+        prootTmpDir.mkdirs()
+        customInstalledMarker(profile).writeText("custom")
+        FileLogger.i(TAG, "自定义容器 rootfs 安装完成：${profile.id}")
+    }
+
+    /** 删除自定义 profile 的 rootfs 目录（删 profile 时调用）。内置 rootfs 不可删。 */
+    fun deleteCustomRootfs(profile: ContainerProfile) {
+        if (profile.isBuiltin) return
+        rootfsDirFor(profile).deleteRecursively()
+    }
+
     init {
         CoroutineScope(Dispatchers.IO).launch {
             extractDocs(context)
@@ -231,27 +294,51 @@ class ContainerInstaller @Inject constructor(
 
     /** 解压 alpine-minirootfs.tar.gz，正确处理目录/文件/符号链接/硬链接与权限位 */
     private fun extractRootfs(onProgress: (ContainerInitState) -> Unit) {
-        var processed = 0
         context.assets.open(ASSET_ROOTFS).use { rawIn ->
-            GZIPInputStream(rawIn).use { gzipIn ->
-                TarArchiveInputStream(gzipIn).use { tarIn ->
-                    var entry: TarArchiveEntry? = tarIn.nextEntry
-                    while (entry != null) {
-                        extractEntry(tarIn, entry)
-                        processed++
-                        onProgress(ContainerInitState.ExtractingRootfs(processed))
-                        entry = tarIn.nextEntry
-                    }
+            extractRootfsTo(rootfsDir, rawIn, CompressedFormat.GZIP, onProgress)
+        }
+    }
+
+    /** 镜像压缩格式：内置 Alpine 用 gzip，用户导入的可能是 gzip 或 xz。 */
+    enum class CompressedFormat { GZIP, XZ }
+
+    /**
+     * 把 tar.gz / tar.xz 流解压到 [destDir]，正确处理目录/文件/符号链接/硬链接与权限位。
+     * 内置 Alpine（[extractRootfs] 传 assets 流）与用户自定义镜像（[installRootfsIfNeed] 传 content uri 流）共用。
+     */
+    fun extractRootfsTo(
+        destDir: File,
+        input: java.io.InputStream,
+        format: CompressedFormat = CompressedFormat.GZIP,
+        onProgress: (ContainerInitState) -> Unit = {}
+    ) {
+        var processed = 0
+        val decompressed = when (format) {
+            CompressedFormat.GZIP -> GZIPInputStream(input)
+            CompressedFormat.XZ -> XZCompressorInputStream(input)
+        }
+        decompressed.use { decompIn ->
+            TarArchiveInputStream(decompIn).use { tarIn ->
+                var entry: TarArchiveEntry? = tarIn.nextEntry
+                while (entry != null) {
+                    extractEntry(destDir, tarIn, entry)
+                    processed++
+                    onProgress(ContainerInitState.ExtractingRootfs(processed))
+                    entry = tarIn.nextEntry
                 }
             }
         }
     }
 
-    private fun extractEntry(tarIn: TarArchiveInputStream, entry: TarArchiveEntry) {
-        val outFile = File(rootfsDir, entry.name)
+    private fun extractEntry(
+        destDir: File,
+        tarIn: TarArchiveInputStream,
+        entry: TarArchiveEntry
+    ) {
+        val outFile = File(destDir, entry.name)
 
-        // 防 zip-slip：确保解压目标落在 rootfsDir 内
-        val canonicalRoot = rootfsDir.canonicalPath
+        // 防 zip-slip：确保解压目标落在 destDir 内
+        val canonicalRoot = destDir.canonicalPath
         if (!outFile.canonicalPath.startsWith(canonicalRoot + File.separator) &&
             outFile.canonicalPath != canonicalRoot
         ) {
@@ -273,7 +360,7 @@ class ContainerInstaller @Inject constructor(
             entry.isLink -> {
                 // 硬链接：linkName 指向 tar 内已解压的另一文件
                 outFile.parentFile?.mkdirs()
-                val target = File(rootfsDir, entry.linkName)
+                val target = File(destDir, entry.linkName)
                 if (outFile.exists()) outFile.delete()
                 runCatching { Os.link(target.absolutePath, outFile.absolutePath) }
                     .onFailure {

@@ -63,6 +63,7 @@ internal enum class SettingsSection(val title: String) {
     ProviderEditor("提供商"),
     VisionModel("识图模型"),
     Mcp("MCP 服务器"),
+    Container("容器镜像"),
     Log("日志等级"),
     LogViewer("日志查看"),
     Permissions("工具授权"),
@@ -90,6 +91,8 @@ fun SettingsScreen(
     val visionProviderId by viewModel.visionProviderId.collectAsStateWithLifecycle()
     val visionModel by viewModel.visionModel.collectAsStateWithLifecycle()
     val modelMetadata by viewModel.modelMetadata.collectAsStateWithLifecycle()
+    val containerProfiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
 
     var section by remember { mutableStateOf(SettingsSection.Menu) }
     var logReturnSection by remember { mutableStateOf(SettingsSection.Menu) }
@@ -195,6 +198,7 @@ fun SettingsScreen(
                 SettingsSection.Menu -> SettingsMenu(
                     providerCount = providers.size,
                     activeProviderName = activeProvider?.name,
+                    activeContainerProfileName = containerProfiles.firstOrNull { it.id == activeProfileId }?.name,
                     visionProviderName = providers.firstOrNull { it.id == visionProviderId }?.name,
                     visionModel = visionModel,
                     mcpCount = mcpServers.size,
@@ -241,6 +245,14 @@ fun SettingsScreen(
                         showMcpDialog = true
                     },
                     onDelete = { viewModel.deleteMcpServer(it) }
+                )
+                SettingsSection.Container -> ContainerSection(
+                    profiles = containerProfiles,
+                    activeProfileId = activeProfileId,
+                    onSelect = { viewModel.setActiveContainerProfile(it) },
+                    onSaveCustom = { viewModel.saveCustomContainerProfile(it) },
+                    onEditCustom = { viewModel.editCustomContainerProfile(it) },
+                    onDeleteCustom = { viewModel.deleteCustomContainerProfile(it) }
                 )
                 SettingsSection.Log -> LogSection(
                     current = logLevel,
@@ -298,6 +310,7 @@ fun SettingsScreen(
 internal fun SettingsMenu(
     providerCount: Int,
     activeProviderName: String?,
+    activeContainerProfileName: String?,
     visionProviderName: String?,
     visionModel: String,
     mcpCount: Int,
@@ -342,6 +355,12 @@ internal fun SettingsMenu(
             title = SettingsSection.Mcp.title,
             subtitle = if (mcpCount == 0) "未配置 MCP 服务器" else "$mcpCount 个 · 已连接 $mcpConnected",
             onClick = { onOpen(SettingsSection.Mcp) }
+        )
+        MenuRow(
+            icon = FeatherIcons.HardDrive,
+            title = SettingsSection.Container.title,
+            subtitle = "当前：${activeContainerProfileName ?: "内置 Alpine"}",
+            onClick = { onOpen(SettingsSection.Container) }
         )
         MenuRow(
             icon = FeatherIcons.FileText,

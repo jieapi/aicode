@@ -2,7 +2,13 @@ package com.aicode.feature.workspace.domain
 
 import com.aicode.core.util.FileLogger
 import com.aicode.feature.agent.domain.container.ContainerInstaller
+import com.aicode.feature.agent.domain.container.ContainerProfile
+import com.aicode.feature.settings.data.repository.ContainerSettingsRepository
 import com.aicode.feature.workspace.data.repository.WorkspaceRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -10,12 +16,15 @@ import javax.inject.Singleton
 /**
  * 在「容器内路径」与「宿主真实路径」之间互转，让 AI 只看到 / 只使用容器路径。
  *
- * 背景：容器是 PRoot 以 [ContainerInstaller.rootfsDir]（宿主 `filesDir/rootfs`）为根（`-r rootfs`）跑起来的，
+ * 背景：容器是 PRoot 以当前 profile 的 rootfs 目录为根（`-r rootfs`）跑起来的，
  * 当前工作区目录又被 bind 成容器内的 [CONTAINER_ROOT]。因此「容器内路径」到「宿主真实文件」有两条确定映射：
  * - `/workspace[/…]` → 宿主工作区目录（写它即写宿主，且容器内可见——bind mount）；
- * - 其它容器绝对路径 `/etc/…`、`/root/…` → 宿主 `rootfsDir/…`（与终端在容器里看到的完全是同一批文件）。
+ * - 其它容器绝对路径 `/etc/…`、`/root/…` → 当前 profile rootfs 目录下对应文件（与终端在容器里看到的完全是同一批文件）。
  *
  * 这样文件类工具（read/write/edit）无需进 PRoot 即可读写整个容器文件系统，与 `execute_command` 看到的一致。
+ *
+ * **profile 感知**：rootfs 目录随当前选中 profile 变化（内置 Alpine 用 filesDir/rootfs，自定义用 filesDir/rootfs_<id>）。
+ * [currentProfile] 缓存自 [ContainerSettingsRepository]，避免同步读 DataStore；启动首帧为内置 Alpine，等同改动前。
  *
  * 用本映射器统一：
  * - 工具入参（AI 给的路径）经 [toHostFile] 落到宿主真实文件；
@@ -24,7 +33,8 @@ import javax.inject.Singleton
 @Singleton
 class WorkspacePathMapper @Inject constructor(
     private val workspaceRepository: WorkspaceRepository,
-    private val containerInstaller: ContainerInstaller
+    private val containerInstaller: ContainerInstaller,
+    private val containerSettingsRepository: ContainerSettingsRepository
 ) {
     companion object {
         const val CONTAINER_ROOT = "/workspace"
@@ -33,11 +43,34 @@ class WorkspacePathMapper @Inject constructor(
         private const val TAG = "WorkspacePathMapper"
     }
 
+    /**
+     * 当前选中的 profile（缓存，避免同步读 DataStore）。启动首帧为内置 Alpine，等同改动前。
+     * profile 切换后由 flow collector 更新；切换瞬间与引擎缓存可能短暂不一致，但 ensureInstalled 与文件工具
+     * 调用之间有自然顺序，实际不影响。
+     */
+    @Volatile
+    private var currentProfile: ContainerProfile = ContainerProfile.BUILTIN_ALPINE
+
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            containerSettingsRepository.activeProfileIdFlow.collect { id ->
+                currentProfile = resolveProfile(id)
+            }
+        }
+    }
+
+    private suspend fun resolveProfile(id: String): ContainerProfile {
+        if (id == ContainerProfile.BUILTIN_ID) return ContainerProfile.BUILTIN_ALPINE
+        return containerSettingsRepository.customProfilesFlow
+            .first()
+            .firstOrNull { it.id == id } ?: ContainerProfile.BUILTIN_ALPINE
+    }
+
     /** 当前工作区在宿主上的根目录。 */
     private fun hostRoot(): File = File(workspaceRepository.currentPath())
 
-    /** 容器 rootfs 在宿主上的根目录（容器内 `/` 即此目录）。 */
-    private fun rootfsRoot(): File = containerInstaller.rootfsDir
+    /** 容器 rootfs 在宿主上的根目录（容器内 `/` 即此目录，随当前 profile 变化）。 */
+    private fun rootfsRoot(): File = containerInstaller.rootfsDirFor(currentProfile)
 
     /** AI 配置目录在宿主上的根（容器内 `/root/.aicode` 即此目录，独立于 rootfs）。 */
     private fun aicodeRoot(): File = containerInstaller.aicodeDir

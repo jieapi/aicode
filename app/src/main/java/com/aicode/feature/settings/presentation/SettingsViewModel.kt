@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicode.core.util.FileLogger
 import com.aicode.core.util.LogLevel
+import com.aicode.feature.agent.domain.container.ContainerInstaller
+import com.aicode.feature.agent.domain.container.ContainerProfile
+import com.aicode.feature.agent.domain.container.RootfsSource
 import com.aicode.feature.agent.domain.mcp.McpConfigRepository
 import com.aicode.feature.agent.domain.mcp.McpManager
 import com.aicode.feature.agent.domain.mcp.McpServerConfig
@@ -15,6 +18,7 @@ import com.aicode.feature.settings.data.remote.ModelApiService
 import com.aicode.feature.settings.data.remote.ModelMetadataService
 import com.aicode.feature.settings.data.remote.ModelTestResult
 import com.aicode.feature.settings.data.repository.AppThemeMode
+import com.aicode.feature.settings.data.repository.ContainerSettingsRepository
 import com.aicode.feature.settings.data.repository.KeepaliveSettingsRepository
 import com.aicode.feature.settings.data.repository.LogSettingsRepository
 import com.aicode.feature.settings.data.repository.ThemeSettingsRepository
@@ -25,9 +29,12 @@ import com.aicode.feature.settings.domain.model.ProviderType
 import com.aicode.feature.settings.domain.repository.AIProviderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -63,7 +70,9 @@ class SettingsViewModel @Inject constructor(
     private val mcpConfigRepository: McpConfigRepository,
     private val mcpManager: McpManager,
     private val permissionRulesRepository: PermissionRulesRepository,
-    private val visionModelSettingsRepository: VisionModelSettingsRepository
+    private val visionModelSettingsRepository: VisionModelSettingsRepository,
+    private val containerSettingsRepository: ContainerSettingsRepository,
+    private val containerInstaller: ContainerInstaller
 ) : ViewModel() {
     private companion object {
         const val MAX_LOG_LINES = 1200
@@ -122,6 +131,17 @@ class SettingsViewModel @Inject constructor(
 
     val currentProjectName: String? = permissionRulesRepository.currentProjectName()
 
+    private val _activeProfileId = MutableStateFlow(ContainerProfile.BUILTIN_ID)
+    val activeProfileId: StateFlow<String> = _activeProfileId.asStateFlow()
+
+    private val _customProfiles = MutableStateFlow<List<ContainerProfile>>(emptyList())
+    val customProfiles: StateFlow<List<ContainerProfile>> = _customProfiles.asStateFlow()
+
+    /** 全部 profile（内置 + 自定义），供 UI 列出。 */
+    val profiles: StateFlow<List<ContainerProfile>> = customProfiles
+        .map { listOf(ContainerProfile.BUILTIN_ALPINE) + it }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, listOf(ContainerProfile.BUILTIN_ALPINE))
+
     init {
         viewModelScope.launch {
             // 启动即保证有激活提供商（若库中存在却无激活项），避免主页模型胶囊因 activeProvider=null 消失。
@@ -170,6 +190,18 @@ class SettingsViewModel @Inject constructor(
             launch {
                 themeSettingsRepository.themeModeFlow.collectLatest {
                     _themeMode.value = it
+                }
+            }
+
+            launch {
+                containerSettingsRepository.activeProfileIdFlow.collectLatest {
+                    _activeProfileId.value = it
+                }
+            }
+
+            launch {
+                containerSettingsRepository.customProfilesFlow.collectLatest {
+                    _customProfiles.value = it
                 }
             }
 
@@ -325,6 +357,44 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(mode: AppThemeMode) {
         viewModelScope.launch {
             themeSettingsRepository.setThemeMode(mode)
+        }
+    }
+
+    /** 切换当前选中的容器 profile。 */
+    fun setActiveContainerProfile(id: String) {
+        viewModelScope.launch {
+            containerSettingsRepository.setActiveProfile(id)
+        }
+    }
+
+    /** 保存（新增/覆盖）自定义容器 profile。 */
+    fun saveCustomContainerProfile(profile: ContainerProfile) {
+        viewModelScope.launch {
+            containerSettingsRepository.upsertCustomProfile(profile)
+        }
+    }
+
+    /** 编辑自定义 profile：覆盖配置；若镜像来源变了则删旧 rootfs 触发重新解压。 */
+    fun editCustomContainerProfile(profile: ContainerProfile) {
+        viewModelScope.launch {
+            val old = _customProfiles.value.firstOrNull { it.id == profile.id }
+            val oldUri = (old?.rootfsSource as? RootfsSource.LocalFile)?.uri
+            val newUri = (profile.rootfsSource as? RootfsSource.LocalFile)?.uri
+            if (old != null && oldUri != newUri) {
+                containerInstaller.deleteCustomRootfs(profile)
+            }
+            containerSettingsRepository.upsertCustomProfile(profile)
+        }
+    }
+
+    /** 删除自定义 profile，连带清理其 rootfs 目录。 */
+    fun deleteCustomContainerProfile(profile: ContainerProfile) {
+        viewModelScope.launch {
+            containerSettingsRepository.deleteCustomProfile(profile.id)
+            containerInstaller.deleteCustomRootfs(profile)
+            if (_activeProfileId.value == profile.id) {
+                containerSettingsRepository.setActiveProfile(ContainerProfile.BUILTIN_ID)
+            }
         }
     }
 
