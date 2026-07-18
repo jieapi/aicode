@@ -12,8 +12,8 @@ import com.aicode.feature.agent.domain.mcp.McpManager
 import com.aicode.feature.agent.domain.permission.PermissionRulesRepository
 import com.aicode.feature.backup.domain.AgentMessageDto
 import com.aicode.feature.backup.domain.BackupCrypto
-import com.aicode.feature.backup.domain.BackupFormat
 import com.aicode.feature.backup.domain.BackupManager
+import com.aicode.feature.backup.domain.BackupOptions
 import com.aicode.feature.backup.domain.BackupSnapshot
 import com.aicode.feature.backup.domain.ChatSessionDto
 import com.aicode.feature.backup.domain.GitCredentialDto
@@ -34,11 +34,18 @@ import com.aicode.feature.settings.data.repository.VisionModelSettingsRepository
 import com.aicode.feature.workspace.data.local.dao.RemoteConnectionDao
 import com.aicode.feature.workspace.data.local.entity.RemoteConnectionEntity
 import com.aicode.feature.workspace.data.local.entity.RemoteMountEntity
+import com.aicode.feature.workspace.data.repository.WorkspaceRepository
 import com.aicode.feature.workspace.domain.model.RemoteProtocol
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,7 +65,8 @@ class BackupManagerImpl @Inject constructor(
     private val keepaliveSettingsRepository: KeepaliveSettingsRepository,
     private val logSettingsRepository: LogSettingsRepository,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
-    private val syncSettingsRepository: SyncSettingsRepository
+    private val syncSettingsRepository: SyncSettingsRepository,
+    private val workspaceRepository: WorkspaceRepository
 ) : BackupManager {
 
     private val json = Json {
@@ -73,22 +81,22 @@ class BackupManagerImpl @Inject constructor(
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
     }.getOrDefault("")
 
-    override suspend fun export(password: CharArray): ByteArray = withContext(Dispatchers.IO) {
-        val providers = aiProviderDao.getAllProvidersOnce().map { it.toDto() }
-        val credentials = gitCredentialDao.getAllOnce().map { it.toDto() }
-        val connections = remoteConnectionDao.getAllConnectionsOnce().map { it.toDto() }
-        val mounts = remoteConnectionDao.getAllMountsOnce().map { it.toDto() }
-        val sessions = chatSessionDao.getAllOnce().map { it.toDto() }
-        val messages = agentMessageDao.getAllOnce().map { it.toDto() }
-        val todos = todoItemDao.getAllOnce().map { it.toDto() }
-        val mcpServers = mcpConfigRepository.getServers()
-        val globalRules = permissionRulesRepository.getGlobalRulesOnce()
-        val themeMode = themeSettingsRepository.snapshot()
-        val keepalive = keepaliveSettingsRepository.snapshot()
-        val logLevel = logSettingsRepository.snapshot()
-        val visionProviderId = visionModelSettingsRepository.getVisionProviderId()
-        val visionModel = visionModelSettingsRepository.getVisionModel()
-        val syncSettings = syncSettingsRepository.snapshot()
+    override suspend fun export(password: CharArray?, options: BackupOptions): ByteArray = withContext(Dispatchers.IO) {
+        val providers = if (options.providers) aiProviderDao.getAllProvidersOnce().map { it.toDto() } else emptyList()
+        val credentials = if (options.gitCredentials) gitCredentialDao.getAllOnce().map { it.toDto() } else emptyList()
+        val connections = if (options.remoteConnections) remoteConnectionDao.getAllConnectionsOnce().map { it.toDto() } else emptyList()
+        val mounts = if (options.remoteConnections) remoteConnectionDao.getAllMountsOnce().map { it.toDto() } else emptyList()
+        val sessions = if (options.chatHistory) chatSessionDao.getAllOnce().map { it.toDto() } else emptyList()
+        val messages = if (options.chatHistory) agentMessageDao.getAllOnce().map { it.toDto() } else emptyList()
+        val todos = if (options.chatHistory) todoItemDao.getAllOnce().map { it.toDto() } else emptyList()
+        val mcpServers = if (options.mcpServers) mcpConfigRepository.getServers() else emptyList()
+        val globalRules = if (options.permissionRules) permissionRulesRepository.getGlobalRulesOnce() else emptyList()
+        val themeMode = if (options.appSettings) themeSettingsRepository.snapshot() else null
+        val keepalive = if (options.appSettings) keepaliveSettingsRepository.snapshot() else false
+        val logLevel = if (options.appSettings) logSettingsRepository.snapshot() else null
+        val visionProviderId = if (options.appSettings) visionModelSettingsRepository.getVisionProviderId() else ""
+        val visionModel = if (options.appSettings) visionModelSettingsRepository.getVisionModel() else ""
+        val syncSettings = if (options.appSettings) syncSettingsRepository.snapshot() else null
 
         val snapshot = BackupSnapshot(
             schemaVersion = currentSchemaVersion(),
@@ -111,21 +119,31 @@ class BackupManagerImpl @Inject constructor(
             syncSettings = syncSettings
         )
         val plain = json.encodeToString(BackupSnapshot.serializer(), snapshot).toByteArray(Charsets.UTF_8)
-        val salt = BackupCrypto.newSalt()
-        val iv = BackupCrypto.newIv()
-        val ciphertext = BackupCrypto.encrypt(plain, password, salt, iv)
-        BackupFormat.pack(BackupSnapshot.FORMAT_VERSION, salt, iv, ciphertext)
+        val tarGz = tarGz(plain)
+        if (password != null && password.isNotEmpty()) {
+            val salt = BackupCrypto.newSalt()
+            val iv = BackupCrypto.newIv()
+            BackupCrypto.encrypt(tarGz, password, salt, iv)
+        } else {
+            tarGz
+        }
     }
 
-    override suspend fun import(data: ByteArray, password: CharArray): Result<RestoreStats> = withContext(Dispatchers.IO) {
+    override suspend fun import(data: ByteArray, password: CharArray?): Result<RestoreStats> = withContext(Dispatchers.IO) {
         runCatching {
-            val header = BackupFormat.unpack(data)
-                ?: error("不是有效的 AiCode 备份文件")
-            if (header.formatVersion > BackupSnapshot.FORMAT_VERSION) {
-                error("备份格式版本 ${header.formatVersion} 高于本应用支持版本，请升级应用")
+            val tarGz = if (password != null && password.isNotEmpty()) {
+                val salt = ByteArray(BackupCrypto.SALT_LEN)
+                val iv = ByteArray(BackupCrypto.IV_LEN)
+                require(data.size >= salt.size + iv.size) { "不是有效的 AiCode 备份文件" }
+                System.arraycopy(data, 0, salt, 0, salt.size)
+                System.arraycopy(data, salt.size, iv, 0, iv.size)
+                val ciphertext = data.copyOfRange(salt.size + iv.size, data.size)
+                BackupCrypto.decrypt(ciphertext, password, salt, iv)
+            } else {
+                data
             }
-            val ciphertext = data.copyOfRange(header.ciphertextOffset, data.size)
-            val plain = BackupCrypto.decrypt(ciphertext, password, header.salt, header.iv)
+            val plain = unTarGz(tarGz)
+                ?: error("不是有效的 AiCode 备份文件")
             val snapshot = json.decodeFromString(BackupSnapshot.serializer(), String(plain, Charsets.UTF_8))
             if (snapshot.schemaVersion > currentSchemaVersion()) {
                 error("备份的数据库版本 v${snapshot.schemaVersion} 高于本应用 v${currentSchemaVersion()}，请升级应用")
@@ -133,6 +151,33 @@ class BackupManagerImpl @Inject constructor(
             restore(snapshot)
         }
     }
+
+    private fun tarGz(content: ByteArray): ByteArray {
+        val baos = ByteArrayOutputStream()
+        GzipCompressorOutputStream(baos).use { gz ->
+            TarArchiveOutputStream(gz).use { tar ->
+                tar.putArchiveEntry(TarArchiveEntry("snapshot.json").apply { size = content.size.toLong() })
+                tar.write(content)
+                tar.closeArchiveEntry()
+            }
+        }
+        return baos.toByteArray()
+    }
+
+    private fun unTarGz(data: ByteArray): ByteArray? = runCatching {
+        GzipCompressorInputStream(ByteArrayInputStream(data)).use { gz ->
+            org.apache.commons.compress.archivers.tar.TarArchiveInputStream(gz).use { tar ->
+                var entry = tar.nextEntry
+                while (entry != null) {
+                    if (entry.name == "snapshot.json") {
+                        return@use tar.readBytes()
+                    }
+                    entry = tar.nextEntry
+                }
+                null
+            }
+        }
+    }.getOrNull()
 
     private suspend fun restore(snapshot: BackupSnapshot): RestoreStats {
         if (snapshot.providers.isNotEmpty()) {
@@ -148,7 +193,8 @@ class BackupManagerImpl @Inject constructor(
             remoteConnectionDao.insertAllMounts(snapshot.remoteMounts.map { it.toEntity() })
         }
         if (snapshot.chatSessions.isNotEmpty()) {
-            chatSessionDao.upsertAll(snapshot.chatSessions.map { it.toEntity() })
+            val currentWorkspacePath = workspaceRepository.currentPath()
+            chatSessionDao.upsertAll(snapshot.chatSessions.map { it.copy(workspacePath = currentWorkspacePath).toEntity() })
         }
         if (snapshot.agentMessages.isNotEmpty()) {
             agentMessageDao.insertAll(snapshot.agentMessages.map { it.toEntity() })
