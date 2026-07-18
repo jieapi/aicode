@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">AiCode</h1>
   <p align="center">
-    在 Android 设备上运行的 AI 驱动代码编辑器
+    在 Android 设备上运行的 AI 编程工具
     <br />
     内置终端 · AI Agent · MCP 协议
   </p>
@@ -35,7 +35,6 @@
 - **AI Agent** — 支持 Anthropic、OpenAI 等多家提供商，通过工具系统（文件操作、Shell 执行等）与开发环境深度交互
 - **内置终端** — 基于 Termux 组件 + PRoot Alpine Linux 容器，提供完整 Linux 命令行环境
 - **MCP 协议** — Model Context Protocol 客户端，连接远程 MCP 服务器动态扩展工具能力
-- **代码编辑** — 基于 WebView 的编辑器，支持语法高亮
 - **Git 集成** — 内置 Git 操作
 - **远程同步** — 支持 SFTP / FTP 工作区同步
 - **Markdown 渲染** — AI 对话中实时渲染 Markdown 内容

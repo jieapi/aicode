@@ -18,7 +18,8 @@ import javax.inject.Singleton
 @Singleton
 class SystemPromptProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val skillRepository: SkillRepository
+    private val skillRepository: SkillRepository,
+    private val memoryRepository: com.aicode.feature.agent.domain.memory.MemoryRepository
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -128,7 +129,37 @@ class SystemPromptProvider @Inject constructor(
     )
     private val sessionSnapshots = ConcurrentHashMap<String, SessionSnapshot>()
 
+    private inner class MemoryListSource : PromptSource {
+        @Volatile private var cached: String? = null
+
+        override fun build(ctx: AgentContext): String? {
+            val memories = try { memoryRepository.listMemories(ctx.projectRoot) } catch (e: Exception) { return null }
+            if (memories.isEmpty()) return null
+            
+            val globalMemories = memories.filter { it.scope == com.aicode.feature.agent.domain.memory.MemoryScope.GLOBAL }
+            val projectMemories = memories.filter { it.scope == com.aicode.feature.agent.domain.memory.MemoryScope.PROJECT }
+            
+            val newContent = buildString {
+                if (globalMemories.isNotEmpty()) {
+                    append("全局记忆 (跨项目个人偏好，需要详情时用 memory(action=read, name=xxx, scope=global))：\n")
+                    globalMemories.forEach { append("- ${it.name}: ${it.description.ifBlank { "无" }}\n") }
+                }
+                if (projectMemories.isNotEmpty()) {
+                    if (isNotEmpty()) append("\n")
+                    append("项目记忆 (当前项目专属，需要详情时用 memory(action=read, name=xxx, scope=project))：\n")
+                    projectMemories.forEach { append("- ${it.name}: ${it.description.ifBlank { "无" }}\n") }
+                }
+            }.trimEnd()
+            
+            if (cached != newContent) {
+                cached = newContent
+            }
+            return cached
+        }
+    }
+
     private val staticRuleSource = StaticRuleSource()
+    private val memoryListSource = MemoryListSource()
     private val activeSkillsSource = ActiveSkillsSource()
     private val projectRuleSource = ProjectRuleSource()
     private val workspaceSource = WorkspaceSource()
@@ -140,6 +171,7 @@ class SystemPromptProvider @Inject constructor(
         val planModeContent = planModeSource.build(agentContext)
         val staticContent = staticRuleSource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
+        val memoriesContent = memoryListSource.build(agentContext)
         val projectRules = projectRuleSource.build(agentContext)
         
         // 2. 增量 Diff 处理 (仅针对高频变化的 Workspace)
@@ -168,6 +200,11 @@ class SystemPromptProvider @Inject constructor(
             }
 
             skillsContent?.let {
+                append("\n\n")
+                append(it)
+            }
+
+            memoriesContent?.let {
                 append("\n\n")
                 append(it)
             }

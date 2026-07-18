@@ -68,27 +68,13 @@ internal fun ProvidersSection(
     }
 }
 
-/** 日志等级二级页。 */
-@Composable
-internal fun LogSection(
-    current: LogLevel,
-    onSelect: (LogLevel) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(Spacing.lg)
-    ) {
-        LogLevelCard(current = current, onSelect = onSelect)
-    }
-}
-
-/** 日志查看页：按日期文件查看，支持按单个 MCP server 名称过滤。 */
+/** 系统日志二级页：合并日志等级与日志查看。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun LogViewerSection(
-    state: LogViewerUiState,
+internal fun SystemLogsSection(
+    currentLogLevel: LogLevel,
+    onSelectLogLevel: (LogLevel) -> Unit,
+    logViewerState: LogViewerUiState,
     onSelectFile: (String) -> Unit
 ) {
     Column(
@@ -97,6 +83,10 @@ internal fun LogViewerSection(
             .padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
+        // 顶部：日志等级调整卡片
+        LogLevelCard(current = currentLogLevel, onSelect = onSelectLogLevel)
+
+        // 中间：日志筛选与文件列表
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(Radius.md),
@@ -105,19 +95,19 @@ internal fun LogViewerSection(
         ) {
             Column(modifier = Modifier.padding(Spacing.lg)) {
                 Text(
-                    text = state.filterServerName?.let { "MCP 日志：$it" } ?: "全部日志",
+                    text = logViewerState.filterServerName?.let { "MCP 日志：$it" } ?: "全部日志",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Normal,
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = logViewerSummary(state),
+                    text = logViewerSummary(logViewerState),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = Spacing.xs)
                 )
 
-                if (state.files.isNotEmpty()) {
+                if (logViewerState.files.isNotEmpty()) {
                     androidx.compose.foundation.layout.FlowRow(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -125,9 +115,9 @@ internal fun LogViewerSection(
                         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
                         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                     ) {
-                        state.files.forEach { fileName ->
+                        logViewerState.files.forEach { fileName ->
                             FilterChip(
-                                selected = fileName == state.selectedFileName,
+                                selected = fileName == logViewerState.selectedFileName,
                                 onClick = { onSelectFile(fileName) },
                                 label = { Text(fileName.removePrefix("log-").removeSuffix(".txt")) }
                             )
@@ -137,6 +127,7 @@ internal fun LogViewerSection(
             }
         }
 
+        // 底部：日志内容区
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -148,10 +139,10 @@ internal fun LogViewerSection(
             val verticalScroll = rememberScrollState()
             val horizontalScroll = rememberScrollState()
             val text = when {
-                state.loading -> "正在读取日志..."
-                state.error != null -> state.error
-                state.content.isBlank() -> "当前筛选条件下没有日志"
-                else -> state.content
+                logViewerState.loading -> "正在读取日志..."
+                logViewerState.error != null -> logViewerState.error
+                logViewerState.content.isBlank() -> "当前筛选条件下没有日志"
+                else -> logViewerState.content
             }
 
             SelectionContainer {
@@ -163,7 +154,7 @@ internal fun LogViewerSection(
                         .verticalScroll(verticalScroll)
                         .padding(Spacing.md),
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    color = if (state.error == null) {
+                    color = if (logViewerState.error == null) {
                         MaterialTheme.colorScheme.onSurface
                     } else {
                         MaterialTheme.colorScheme.error

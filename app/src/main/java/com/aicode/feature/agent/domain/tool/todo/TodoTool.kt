@@ -5,7 +5,7 @@ import com.aicode.feature.agent.data.local.dao.TodoItemDao
 import com.aicode.feature.agent.data.local.entity.TodoItemEntity
 import com.aicode.feature.agent.domain.model.AgentContext
 import com.aicode.feature.agent.domain.model.TodoStatus
-import com.aicode.feature.agent.domain.tool.AgentTool
+import com.aicode.feature.agent.domain.tool.AbstractContextualTool
 import com.aicode.feature.agent.domain.tool.ParameterType
 import com.aicode.feature.agent.domain.tool.ToolParameter
 import com.aicode.feature.agent.domain.tool.ToolCapability
@@ -30,7 +30,7 @@ import javax.inject.Inject
  */
 class TodoTool @Inject constructor(
     private val todoItemDao: TodoItemDao
-) : AgentTool() {
+) : AbstractContextualTool() {
 
     private companion object {
         const val TAG = "TodoTool"
@@ -78,10 +78,6 @@ class TodoTool @Inject constructor(
             itemsSchema = todoItemSchema
         )
     )
-
-    override suspend fun execute(args: Map<String, JsonElement>): ToolResult {
-        return ToolResult.Error("TodoTool requires context", "MISSING_CONTEXT")
-    }
 
     override suspend fun executeWithContext(
         args: Map<String, JsonElement>,

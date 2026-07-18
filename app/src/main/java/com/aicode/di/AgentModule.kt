@@ -202,7 +202,8 @@ object AgentModule {
         webSearchTool: com.aicode.feature.agent.domain.tool.search.WebSearchTool,
         webFetchTool: com.aicode.feature.agent.domain.tool.search.WebFetchTool,
         switchModeTool: com.aicode.feature.agent.domain.tool.mode.SwitchModeTool,
-        todoTool: TodoTool
+        todoTool: TodoTool,
+        memoryTool: com.aicode.feature.agent.domain.tool.memory.MemoryTool
     ): ToolRegistry {
         return ToolRegistry().apply {
             register("readFile", readFileTool)
@@ -220,6 +221,7 @@ object AgentModule {
             register("webfetch", webFetchTool)
             register("switchMode", switchModeTool)
             register("todo", todoTool)
+            register("memory", memoryTool)
         }
     }
 
