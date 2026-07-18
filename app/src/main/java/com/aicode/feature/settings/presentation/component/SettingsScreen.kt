@@ -77,7 +77,8 @@ internal enum class SettingsSection(val title: String) {
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onStopAllAndCloseTerminal: () -> Unit = {}
 ) {
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val activeProvider by viewModel.activeProvider.collectAsStateWithLifecycle()
@@ -254,7 +255,8 @@ fun SettingsScreen(
                     onSelect = { viewModel.setActiveContainerProfile(it) },
                     onSaveCustom = { viewModel.saveCustomContainerProfile(it) },
                     onEditCustom = { viewModel.editCustomContainerProfile(it) },
-                    onDeleteCustom = { viewModel.deleteCustomContainerProfile(it) }
+                    onDeleteCustom = { viewModel.deleteCustomContainerProfile(it) },
+                    onSwitchConfirmed = onStopAllAndCloseTerminal
                 )
                 SettingsSection.Log -> LogSection(
                     current = logLevel,

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -29,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +63,17 @@ fun ChatDrawerContent(
     modifier: Modifier = Modifier
 ) {
     var pendingDelete by remember { mutableStateOf<ChatSession?>(null) }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(currentSessionId, sessions) {
+        if (sessions.isEmpty()) return@LaunchedEffect
+        val index = sessions.indexOfFirst { it.id == currentSessionId }
+        if (index >= 0) {
+            listState.scrollToItem(index)
+        } else {
+            listState.scrollToItem(0)
+        }
+    }
 
     Column(
         modifier = modifier
@@ -112,6 +125,7 @@ fun ChatDrawerContent(
                 )
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs)
                 ) {

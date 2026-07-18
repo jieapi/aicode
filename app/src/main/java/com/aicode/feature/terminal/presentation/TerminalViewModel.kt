@@ -81,6 +81,11 @@ class TerminalViewModel @Inject constructor(
 
     fun closeTab(id: String) = sessionManager.closeTab(id)
 
+    /** 关闭所有终端标签（切换工作区前调用）。 */
+    fun closeAllTabs() {
+        sessionManager.tabs.value.map { it.id }.forEach { sessionManager.closeTab(it) }
+    }
+
     fun reconnectActive() {
         val id = activeTabId.value ?: return
         viewModelScope.launch { runCatching { sessionManager.reconnect(id) } }

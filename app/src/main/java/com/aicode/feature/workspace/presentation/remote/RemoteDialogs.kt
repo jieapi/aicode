@@ -13,6 +13,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import android.provider.DocumentsContract
 import com.aicode.feature.workspace.domain.model.RemoteConnection
 import com.aicode.feature.workspace.domain.model.RemoteMount
 import com.aicode.feature.workspace.domain.model.RemoteProtocol
@@ -37,6 +41,15 @@ fun AddRemoteConnectionDialog(
     var protocol by remember(initialConnection) { mutableStateOf(initialConnection?.protocol ?: RemoteProtocol.SFTP) }
     var isTesting by remember { mutableStateOf(false) }
     val isLocal = protocol == RemoteProtocol.LOCAL
+
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val path = uriToFilePath(context, uri)
+            if (path != null) host = path
+        }
+    }
 
     AlertDialog(
         containerColor = MaterialTheme.colorScheme.surface,
@@ -86,7 +99,14 @@ fun AddRemoteConnectionDialog(
                         null
                     },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = if (isLocal) {
+                        {
+                            IconButton(onClick = { folderPicker.launch(null) }) {
+                                Icon(FeatherIcons.Folder, contentDescription = "选择目录", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    } else null
                 )
                 if (!isLocal) {
                     OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("端口") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -397,4 +417,21 @@ fun RemoteDirectoryBrowserDialog(
             }
         }
     )
+}
+
+private fun uriToFilePath(context: android.content.Context, uri: Uri): String? {
+    if (DocumentsContract.isTreeUri(uri)) {
+        val docId = DocumentsContract.getTreeDocumentId(uri)
+        if (docId.startsWith("primary:")) {
+            val sub = docId.substringAfter("primary:", "")
+            return "/storage/emulated/0/" + sub.trimStart('/')
+        }
+        val parts = docId.split(":")
+        if (parts.size >= 2) {
+            val storage = parts[0]
+            val sub = parts[1]
+            return "/storage/$storage/$sub"
+        }
+    }
+    return null
 }

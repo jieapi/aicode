@@ -289,6 +289,10 @@ fun AIChatPanel(
     val currentMode by viewModel.currentSessionMode.collectAsStateWithLifecycle()
 
     var inputText by remember { mutableStateOf("") }
+    val inputDraft by viewModel.inputDraft.collectAsStateWithLifecycle()
+    LaunchedEffect(inputDraft) {
+        if (inputText != inputDraft) inputText = inputDraft
+    }
     var pendingAttachments by remember { mutableStateOf<List<PendingUploadAttachment>>(emptyList()) }
     val listState = rememberLazyListState()
     val markdownCache = remember { MarkdownRenderCache() }
@@ -453,6 +457,7 @@ fun AIChatPanel(
                 inputAttachments = attachments.toAgentAttachments()
             )
             inputText = ""
+            viewModel.clearInputDraft()
             pendingAttachments = emptyList()
             followBottom = true
             scope.launch {
@@ -640,16 +645,18 @@ fun AIChatPanel(
 
             ChatInputBar(
                 value = inputText,
-                onValueChange = { inputText = it },
+                onValueChange = { inputText = it; viewModel.updateInputDraft(it) },
                 onSend = sendMessage,
                 onStop = { viewModel.stopAgent() },
                 isBusy = isBusy,
                 workspaceViewModel = workspaceViewModel,
                 hasRunningSessions = { viewModel.hasRunningSessionsInCurrentWorkspace() },
+                onSwitchWorkspaceConfirmed = { viewModel.stopAllAndCloseTerminal() },
                 activeProvider = activeProvider,
                 providers = providers,
                 onSelectModel = { p, m ->
                     viewModel.setSessionProviderModel(p, m)
+                    settingsViewModel?.applyModelGlobally(p, m)
                 },
                 onNavigateToSettings = onNavigateToSettings,
                 currentMode = currentMode,
