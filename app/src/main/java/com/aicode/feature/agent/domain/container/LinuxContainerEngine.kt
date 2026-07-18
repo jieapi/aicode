@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
@@ -67,7 +68,8 @@ data class ProotInvocation(
 
 @Singleton
 class LinuxContainerEngine @Inject constructor(
-    private val containerInstaller: ContainerInstaller
+    private val containerInstaller: ContainerInstaller,
+    private val containerSettingsRepository: com.aicode.feature.settings.data.repository.ContainerSettingsRepository
 ) {
     /** 容器初始化的实时进度，供所有入口（终端页/AI/后台终端/MCP）共享同一份状态。 */
     private val _initProgress = MutableStateFlow<ContainerInitState>(ContainerInitState.Idle)
@@ -75,6 +77,28 @@ class LinuxContainerEngine @Inject constructor(
 
     /** 串行化 ensureInstalled，避免多入口并发触发重复解压/配置；后到者等待后看到就绪直接置 Ready。 */
     private val initMutex = Mutex()
+
+    /**
+     * 当前选中的 profile（缓存自 [containerSettingsRepository.activeProfileIdFlow]，避免同步读 DataStore）。
+     * 启动首帧为内置 Alpine（等同改动前）；profile 切换后由 flow collector 更新。fallback 到内置保证安全。
+     */
+    @Volatile
+    private var currentProfile: ContainerProfile = ContainerProfile.BUILTIN_ALPINE
+
+    init {
+        CoroutineScope(Dispatchers.IO).launch {
+            containerSettingsRepository.activeProfileIdFlow.collect { id ->
+                currentProfile = resolveProfile(id)
+            }
+        }
+    }
+
+    /** 按 id 解析 profile：内置返回 [ContainerProfile.BUILTIN_ALPINE]，否则从自定义列表找，找不到回退内置。 */
+    private suspend fun resolveProfile(id: String): ContainerProfile {
+        if (id == ContainerProfile.BUILTIN_ID) return ContainerProfile.BUILTIN_ALPINE
+        return containerSettingsRepository.customProfilesFlow.first()
+            .firstOrNull { it.id == id } ?: ContainerProfile.BUILTIN_ALPINE
+    }
 
     /**
      * 当前正在途的凭据请求计数（自定义 credential helper 阻塞等 app 弹窗回填的对数）。
@@ -255,7 +279,7 @@ class LinuxContainerEngine @Inject constructor(
         projectPath: String? = null,
         timeoutMs: Long = DEFAULT_TIMEOUT_MS
     ): CommandResult? {
-        if (!containerInstaller.isInstalled() || !isProvisioned()) return null
+        if (!containerInstaller.isInstalledFor(currentProfile) || !isProvisioned()) return null
         val result = execCaptured(command, projectPath, timeoutMs)
         return CommandResult(result.output, result.exitCode)
     }
@@ -429,11 +453,12 @@ class LinuxContainerEngine @Inject constructor(
         "[命令执行超时：超过 ${timeoutMs}ms 已被强制终止]"
 
     /**
-     * 启动进程。rootfs/proot 安装就绪则用 PRoot 进入 Alpine 容器；
+     * 启动进程。rootfs/proot 安装就绪则用 PRoot 进入容器；
      * 否则回退到 Android 原生 shell（rootfs 缺失时的兜底）。
      */
     private fun startContainerProcess(command: String, projectPath: String?): Process {
-        val useProot = containerInstaller.isInstalled()
+        val profile = currentProfile
+        val useProot = containerInstaller.isInstalledFor(profile)
 
         val processBuilder = if (useProot) {
             buildProcessBuilder(buildProotInvocation(command, projectPath))
@@ -447,44 +472,52 @@ class LinuxContainerEngine @Inject constructor(
         return processBuilder.start()
     }
 
-    /** 容器是否已安装就绪。 */
-    fun isContainerInstalled(): Boolean = containerInstaller.isInstalled()
+    /** 容器是否已安装就绪（按当前 profile）。 */
+    fun isContainerInstalled(): Boolean = containerInstaller.isInstalledFor(currentProfile)
 
-    /** 基础包是否已按当前 [PROVISION_VERSION] 配置完成。 */
+    /**
+     * 基础包是否已配置完成（按当前 profile）。自定义镜像不 provision，视为已就绪——
+     * 所需工具由用户自行在容器内安装，不依赖本流程。
+     */
     fun isProvisioned(): Boolean {
+        if (!currentProfile.isBuiltin) return true
         val marker = provisionMarker
         return marker.exists() && marker.readText().trim() == PROVISION_VERSION
     }
 
     /**
-     * 容器默认命令 shell：基础包（含 bash）配置完成则用 `/bin/bash`，否则回退 minirootfs 自带的 `/bin/sh`（busybox ash）。
+     * 容器默认命令 shell：内置 Alpine 按 provision 状态选 `/bin/bash` 或 `/bin/sh`；
+     * 自定义镜像用 profile 指定的 [ContainerProfile.shellPath]，未指定回退 `/bin/sh`。
      *
-     * 之所以条件选择而非无脑用 bash：`/bin/sh` 是 minirootfs 自带、永远在；bash 只有 provisioning 成功后才存在。
-     * provisioning 流程本身（[provisionIfNeeded]）与所有命令入口都经 [buildProotInvocation] 用本方法构造的 shell 跑——
-     * 装机期间 [isProvisioned] 为 false，自动回退 `/bin/sh` 保证不破坏装机；装机失败也回退 `/bin/sh` 保留兜底能力，
-     * 避免出现「bash 没装上 → 整个容器命令全废」的脆弱状态。
+     * 内置分支与改动前逐字等价。自定义镜像的 shell 路径由用户负责——若不存在，proot 会报错由用户看到。
      */
-    fun defaultShell(): String = if (isProvisioned()) "/bin/bash" else "/bin/sh"
+    fun defaultShell(): String {
+        val profile = currentProfile
+        if (!profile.isBuiltin) return profile.shellPath?.takeIf { it.isNotBlank() } ?: "/bin/sh"
+        return if (isProvisioned()) "/bin/bash" else "/bin/sh"
+    }
 
     /**
-     * 幂等地确保容器可用：先解压 rootfs/proot（首次耗时），再配置基础包 python3/git/pip/node/npm/rg（首次需联网）。
+     * 幂等地确保容器可用：先解压 rootfs/proot（首次耗时），内置再配置基础包（首次需联网）。
+     * 自定义镜像只解压 rootfs，不 provision——镜像源与所需工具由用户自行处理。
      * 供所有命令执行入口（[runCommandSync]/[runCommandStream]）在执行前统一调用。
      *
      * 用 [initMutex] 串行化：多入口并发时只让第一个真正解压/配置，其余等待后看到就绪直接置 [ContainerInitState.Ready]。
      * 全程通过 [initProgress] 上报阶段进度，供 UI 实时展示。
      */
     suspend fun ensureInstalled() = initMutex.withLock {
+        val profile = currentProfile
         // 每次启动或执行命令前确保提取最新的内置文档
         containerInstaller.extractDocs()
-        if (containerInstaller.isInstalled() && isProvisioned()) {
+        if (containerInstaller.isInstalledFor(profile) && isProvisioned()) {
             _initProgress.value = ContainerInitState.Ready
             return@withLock
         }
         // installRootfsIfNeed 在真正解压/部署时回调更新进度（已安装则快路径不回调）
-        containerInstaller.installRootfsIfNeed { _initProgress.value = it }
-        provisionIfNeeded()
+        containerInstaller.installRootfsIfNeed(profile) { _initProgress.value = it }
+        if (profile.isBuiltin) provisionIfNeeded()
         _initProgress.value =
-            if (containerInstaller.isInstalled()) ContainerInitState.Ready
+            if (containerInstaller.isInstalledFor(profile)) ContainerInitState.Ready
             else ContainerInitState.Failed("容器未安装（缺少 rootfs/proot）")
     }
 
@@ -558,7 +591,8 @@ class LinuxContainerEngine @Inject constructor(
      * 但**不含**最终的客户机命令（由各调用方自行追加 `/bin/sh -c …` 或 `exec` 形式）。
      */
     private fun buildBaseProotArgv(projectPath: String?): MutableList<String> {
-        val rootfs = containerInstaller.rootfsDir.absolutePath
+        val profile = currentProfile
+        val rootfs = containerInstaller.rootfsDirFor(profile).absolutePath
         val prootBin = containerInstaller.prootBin.absolutePath
 
         val argv = mutableListOf(
@@ -587,6 +621,13 @@ class LinuxContainerEngine @Inject constructor(
         val aicodeDir = containerInstaller.aicodeDir.apply { mkdirs() }
         argv.add("-b")
         argv.add("${aicodeDir.absolutePath}:/root/.aicode")
+
+        // 自定义 profile 的额外绑定与参数（内置 profile 这俩为空，此段无操作，等价于改动前）
+        for (b in profile.extraBindings) {
+            argv.add("-b")
+            argv.add(b)
+        }
+        argv.addAll(profile.extraArgs)
 
         return argv
     }
