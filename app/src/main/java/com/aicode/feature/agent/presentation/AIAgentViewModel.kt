@@ -86,6 +86,11 @@ class AIAgentViewModel @Inject constructor(
     private val _messageLimit = MutableStateFlow<Map<String, Int>>(emptyMap())
     private val defaultLimit = 30
 
+    private val _inputDraft = MutableStateFlow("")
+    val inputDraft: StateFlow<String> = _inputDraft.asStateFlow()
+    fun updateInputDraft(text: String) { _inputDraft.value = text }
+    fun clearInputDraft() { _inputDraft.value = "" }
+
     fun loadMoreMessages() {
         val sid = _currentSessionId.value ?: return
         val currentLimit = _messageLimit.value[sid] ?: defaultLimit

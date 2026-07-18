@@ -513,6 +513,17 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    // 主页模型选择：同步更新全局 active provider 的选中模型，使新建会话回退全局时落到用户最近选的模型。
+    fun applyModelGlobally(providerId: String, model: String) {
+        viewModelScope.launch {
+            val activeId = repository.getActiveProviderSync()?.id
+            if (activeId != providerId) {
+                repository.setActiveProvider(providerId)
+            }
+            repository.setSelectedModel(providerId, model)
+        }
+    }
+
     fun deleteGlobalRule(rule: PermissionRule) {
         viewModelScope.launch { permissionRulesRepository.removeGlobalRule(rule) }
     }
