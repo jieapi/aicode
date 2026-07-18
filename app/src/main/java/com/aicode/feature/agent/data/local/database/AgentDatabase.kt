@@ -18,7 +18,7 @@ import com.aicode.feature.workspace.data.local.entity.RemoteMountEntity
 
 @Database(
     entities = [AgentMessageEntity::class, ChatSessionEntity::class, AIProviderEntity::class, RemoteConnectionEntity::class, RemoteMountEntity::class, TodoItemEntity::class, GitCredentialEntity::class],
-    version = 21,
+    version = AgentDatabase.SCHEMA_VERSION,
     exportSchema = false
 )
 abstract class AgentDatabase : RoomDatabase() {
@@ -28,4 +28,8 @@ abstract class AgentDatabase : RoomDatabase() {
     abstract fun remoteConnectionDao(): RemoteConnectionDao
     abstract fun todoItemDao(): TodoItemDao
     abstract fun gitCredentialDao(): GitCredentialDao
+
+    companion object {
+        const val SCHEMA_VERSION = 21
+    }
 }
