@@ -2,6 +2,8 @@ package com.aicode.feature.agent.domain.provider
 
 import com.aicode.core.util.AILogger
 import com.aicode.feature.agent.data.remote.openai.OpenAIApi
+import com.aicode.feature.settings.domain.model.ProviderType
+import com.aicode.feature.settings.domain.model.defaultProviderApiPath
 import java.io.IOException
 import com.aicode.feature.agent.data.remote.openai.ChatCompletionRequest
 import com.aicode.feature.agent.data.remote.openai.OpenAIChatMessage
@@ -33,7 +35,7 @@ class OpenAIAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://api.openai.com/"
-    override var apiPath = "v1/chat/completions"
+    override var useFullUrl = false
     override var useResponseApi = false
     override var model = "gpt-4-turbo"
     override var logSessionId: String? = null
@@ -61,7 +63,7 @@ class OpenAIAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.OPENAI))
         if (useResponseApi) {
             val request = mapOf(
                 "model" to model,
@@ -107,7 +109,7 @@ class OpenAIAdapter @Inject constructor(
             }
             // status of output items is completed
             finishReason = "stop" // simplify for Responses API
-            val usage = response.getAsJsonObject("usage")
+            val usage = response.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
             val inputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
             val outputTokens = usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
             return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, inputTokens = inputTokens, outputTokens = outputTokens)
@@ -167,7 +169,7 @@ class OpenAIAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.OPENAI))
         
         if (useResponseApi) {
             val request = mapOf(
@@ -242,7 +244,8 @@ class OpenAIAdapter @Inject constructor(
                                             }
                                         }
                                         finishReason = "stop"
-                                        val usageObj = obj.getAsJsonObject("response")?.getAsJsonObject("usage")
+                                        val usageObj = obj.get("response")?.takeIf { it.isJsonObject }?.asJsonObject
+                                            ?.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
                                         streamInputTokens = usageObj?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                         streamOutputTokens = usageObj?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                     }
@@ -335,8 +338,7 @@ class OpenAIAdapter @Inject constructor(
                         // 单行异常不应中断整条流——这里宽松解析，出错仅跳过该行；已累积的文本与后续行不受影响。
                         // 必须放行 CancellationException，否则会吞掉协程取消信号。
                         try {
-                            // 最后一帧 choices 为空但带 usage（stream_options.include_usage），先读 usage 再跳过
-                            obj.getAsJsonObject("usage")?.let { u ->
+                            obj.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject?.let { u ->
                                 streamInputTokens = u.get("prompt_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
                                 streamOutputTokens = u.get("completion_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamOutputTokens
                             }

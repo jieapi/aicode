@@ -112,6 +112,10 @@ internal class MarkdownRenderCache(
     }
 }
 
+internal fun formatTokenCount(tokens: Int): String {
+    return if (tokens >= 1000) "${tokens / 1000}.${(tokens % 1000) / 100}k" else tokens.toString()
+}
+
 @Composable
 internal fun AgentMessageItem(
     message: AgentUIMessage,
@@ -194,20 +198,31 @@ internal fun AgentMessageItem(
                 }
                 // 气泡下方复制按钮（工具消息不显示）
                 if (message.content.hasVisibleContent() && message.role != MessageRole.TOOL) {
-                    val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
-                    IconButton(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(message.content))
-                            copied = true
-                        },
-                        modifier = Modifier.size(28.dp),
-                        colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
-                    ) {
-                        Icon(
-                            if (copied) FeatherIcons.Check else FeatherIcons.Copy,
-                            contentDescription = if (copied) "已复制" else "复制",
-                            modifier = Modifier.size(14.dp),
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
+                        IconButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(message.content))
+                                copied = true
+                            },
+                            modifier = Modifier.size(28.dp),
+                            colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
+                        ) {
+                            Icon(
+                                if (copied) FeatherIcons.Check else FeatherIcons.Copy,
+                                contentDescription = if (copied) "已复制" else "复制",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                        if (message.role == MessageRole.ASSISTANT && (message.inputTokens > 0 || message.outputTokens > 0)) {
+                            val inStr = formatTokenCount(message.inputTokens)
+                            val outStr = formatTokenCount(message.outputTokens)
+                            Text(
+                                text = "↑$inStr ↓$outStr",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     // 复制成功 1.5s 后恢复图标
                     if (copied) {

@@ -483,7 +483,9 @@ class AIAgentViewModel @Inject constructor(
                             MessageRole.ASSISTANT,
                             normalized,
                             toolCalls = event.toolCalls,
-                            reasoning = reasoning
+                            reasoning = reasoning,
+                            inputTokens = event.inputTokens,
+                            outputTokens = event.outputTokens
                         )
                         if (event.inputTokens > 0 || event.outputTokens > 0) {
                             viewModelScope.launch {

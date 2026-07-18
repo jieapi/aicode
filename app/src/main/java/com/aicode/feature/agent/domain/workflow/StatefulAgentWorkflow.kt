@@ -155,7 +155,7 @@ class StatefulAgentWorkflow @Inject constructor(
      * 据 [config] 选定对应的 provider 单例实例并填入其连接字段后返回。
      * 复用于「当前聊天模型」与「识图专用模型」两条路径。
      *
-     * 注意：三个 provider 实例是注入的单例且字段可变（apiKey/baseUrl/apiPath/useResponseApi/model/logSessionId），
+     * 注意：三个 provider 实例是注入的单例且字段可变（apiKey/baseUrl/useFullUrl/useResponseApi/model/logSessionId），
      * 调用方在用本方法切换到不同于当前的 provider 后，必须在发送请求的 try/finally 里保存并恢复所有可变字段，
      * 以免污染后续轮次——见 effect 执行层识图轮的 save/Restore。
      */
@@ -168,7 +168,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.apiKey = config.apiKey
         provider.baseUrl = config.baseUrl
         provider.model = config.effectiveModel
-        provider.apiPath = if (config.apiPath.isNotBlank()) config.apiPath else provider.apiPath
+        provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.logSessionId = sessionId
         return provider
@@ -585,7 +585,7 @@ class StatefulAgentWorkflow @Inject constructor(
         val provider: AIProvider,
         val apiKey: String,
         val baseUrl: String,
-        val apiPath: String,
+        val useFullUrl: Boolean,
         val useResponseApi: Boolean,
         val model: String,
         val logSessionId: String?
@@ -595,7 +595,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider = provider,
         apiKey = provider.apiKey,
         baseUrl = provider.baseUrl,
-        apiPath = provider.apiPath,
+        useFullUrl = provider.useFullUrl,
         useResponseApi = provider.useResponseApi,
         model = provider.model,
         logSessionId = provider.logSessionId
@@ -604,7 +604,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private fun restoreProvider(snap: ProviderSnapshot) {
         snap.provider.apiKey = snap.apiKey
         snap.provider.baseUrl = snap.baseUrl
-        snap.provider.apiPath = snap.apiPath
+        snap.provider.useFullUrl = snap.useFullUrl
         snap.provider.useResponseApi = snap.useResponseApi
         snap.provider.model = snap.model
         snap.provider.logSessionId = snap.logSessionId

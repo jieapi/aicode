@@ -1,6 +1,7 @@
 package com.aicode.feature.agent.presentation.component
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -45,7 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
@@ -94,7 +97,8 @@ internal fun ChatInputBar(
     canUploadFiles: Boolean,
     canUploadImages: Boolean,
     onUploadFile: () -> Unit,
-    onUploadImage: () -> Unit
+    onUploadImage: () -> Unit,
+    tokenProgress: Float = 0f
 ) {
     val canSend = (value.isNotBlank() || pendingAttachments.isNotEmpty()) && !isBusy
     Surface(
@@ -209,7 +213,7 @@ internal fun ChatInputBar(
                         onClick = onUploadImage
                     )
                 }
-                SendButton(canSend = canSend, isBusy = isBusy, onSend = onSend, onStop = onStop)
+                SendButton(canSend = canSend, isBusy = isBusy, tokenProgress = tokenProgress, onSend = onSend, onStop = onStop)
             }
         }
     }
@@ -539,37 +543,61 @@ internal fun ModelRow(
 }
 
 @Composable
-internal fun SendButton(canSend: Boolean, isBusy: Boolean, onSend: () -> Unit, onStop: () -> Unit) {
+internal fun SendButton(canSend: Boolean, isBusy: Boolean, tokenProgress: Float, onSend: () -> Unit, onStop: () -> Unit) {
     val clickable = isBusy || canSend
-    val bg = if (clickable) {
-        Modifier.background(if (isBusy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary)
+    val buttonColor = if (clickable) {
+        if (isBusy) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary
     } else {
-        Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+        MaterialTheme.colorScheme.surfaceVariant
     }
     val iconTint = if (clickable) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+    val arcColor = buttonColor.copy(alpha = 0.45f)
+    val clampedProgress = tokenProgress.coerceIn(0f, 1f)
     Box(
         modifier = Modifier
             .padding(Spacing.xs)
-            .size(40.dp)
-            .clip(CircleShape)
-            .then(bg)
-            .clickable(enabled = clickable, onClick = if (isBusy) onStop else onSend),
+            .size(44.dp),
         contentAlignment = Alignment.Center
     ) {
-        if (isBusy) {
-            Icon(
-                FeatherIcons.Square,
-                contentDescription = "停止",
-                tint = iconTint,
-                modifier = Modifier.size(20.dp)
-            )
-        } else {
-            Icon(
-                FeatherIcons.ArrowUp,
-                contentDescription = "发送",
-                tint = iconTint,
-                modifier = Modifier.size(20.dp)
-            )
+        if (clampedProgress > 0f) {
+            Canvas(modifier = Modifier.size(44.dp)) {
+                val stroke = 3.dp.toPx()
+                val arcSize = size.minDimension - stroke
+                val topLeft = androidx.compose.ui.geometry.Offset(stroke / 2f, stroke / 2f)
+                drawArc(
+                    color = arcColor,
+                    startAngle = -90f,
+                    sweepAngle = 360f * clampedProgress,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = androidx.compose.ui.geometry.Size(arcSize, arcSize),
+                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(buttonColor)
+                .clickable(enabled = clickable, onClick = if (isBusy) onStop else onSend),
+            contentAlignment = Alignment.Center
+        ) {
+            if (isBusy) {
+                Icon(
+                    FeatherIcons.Square,
+                    contentDescription = "停止",
+                    tint = iconTint,
+                    modifier = Modifier.size(18.dp)
+                )
+            } else {
+                Icon(
+                    FeatherIcons.ArrowUp,
+                    contentDescription = "发送",
+                    tint = iconTint,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }

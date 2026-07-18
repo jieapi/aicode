@@ -671,7 +671,13 @@ fun AIChatPanel(
                 canUploadFiles = canUploadFiles,
                 canUploadImages = canUploadImages,
                 onUploadFile = { filePicker.launch(arrayOf("*/*")) },
-                onUploadImage = { imagePicker.launch(arrayOf("image/*")) }
+                onUploadImage = { imagePicker.launch(arrayOf("image/*")) },
+                tokenProgress = run {
+                    val contextLimit = activeModelMetadata?.contextTokens ?: 0
+                    if (contextLimit > 0) {
+                        (sessionInputTokens + sessionOutputTokens).toFloat() / contextLimit
+                    } else 0f
+                }
             )
         }
     }
@@ -847,15 +853,6 @@ internal fun ChatHeader(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (inputTokens > 0 || outputTokens > 0) {
-                            val inStr = if (inputTokens >= 1000) "${inputTokens / 1000}.${(inputTokens % 1000) / 100}k" else inputTokens.toString()
-                            val outStr = if (outputTokens >= 1000) "${outputTokens / 1000}.${(outputTokens % 1000) / 100}k" else outputTokens.toString()
-                            Text(
-                                text = "↑$inStr ↓$outStr",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 }
                 IconButton(onClick = onNewChat) {

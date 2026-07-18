@@ -45,7 +45,7 @@ data class ProviderDto(
     val models: String = "",
     val selectedModel: String = "",
     val isEnabled: Boolean = true,
-    val apiPath: String = "/chat/completions",
+    val useFullUrl: Boolean = false,
     val useResponseApi: Boolean = false
 )
 

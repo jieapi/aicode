@@ -48,7 +48,9 @@ class MessagePersistenceUseCase @Inject constructor(
         toolArgs: String? = null,
         isError: Boolean = false,
         reasoning: String? = null,
-        attachments: List<AgentAttachment> = emptyList()
+        attachments: List<AgentAttachment> = emptyList(),
+        inputTokens: Int = 0,
+        outputTokens: Int = 0
     ) {
         agentMessageDao.insert(
             AgentMessageEntity(
@@ -63,7 +65,9 @@ class MessagePersistenceUseCase @Inject constructor(
                 toolArgs = toolArgs,
                 isError = isError,
                 reasoning = reasoning,
-                attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null
+                attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null,
+                inputTokens = inputTokens,
+                outputTokens = outputTokens
             )
         )
     }

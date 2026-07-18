@@ -79,17 +79,6 @@ fun ChatSessionRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        if (session.totalInputTokens > 0 || session.totalOutputTokens > 0) {
-            val inT = session.totalInputTokens
-            val outT = session.totalOutputTokens
-            val inStr = if (inT >= 1000) "${inT / 1000}.${(inT % 1000) / 100}k" else inT.toString()
-            val outStr = if (outT >= 1000) "${outT / 1000}.${(outT % 1000) / 100}k" else outT.toString()
-            Text(
-                text = "↑$inStr ↓$outStr",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
         if (selected) {
             Icon(
                 FeatherIcons.Check,

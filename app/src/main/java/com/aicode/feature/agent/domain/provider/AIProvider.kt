@@ -43,7 +43,7 @@ sealed class AIStreamChunk {
 interface AIProvider {
     var apiKey: String
     var baseUrl: String
-    var apiPath: String
+    var useFullUrl: Boolean
     var useResponseApi: Boolean
     var model: String
 
@@ -83,8 +83,11 @@ interface AIProvider {
 fun joinUrl(baseUrl: String, path: String): String {
     val base = baseUrl.trim().trimEnd('/')
     val cleanPath = path.trimStart('/')
-    return if (base.endsWith("/v1")) {
-        "$base/${cleanPath.removePrefix("v1/")}"
+    
+    val lastSegment = base.substringAfterLast('/', "")
+    
+    return if (lastSegment.isNotEmpty() && cleanPath.startsWith("$lastSegment/")) {
+        "$base/${cleanPath.removePrefix("$lastSegment/")}"
     } else {
         "$base/$cleanPath"
     }

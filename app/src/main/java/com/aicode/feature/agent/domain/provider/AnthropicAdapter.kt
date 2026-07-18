@@ -10,6 +10,8 @@ import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
+import com.aicode.feature.settings.domain.model.ProviderType
+import com.aicode.feature.settings.domain.model.defaultProviderApiPath
 import com.google.gson.JsonParser
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -33,7 +35,7 @@ class AnthropicAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://api.anthropic.com/"
-    override var apiPath = "v1/messages"
+    override var useFullUrl = false
     override var useResponseApi = false
     override var model = "claude-3-5-sonnet-20241022"
     override var logSessionId: String? = null
@@ -53,7 +55,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
         val request = AnthropicMessageRequest(
             model = model,
             messages = anthropicMessages,
@@ -112,7 +114,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
         val request = AnthropicMessageRequest(
             model = model,
             messages = anthropicMessages,
@@ -165,7 +167,8 @@ class AnthropicAdapter @Inject constructor(
                         try {
                             when (obj.get("type")?.asString) {
                                 "message_start" -> {
-                                    val usage = obj.getAsJsonObject("message")?.getAsJsonObject("usage")
+                                    val usage = obj.get("message")?.takeIf { it.isJsonObject }?.asJsonObject
+                                        ?.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
                                     streamInputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                 }
                                 "content_block_start" -> {
@@ -207,11 +210,11 @@ class AnthropicAdapter @Inject constructor(
                                 }
                                 "message_stop" -> break
                                 "message_delta" -> {
-                                    val delta = obj.getAsJsonObject("delta")
+                                    val delta = obj.get("delta")?.takeIf { it.isJsonObject }?.asJsonObject
                                     delta?.get("stop_reason")?.takeIf { !it.isJsonNull }?.asString?.let {
                                         stopReason = it
                                     }
-                                    val usage = obj.getAsJsonObject("usage")
+                                    val usage = obj.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
                                     usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt?.let {
                                         streamOutputTokens = it
                                     }
