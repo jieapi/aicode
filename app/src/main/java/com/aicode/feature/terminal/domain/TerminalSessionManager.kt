@@ -9,8 +9,11 @@ import com.aicode.feature.workspace.data.repository.WorkspaceRepository
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalView
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -52,6 +55,13 @@ class TerminalSessionManager @Inject constructor(
         data class Finished(val exitCode: Int) : RunState
     }
 
+    /** 后台命令结束时 emit 的事件，供 ViewModel 订阅后通知 AI。 */
+    data class TabFinishedEvent(
+        val tabId: String,
+        val command: String?,
+        val exitCode: Int
+    )
+
     /**
      * 一个终端标签：会话 + 渲染视图 + 元数据。
      *
@@ -64,6 +74,7 @@ class TerminalSessionManager @Inject constructor(
         val session: TerminalSession,
         val isBackground: Boolean,
         val command: String?,
+        val notifyOnExit: Boolean = false,
         runState: RunState
     ) {
         var title: String = title
@@ -85,6 +96,9 @@ class TerminalSessionManager @Inject constructor(
     /** 触发任一标签输出/状态变化时自增，供 Compose 重组拉取最新屏幕内容。 */
     private val _revision = MutableStateFlow(0)
     val revision: StateFlow<Int> = _revision.asStateFlow()
+
+    private val _tabFinishedEvents = MutableSharedFlow<TabFinishedEvent>(extraBufferCapacity = 16)
+    val tabFinishedEvents: SharedFlow<TabFinishedEvent> = _tabFinishedEvents.asSharedFlow()
 
     private val idCounter = AtomicInteger(0)
 
@@ -135,12 +149,14 @@ class TerminalSessionManager @Inject constructor(
      * 命令跑完后 `exec /bin/sh` 保活，使该标签仍是一个可继续输入的会话（dev server 退出后也能复用），
      * 且输出全程留在 emulator 缓冲里，用户切过去或 AI 用 [getTabOutput] 都能看到累计输出。
      */
-    suspend fun startBackgroundCommand(command: String, title: String? = null): String {
+    suspend fun startBackgroundCommand(command: String, title: String? = null, notify: Boolean = false): String {
         ensureContainer()
         val id = nextId()
-        // 用 sh -c 跑用户命令，结束后再 exec 默认 shell 保活；TERM 等环境由 proot env 提供。
+        // notify=true：命令结束后不 exec 保活 shell，让 session 自然结束以触发 onFinished 回调。
+        // notify=false：命令结束后 exec 默认 shell 保活，使标签可复用（dev server 退出后也能继续输入）。
+        val afterCommand = if (notify) "" else "; exec ${containerEngine.defaultShell()}"
         val shellCommand = "cd /workspace 2>/dev/null; export ENV=/etc/profile; " +
-            "$command; echo \"[command exited: \$?]\"; exec ${containerEngine.defaultShell()}"
+            "$command; echo \"[command exited: \$?]\"$afterCommand"
         val session = buildSession(shellCommand)
         addTab(
             TerminalTab(
@@ -149,6 +165,7 @@ class TerminalSessionManager @Inject constructor(
                 session = session,
                 isBackground = true,
                 command = command,
+                notifyOnExit = notify,
                 runState = RunState.Running
             )
         )
@@ -315,6 +332,11 @@ class TerminalSessionManager @Inject constructor(
                     FileLogger.i(TAG, "终端标签 ${target.id} 会话结束 exit=${finished.exitStatus}")
                     if (target.isBackground && _tabs.value.none { it.isBackground && it.runState is RunState.Running }) {
                         stopKeepaliveService()
+                    }
+                    if (target.notifyOnExit) {
+                        _tabFinishedEvents.tryEmit(
+                            TabFinishedEvent(target.id, target.command, finished.exitStatus)
+                        )
                     }
                 }
             }

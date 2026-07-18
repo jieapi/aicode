@@ -19,6 +19,7 @@ import com.aicode.feature.agent.domain.model.WorkflowStatus
 import com.aicode.feature.agent.domain.permission.PermissionChoice
 import com.aicode.feature.agent.domain.tool.ToolCall
 import com.aicode.feature.agent.domain.workflow.AgentWorkflow
+import com.aicode.feature.terminal.domain.TerminalSessionManager
 import com.aicode.feature.agent.domain.workflow.AgentEvent
 import com.aicode.feature.agent.domain.tool.ToolPermissionManager
 import com.aicode.feature.agent.domain.tool.ToolRegistry
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -290,6 +292,69 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
         }
+
+        // 订阅后台命令完成事件：notify=true 的命令结束后自动注入消息对并触发 AI 新一轮
+        viewModelScope.launch {
+            terminalSessionManager.tabFinishedEvents.collect { event ->
+                handleBackgroundCommandFinished(event)
+            }
+        }
+    }
+
+    /**
+     * 后台命令（notify=true）结束后的回调：向当前会话注入一对 assistant(tool_call) + tool_result
+     * 消息，使用专属工具名「background_callback」避免 AI 误以为是它自己调的 terminal。
+     * UI 显示工具卡片、AI 在下一轮上下文中看到结构化结果，然后触发 Agent 循环。
+     */
+    private fun handleBackgroundCommandFinished(event: TerminalSessionManager.TabFinishedEvent) {
+        val sessionId = _currentSessionId.value ?: return
+        viewModelScope.launch {
+            val toolCallId = "auto_term_${event.tabId}_${System.currentTimeMillis()}"
+
+            // 注入 assistant 消息：content 为空（UI 不显示气泡），仅携带 tool_call 声明
+            // 工具名用 background_callback 而非 terminal，避免 AI 误以为是自己调的 read
+            messagePersistenceUseCase.persist(
+                sessionId = sessionId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall(
+                        id = toolCallId,
+                        name = "background_callback",
+                        arguments = mapOf(
+                            "tab_id" to JsonPrimitive(event.tabId),
+                            "command" to JsonPrimitive(event.command ?: ""),
+                            "exit_code" to JsonPrimitive(event.exitCode)
+                        )
+                    )
+                )
+            )
+
+            // 注入 tool result 消息：UI 显示工具卡片，AI 上下文中看到完成通知
+            val cmdDisplay = event.command?.takeIf { it.isNotBlank() }?.let { " \"$it\"" } ?: ""
+            val resultText = buildString {
+                append("[后台任务完成通知] 终端标签 ${event.tabId} 的命令$cmdDisplay 已结束，")
+                append("退出码 ${event.exitCode}。")
+                append("可用 terminal(action=\"read\", tab_id=\"${event.tabId}\") 查看完整输出。")
+            }
+            messagePersistenceUseCase.persist(
+                sessionId = sessionId,
+                role = MessageRole.TOOL,
+                content = resultText,
+                id = "tool_$toolCallId",
+                toolCallId = toolCallId,
+                toolName = "background_callback",
+                toolArgs = "{\"tab_id\":\"${event.tabId}\",\"exit_code\":${event.exitCode}}",
+                isError = event.exitCode != 0
+            )
+
+            // 触发新一轮：不持久化 user 消息，AI 上下文末尾是注入的 tool_result，自然看到完成通知
+            enqueueAgentRequest(
+                request = " ",
+                projectRoot = _currentWorkspace.value,
+                isAutoTrigger = true
+            )
+        }
     }
 
     fun executeAgentRequest(
@@ -364,7 +429,8 @@ class AIAgentViewModel @Inject constructor(
         selectedCode: String? = null,
         projectRoot: String = "",
         inputImages: List<AgentImage> = emptyList(),
-        inputAttachments: List<AgentAttachment> = emptyList()
+        inputAttachments: List<AgentAttachment> = emptyList(),
+        isAutoTrigger: Boolean = false
     ) {
         val sid = _currentSessionId.value
         val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
@@ -377,7 +443,8 @@ class AIAgentViewModel @Inject constructor(
                 selectedCode = selectedCode,
                 projectRoot = projectRoot,
                 inputImages = inputImages,
-                inputAttachments = inputAttachments
+                inputAttachments = inputAttachments,
+                isAutoTrigger = isAutoTrigger
             )
             val currentList = _queuedRequests.value[sid] ?: emptyList()
             _queuedRequests.value = _queuedRequests.value + (sid to (currentList + req))
@@ -390,7 +457,8 @@ class AIAgentViewModel @Inject constructor(
                 projectRoot = projectRoot,
                 inputImages = inputImages,
                 inputAttachments = inputAttachments,
-                targetSessionId = sid
+                targetSessionId = sid,
+                isAutoTrigger = isAutoTrigger
             )
         }
     }
@@ -407,7 +475,8 @@ class AIAgentViewModel @Inject constructor(
             projectRoot = next.projectRoot,
             inputImages = next.inputImages,
             inputAttachments = next.inputAttachments,
-            targetSessionId = sessionId
+            targetSessionId = sessionId,
+            isAutoTrigger = next.isAutoTrigger
         )
     }
 
@@ -419,7 +488,8 @@ class AIAgentViewModel @Inject constructor(
         projectRoot: String = "",
         inputImages: List<AgentImage> = emptyList(),
         inputAttachments: List<AgentAttachment> = emptyList(),
-        targetSessionId: String? = null
+        targetSessionId: String? = null,
+        isAutoTrigger: Boolean = false
     ): Job = viewModelScope.launch {
         val sessionId = targetSessionId ?: ensureSession()
         sessionJobs[sessionId] = coroutineContext[Job]!!
@@ -431,8 +501,10 @@ class AIAgentViewModel @Inject constructor(
             val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
-            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
-            if (isFirst) sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
+            if (!isAutoTrigger) {
+                messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
+                if (isFirst) sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
+            }
             sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
 
             val sessionEntity = sessionUseCase.getSessionById(sessionId)

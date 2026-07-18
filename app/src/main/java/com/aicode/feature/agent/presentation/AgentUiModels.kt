@@ -117,5 +117,6 @@ data class QueuedRequest(
     val selectedCode: String?,
     val projectRoot: String,
     val inputImages: List<AgentImage> = emptyList(),
-    val inputAttachments: List<AgentAttachment> = emptyList()
+    val inputAttachments: List<AgentAttachment> = emptyList(),
+    val isAutoTrigger: Boolean = false
 )

@@ -123,6 +123,14 @@ class SystemPromptProvider @Inject constructor(
         }
     }
 
+    private inner class CurrentTimeSource : PromptSource {
+        override fun build(ctx: AgentContext): String {
+            val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
+            val currentTime = java.time.ZonedDateTime.now().format(formatter)
+            return "[System] 当前本地时间: $currentTime"
+        }
+    }
+
     // 会话级别的快照缓存 (Baseline & Snapshot)
     data class SessionSnapshot(
         val lastWorkspaceContext: String = ""
@@ -164,6 +172,7 @@ class SystemPromptProvider @Inject constructor(
     private val projectRuleSource = ProjectRuleSource()
     private val workspaceSource = WorkspaceSource()
     private val planModeSource = PlanModeSource()
+    private val currentTimeSource = CurrentTimeSource()
 
     fun build(agentContext: AgentContext): String {
         // 1. 获取各个 Source 的基线快照。
@@ -216,6 +225,8 @@ class SystemPromptProvider @Inject constructor(
 
             append("\n\n")
             append(effectiveWorkspaceContent)
+            append("\n\n")
+            append(currentTimeSource.build(agentContext))
         }
     }
 

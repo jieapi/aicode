@@ -289,10 +289,6 @@ class StatefulAgentWorkflow @Inject constructor(
         context: AgentContext,
         tools: List<AgentTool>
     ): WorkflowResult {
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
-        val currentTime = java.time.ZonedDateTime.now().format(formatter)
-        val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
-
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
@@ -300,7 +296,7 @@ class StatefulAgentWorkflow @Inject constructor(
         actionQueue.addLast(
             AgentAction.InitRequest(
                 currentContext.history + AgentMessage.UserMessage(
-                    content = enrichedRequest,
+                    content = userRequest,
                     images = currentContext.inputImages
                 )
             )
@@ -389,10 +385,6 @@ class StatefulAgentWorkflow @Inject constructor(
         context: AgentContext,
         tools: List<AgentTool>
     ): Flow<AgentEvent> = flow {
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
-        val currentTime = java.time.ZonedDateTime.now().format(formatter)
-        val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
-
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
@@ -400,7 +392,7 @@ class StatefulAgentWorkflow @Inject constructor(
         actionQueue.addLast(
             AgentAction.InitRequest(
                 currentContext.history + AgentMessage.UserMessage(
-                    content = enrichedRequest,
+                    content = userRequest,
                     images = currentContext.inputImages
                 )
             )

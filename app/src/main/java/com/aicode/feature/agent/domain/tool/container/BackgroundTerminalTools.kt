@@ -31,7 +31,8 @@ import javax.inject.Inject
  * 内部引号被转义成 `\"`），剥掉外层引号后内部仍是字面 `\"`，会把 `echo "*.vue"` 变成
  * `echo \"*.vue\"` 导致 shell 把引号当字面输出。必须用 [jsonPrimitive]/[contentOrNull] 取解码后内容。
  */
-private fun JsonElement.asPlainString(): String? = jsonPrimitive.contentOrNull
+private fun JsonElement.asPlainString(): String? =
+    (this as? JsonPrimitive)?.contentOrNull
 
 /**
  * 统一的后台终端会话工具：用一个 `action` 参数区分三种操作，把原先的
@@ -107,6 +108,12 @@ class TerminalSessionTool @Inject constructor(
             name = "title",
             type = ParameterType.STRING,
             description = "start 可选：标签显示名；不填则用 tab id",
+            required = false
+        ),
+        "notify" to ToolParameter(
+            name = "notify",
+            type = ParameterType.BOOLEAN,
+            description = "start 可选：命令结束后是否自动通知 AI 并触发新一轮对话（默认 false）。设为 true 适用于编译、测试等需要等待结果的场景；dev server 等常驻服务设为 false。",
             required = false
         ),
         "tab_id" to ToolParameter(
@@ -233,8 +240,9 @@ class TerminalSessionTool @Inject constructor(
             return
         }
         val title = args["title"]?.asPlainString()
+        val notify = args["notify"]?.asPlainString()?.toBooleanStrictOrNull() ?: false
         val tabId = try {
-            withContext(Dispatchers.Main) { sessionManager.startBackgroundCommand(command, title) }
+            withContext(Dispatchers.Main) { sessionManager.startBackgroundCommand(command, title, notify) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -314,8 +322,9 @@ class TerminalSessionTool @Inject constructor(
         val command = args["command"]?.asPlainString()
             ?: return@withContext ToolResult.Error("start 操作缺少必需参数: command")
         val title = args["title"]?.asPlainString()
+        val notify = args["notify"]?.asPlainString()?.toBooleanStrictOrNull() ?: false
         try {
-            val tabId = sessionManager.startBackgroundCommand(command, title)
+            val tabId = sessionManager.startBackgroundCommand(command, title, notify)
             FileLogger.i(TAG, "后台命令已启动 tab=$tabId: $command")
 
             // 轮询捕获初始输出：命令退出则提前结束，否则最多等满 START_CAPTURE_MS。
