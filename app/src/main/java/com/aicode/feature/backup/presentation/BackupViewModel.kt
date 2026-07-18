@@ -3,6 +3,7 @@ package com.aicode.feature.backup.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicode.feature.backup.domain.BackupManager
+import com.aicode.feature.backup.domain.BackupOptions
 import com.aicode.feature.backup.domain.RestoreStats
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,14 +28,11 @@ class BackupViewModel @Inject constructor(
     private val _state = MutableStateFlow<BackupState>(BackupState.Idle)
     val state: StateFlow<BackupState> = _state.asStateFlow()
 
-    fun export(password: String) {
-        if (password.length < 4) {
-            _state.value = BackupState.Error("口令至少 4 位")
-            return
-        }
+    fun export(password: String, options: BackupOptions) {
         _state.value = BackupState.Working
         viewModelScope.launch {
-            runCatching { backupManager.export(password.toCharArray()) }
+            val pw = password.toCharArray().takeIf { it.isNotEmpty() }
+            runCatching { backupManager.export(pw, options) }
                 .onSuccess { _state.value = BackupState.ExportSuccess(it) }
                 .onFailure { _state.value = BackupState.Error(it.message ?: "导出失败") }
         }
@@ -43,7 +41,8 @@ class BackupViewModel @Inject constructor(
     fun import(data: ByteArray, password: String) {
         _state.value = BackupState.Working
         viewModelScope.launch {
-            backupManager.import(data, password.toCharArray())
+            val pw = password.toCharArray().takeIf { it.isNotEmpty() }
+            backupManager.import(data, pw)
                 .onSuccess { _state.value = BackupState.ImportSuccess(it) }
                 .onFailure {
                     val msg = when (it) {

@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +43,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aicode.core.theme.Radius
 import com.aicode.core.theme.Spacing
+import com.aicode.feature.backup.domain.BackupOptions
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.Download
 import compose.icons.feathericons.Upload
@@ -49,15 +51,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * 备份页：自包含导出/导入全流程。
- *
- * 导出：输入口令 → ViewModel 生成加密字节 → SAF 选保存位置 → 写入。
- * 导入：SAF 选备份文件 → 读取字节 → 输入口令 → ViewModel 解密合并。
- *
- * SAF launcher 用 [rememberLauncherForActivityResult] 在 Composable 内注册（等价 Activity 级），
- * 无需改动 MainActivity。
- */
 @Composable
 internal fun BackupSection(viewModel: BackupViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -67,7 +60,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
     var password by remember { mutableStateOf("") }
     var pendingAction by remember { mutableStateOf<PendingAction?>(null) }
     var pendingImportData by remember { mutableStateOf<ByteArray?>(null) }
-    var pendingImportPassword by remember { mutableStateOf<String?>(null) }
+    var exportOptions by remember { mutableStateOf(BackupOptions()) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -124,9 +117,9 @@ internal fun BackupSection(viewModel: BackupViewModel) {
         ActionCard(
             icon = FeatherIcons.Download,
             title = "导出备份",
-            subtitle = "将配置、聊天历史与凭据加密导出为单个文件",
+            subtitle = "选择要导出的数据，可设置口令加密（tar.gz 格式）",
             enabled = state !is BackupState.Working,
-            onClick = { pendingAction = PendingAction.Export }
+            onClick = { pendingAction = PendingAction.ExportOptions }
         )
         ActionCard(
             icon = FeatherIcons.Upload,
@@ -135,23 +128,39 @@ internal fun BackupSection(viewModel: BackupViewModel) {
             enabled = state !is BackupState.Working,
             onClick = {
                 pendingAction = PendingAction.Import
-                importLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                importLauncher.launch(arrayOf("application/octet-stream", "application/gzip", "*/*"))
             }
         )
     }
 
-    // 导出口令弹窗
-    if (pendingAction == PendingAction.Export) {
+    // 导出：先选数据范围
+    if (pendingAction == PendingAction.ExportOptions) {
+        ExportOptionsDialog(
+            options = exportOptions,
+            onOptionsChange = { exportOptions = it },
+            onConfirm = {
+                pendingAction = PendingAction.ExportPassword
+            },
+            onDismiss = {
+                pendingAction = null
+            }
+        )
+    }
+
+    // 导出：再输口令（可留空）
+    if (pendingAction == PendingAction.ExportPassword) {
         PasswordDialog(
             title = "设置导出口令",
+            subtitle = "留空则不加密，输出明文 tar.gz；填写则用口令加密（AES-GCM）",
             confirmText = "导出",
             password = password,
             onPasswordChange = { password = it },
             onConfirm = {
                 val pw = password
+                val opts = exportOptions
                 password = ""
                 pendingAction = null
-                viewModel.export(pw)
+                viewModel.export(pw, opts)
             },
             onDismiss = {
                 password = ""
@@ -164,6 +173,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
     if (pendingAction == PendingAction.Import && pendingImportData != null) {
         PasswordDialog(
             title = "输入备份口令",
+            subtitle = "若备份未加密可留空",
             confirmText = "导入",
             password = password,
             onPasswordChange = { password = it },
@@ -186,7 +196,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
     // 导出成功 → 启动 SAF 选保存位置
     LaunchedEffect(state) {
         if (state is BackupState.ExportSuccess) {
-            exportLauncher.launch("aicode-backup-${System.currentTimeMillis()}.bak")
+            exportLauncher.launch("aicode-backup-${System.currentTimeMillis()}.tar.gz")
         }
     }
 
@@ -209,7 +219,7 @@ internal fun BackupSection(viewModel: BackupViewModel) {
     }
 }
 
-private enum class PendingAction { Export, Import }
+private enum class PendingAction { ExportOptions, ExportPassword, Import }
 
 @Composable
 private fun BackupInfoCard() {
@@ -221,14 +231,14 @@ private fun BackupInfoCard() {
     ) {
         Column(modifier = Modifier.padding(Spacing.lg)) {
             Text(
-                text = "加密备份",
+                text = "备份与还原",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.height(Spacing.xs))
             Text(
-                text = "备份文件用你的口令加密（AES-GCM），含 API Key 等凭据。请妥善保管口令——口令丢失则无法恢复。导入后应用内仍按现状明文存储。",
+                text = "导出为 tar.gz 压缩包，可选用口令加密（AES-GCM），含 API Key 等凭据。口令丢失则加密备份无法恢复。导入后应用内仍按现状明文存储。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -266,8 +276,46 @@ private fun ActionCard(
 }
 
 @Composable
+private fun ExportOptionsDialog(
+    options: BackupOptions,
+    onOptionsChange: (BackupOptions) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("选择导出数据") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                OptionRow("AI 提供商", options.providers) { onOptionsChange(options.copy(providers = it)) }
+                OptionRow("Git 凭据", options.gitCredentials) { onOptionsChange(options.copy(gitCredentials = it)) }
+                OptionRow("远程连接与挂载", options.remoteConnections) { onOptionsChange(options.copy(remoteConnections = it)) }
+                OptionRow("聊天历史", options.chatHistory) { onOptionsChange(options.copy(chatHistory = it)) }
+                OptionRow("MCP 服务器", options.mcpServers) { onOptionsChange(options.copy(mcpServers = it)) }
+                OptionRow("授权规则", options.permissionRules) { onOptionsChange(options.copy(permissionRules = it)) }
+                OptionRow("应用设置", options.appSettings) { onOptionsChange(options.copy(appSettings = it)) }
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("下一步") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
+private fun OptionRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+@Composable
 private fun PasswordDialog(
     title: String,
+    subtitle: String,
     confirmText: String,
     password: String,
     onPasswordChange: (String) -> Unit,
@@ -278,14 +326,22 @@ private fun PasswordDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = password,
-                onValueChange = onPasswordChange,
-                label = { Text("口令") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(Spacing.sm))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    label = { Text("口令（可选）") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         },
         confirmButton = { TextButton(onClick = onConfirm) { Text(confirmText) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
@@ -303,7 +359,7 @@ private fun ProgressDialog() {
                 horizontalArrangement = Arrangement.spacedBy(Spacing.md)
             ) {
                 CircularProgressIndicator(modifier = Modifier.height(24.dp), strokeWidth = 2.dp)
-                Text("正在加密 / 解密数据…")
+                Text("正在处理数据…")
             }
         },
         confirmButton = {}

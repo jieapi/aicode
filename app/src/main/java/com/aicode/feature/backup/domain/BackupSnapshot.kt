@@ -13,7 +13,6 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class BackupSnapshot(
-    val formatVersion: Int = FORMAT_VERSION,
     val schemaVersion: Int,
     val appVersion: String = "",
     val createdAt: Long,
@@ -32,12 +31,7 @@ data class BackupSnapshot(
     val visionProviderId: String = "",
     val visionModel: String = "",
     val syncSettings: SyncSettingsSnapshot? = null
-) {
-    companion object {
-        /** 备份快照自身格式版本（区别于 Room schemaVersion）。格式不兼容时递增。 */
-        const val FORMAT_VERSION = 1
-    }
-}
+)
 
 @Serializable
 data class ProviderDto(

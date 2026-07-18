@@ -19,10 +19,13 @@ object BackupCrypto {
     private const val KEY_LEN_BITS = 256
     private const val GCM_TAG_BITS = 128
 
+    const val SALT_LEN = 16
+    const val IV_LEN = 12
+
     private val random = SecureRandom()
 
-    fun newSalt(): ByteArray = ByteArray(BackupFormat.SALT_LEN).also { random.nextBytes(it) }
-    fun newIv(): ByteArray = ByteArray(BackupFormat.IV_LEN).also { random.nextBytes(it) }
+    fun newSalt(): ByteArray = ByteArray(SALT_LEN).also { random.nextBytes(it) }
+    fun newIv(): ByteArray = ByteArray(IV_LEN).also { random.nextBytes(it) }
 
     private fun deriveKey(password: CharArray, salt: ByteArray): SecretKey {
         val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
