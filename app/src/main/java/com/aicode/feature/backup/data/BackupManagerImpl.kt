@@ -4,6 +4,7 @@ import android.content.Context
 import com.aicode.feature.agent.data.local.dao.AgentMessageDao
 import com.aicode.feature.agent.data.local.dao.ChatSessionDao
 import com.aicode.feature.agent.data.local.dao.TodoItemDao
+import com.aicode.feature.agent.data.local.database.AgentDatabase
 import com.aicode.feature.agent.data.local.entity.AgentMessageEntity
 import com.aicode.feature.agent.data.local.entity.ChatSessionEntity
 import com.aicode.feature.agent.data.local.entity.TodoItemEntity
@@ -75,7 +76,7 @@ class BackupManagerImpl @Inject constructor(
         prettyPrint = false
     }
 
-    private fun currentSchemaVersion(): Int = 21
+    private fun currentSchemaVersion(): Int = AgentDatabase.SCHEMA_VERSION
 
     private fun appVersionName(): String = runCatching {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
