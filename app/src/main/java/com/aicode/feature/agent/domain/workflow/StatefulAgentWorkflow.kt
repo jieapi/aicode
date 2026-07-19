@@ -8,6 +8,7 @@ import com.aicode.feature.agent.domain.model.AgentMode
 import com.aicode.feature.agent.domain.model.WorkflowResult
 import com.aicode.feature.agent.domain.model.WorkflowStatus
 import com.aicode.feature.agent.domain.session.SessionUseCase
+import com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aicode.feature.agent.domain.permission.PermissionChoice
 import com.aicode.feature.agent.domain.permission.PermissionScope
 import com.aicode.feature.agent.domain.permission.ToolPermissionPolicyEngine
@@ -61,7 +62,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val toolOutputStore: ToolOutputStore,
     private val modelMetadataService: ModelMetadataService,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
-    private val sessionUseCase: SessionUseCase
+    private val sessionUseCase: SessionUseCase,
+    private val messagePersistenceUseCase: MessagePersistenceUseCase
 ) : AgentWorkflow {
 
     private companion object {
@@ -149,6 +151,18 @@ class StatefulAgentWorkflow @Inject constructor(
             }
         }
         return aiProviderRepository.getActiveProviderSync()
+    }
+
+    override suspend fun compactSession(sessionId: String, onEvent: suspend (AgentEvent) -> Unit): Boolean {
+        val config = resolveProviderConfig(sessionId)
+            ?: throw IllegalStateException("尚未配置 AI 提供商，请到设置中添加并选择一个")
+        if (config.apiKey.isBlank()) throw IllegalStateException("「${config.name}」未填写 API Key")
+        if (config.effectiveModel.isBlank()) throw IllegalStateException("「${config.name}」未选择模型")
+        val provider = getProviderFor(config, sessionId)
+        val history = messagePersistenceUseCase.buildHistory(sessionId, "__manual_compress__")
+        if (history.size <= 2) return false
+        val compacted = contextCompactor.compactIfNeeded(history, provider, sessionId, force = true, onEvent = onEvent)
+        return compacted.size != history.size
     }
 
     /**
@@ -713,6 +727,15 @@ class StatefulAgentWorkflow @Inject constructor(
     ): PermissionCheckResult {
         if (tool == null) {
             return PermissionCheckResult(true)
+        }
+
+        // switchMode 从 PLAN 切到 BUILD 时，后续会有计划审查面板兜底用户决策，
+        // 此处权限弹窗冗余，直接放行；BUILD→PLAN 方向无后续审查面板，仍走权限弹窗。
+        if (tool.name == "switchMode" && mode == AgentMode.PLAN) {
+            val targetModeStr = (arguments["mode"] as? JsonPrimitive)?.contentOrNull?.trim()?.uppercase()
+            if (targetModeStr == AgentMode.BUILD.name) {
+                return PermissionCheckResult(true)
+            }
         }
 
         val eval = policyEngine.evaluate(tool, tool.name, arguments, mode)

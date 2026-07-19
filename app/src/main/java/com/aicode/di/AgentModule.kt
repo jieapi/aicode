@@ -247,7 +247,8 @@ object AgentModule {
         toolOutputStore: ToolOutputStore,
         modelMetadataService: ModelMetadataService,
         visionModelSettingsRepository: com.aicode.feature.settings.data.repository.VisionModelSettingsRepository,
-        sessionUseCase: com.aicode.feature.agent.domain.session.SessionUseCase
+        sessionUseCase: com.aicode.feature.agent.domain.session.SessionUseCase,
+        messagePersistenceUseCase: com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
     ): AgentWorkflow {
         return com.aicode.feature.agent.domain.workflow.StatefulAgentWorkflow(
             toolRegistry,
@@ -263,7 +264,8 @@ object AgentModule {
             toolOutputStore,
             modelMetadataService,
             visionModelSettingsRepository,
-            sessionUseCase
+            sessionUseCase,
+            messagePersistenceUseCase
         )
     }
 }

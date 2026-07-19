@@ -27,7 +27,11 @@ import com.aicode.feature.agent.domain.tool.question.AskUserQuestionManager
 import com.aicode.feature.agent.domain.tool.question.UserQuestionAnswer
 import com.aicode.feature.agent.domain.session.SessionUseCase
 import com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aicode.feature.agent.domain.command.SlashCommandContext
+import com.aicode.feature.agent.domain.command.SlashCommandRegistry
+import com.aicode.feature.agent.domain.command.SlashCommandHandler
 import com.aicode.feature.agent.presentation.AgentAttachment
+import com.aicode.feature.agent.presentation.component.formatTokenCount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -64,8 +68,9 @@ class AIAgentViewModel @Inject constructor(
     private val sessionUseCase: SessionUseCase,
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
     private val planApprovalManager: com.aicode.feature.agent.domain.tool.mode.PlanApprovalManager,
-    private val terminalSessionManager: com.aicode.feature.terminal.domain.TerminalSessionManager
-) : ViewModel() {
+    private val terminalSessionManager: com.aicode.feature.terminal.domain.TerminalSessionManager,
+    private val slashCommandRegistry: SlashCommandRegistry
+) : ViewModel(), SlashCommandContext {
 
     private val sessionJobs = mutableMapOf<String, Job>()
 
@@ -561,7 +566,12 @@ class AIAgentViewModel @Inject constructor(
                         )
                         if (event.inputTokens > 0 || event.outputTokens > 0) {
                             viewModelScope.launch {
-                                runCatching { chatSessionDao.addTokenUsage(sessionId, event.inputTokens, event.outputTokens) }
+                                runCatching {
+                                    chatSessionDao.addTokenUsage(sessionId, event.inputTokens, event.outputTokens)
+                                    if (event.inputTokens > 0) {
+                                        chatSessionDao.updateLastInputTokens(sessionId, event.inputTokens)
+                                    }
+                                }
                             }
                         }
                         setStreamingReasoning(sessionId, null)
@@ -765,6 +775,81 @@ class AIAgentViewModel @Inject constructor(
             sessionUseCase.updateProviderModel(sid, providerId, model)
         }
     }
+
+    /** 暴露给 UI：发送时完全匹配查找斜杠命令。 */
+    fun findSlashCommand(input: String) = slashCommandRegistry.findExact(input)
+
+    /** 暴露给 UI：输入框下拉菜单展示的命令列表。 */
+    val slashCommands: List<SlashCommandHandler> get() = slashCommandRegistry.all
+
+    /** /status —— 以 Markdown 表格作为 AI 气泡输出当前会话状态。 */
+    override fun showSessionStatus() {
+        val sid = _currentSessionId.value ?: return
+        val session = sessions.value.find { it.id == sid } ?: return
+        val msgCount = messagesState.value.messages.size
+        val model = session.model ?: sessionProviderModelDisplay(sid)
+        val table = buildString {
+            appendLine("| 项目 | 值 |")
+            appendLine("|---|---|")
+            appendLine("| 会话 | ${escapeMd(session.title)} |")
+            appendLine("| 模型 | ${escapeMd(model)} |")
+            appendLine("| 模式 | ${session.mode.name} |")
+            appendLine("| 工作区 | ${escapeMd(session.workspacePath)} |")
+            appendLine("| 消息数 | $msgCount |")
+            appendLine("| 输入 tokens | ${formatTokenCount(session.totalInputTokens)} |")
+            appendLine("| 输出 tokens | ${formatTokenCount(session.totalOutputTokens)} |")
+        }
+        viewModelScope.launch {
+            sessionUseCase.touch(sid, messagePersistenceUseCase.nextTimestamp())
+            messagePersistenceUseCase.persist(sid, MessageRole.ASSISTANT, table.trimEnd(), isCompacted = true)
+        }
+    }
+
+    /** /compress —— 手动触发当前会话的上下文压缩。 */
+    override fun compactCurrentSession() {
+        val sid = _currentSessionId.value ?: return
+        if (isRunning) return
+        sessionJobs[sid]?.let { if (it.isActive) return }
+        val job = viewModelScope.launch {
+            setCompacting(sid, true)
+            try {
+                val changed = agentWorkflow.compactSession(sid) { event ->
+                    when (event) {
+                        is AgentEvent.CompactionStarted -> setCompacting(sid, true)
+                        AgentEvent.CompactionFinished -> setCompacting(sid, false)
+                        else -> {}
+                    }
+                }
+                val resultText = if (changed) "上下文已压缩" else "当前上下文无需压缩（消息过少）"
+                messagePersistenceUseCase.persist(
+                    sessionId = sid,
+                    role = MessageRole.ASSISTANT,
+                    content = resultText
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "手动压缩失败: session=$sid", e)
+                messagePersistenceUseCase.persist(
+                    sessionId = sid,
+                    role = MessageRole.ASSISTANT,
+                    content = "压缩失败: ${e.message}"
+                )
+            } finally {
+                setCompacting(sid, false)
+            }
+        }
+        sessionJobs[sid] = job
+    }
+
+    private fun sessionProviderModelDisplay(sid: String): String {
+        val pair = currentSessionProviderModel.value ?: return "未选择"
+        val (_, model) = pair
+        return model?.takeIf { it.isNotBlank() } ?: "未选择"
+    }
+
+    private fun escapeMd(text: String): String = text.replace("|", "\\|").replace("\n", " ")
+
 
     /** 用户批准计划，唤醒 workflow 继续在 BUILD 模式执行。 */
     fun approvePlanAndBuild() {

@@ -34,6 +34,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -58,6 +59,7 @@ import com.aicode.core.theme.Brand
 import com.aicode.core.theme.Radius
 import com.aicode.core.theme.Spacing
 import com.aicode.core.ui.rememberImeBottomInset
+import com.aicode.feature.agent.domain.command.SlashCommandHandler
 import com.aicode.feature.agent.domain.model.AgentMode
 import com.aicode.feature.agent.domain.permission.PermissionChoice
 import com.aicode.feature.agent.domain.tool.PendingToolPermission
@@ -98,9 +100,17 @@ internal fun ChatInputBar(
     canUploadImages: Boolean,
     onUploadFile: () -> Unit,
     onUploadImage: () -> Unit,
+    slashCommands: List<SlashCommandHandler> = emptyList(),
     tokenProgress: Float = 0f
 ) {
     val canSend = (value.isNotBlank() || pendingAttachments.isNotEmpty()) && !isBusy
+    val showSlashMenu = !isBusy && slashCommands.isNotEmpty() &&
+        value.startsWith("/") && !value.contains("\n")
+    val filteredCommands = if (showSlashMenu) {
+        if (value == "/") slashCommands
+        else slashCommands.filter { it.trigger.startsWith(value) }
+    } else emptyList()
+
     Surface(
         color = Color.Transparent,
         modifier = Modifier.fillMaxWidth()
@@ -110,110 +120,161 @@ internal fun ChatInputBar(
                 .fillMaxWidth()
                 .padding(bottom = rememberImeBottomInset())
                 .padding(horizontal = Spacing.lg, vertical = Spacing.md)
-                .clip(RoundedCornerShape(Radius.lg))
-                .background(MaterialTheme.colorScheme.surface)
-                .border(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant,
-                    RoundedCornerShape(Radius.lg)
-                )
-                .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
         ) {
-            PendingAttachmentPreviewList(
-                attachments = pendingAttachments,
-                onRemoveAttachment = onRemoveAttachment
-            )
-
-            TextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 44.dp, max = 140.dp),
-                placeholder = {
-                    Text(
-                        "输入消息与 AI 聊天…",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+            if (filteredCommands.isNotEmpty()) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = Spacing.sm),
+                    shape = RoundedCornerShape(Radius.lg),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp, MaterialTheme.colorScheme.outlineVariant
                     )
-                },
-                enabled = !isBusy,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent
-                )
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val isPlan = currentMode == AgentMode.PLAN
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isPlan) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiary,
+                    Column(
                         modifier = Modifier
-                            .clickable {
-                                val nextMode = if (isPlan) AgentMode.BUILD else AgentMode.PLAN
-                                onToggleMode(nextMode)
-                            }
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .width(58.dp)
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = if (isPlan) "PLAN" else "BUILD",
-                                style = MaterialTheme.typography.labelMedium.copy(
+                        filteredCommands.forEach { command ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(Radius.sm))
+                                    .clickable { onValueChange(command.trigger) }
+                                    .padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    command.trigger,
+                                    style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isPlan) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                                    color = MaterialTheme.colorScheme.primary
                                 )
-                            )
+                                Spacer(Modifier.width(Spacing.sm))
+                                Text(
+                                    command.description,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
-                    Spacer(Modifier.width(Spacing.sm))
+                }
+            }
 
-                    ModelIconButton(
-                        provider = activeProvider,
-                        providers = providers,
-                        onSelectModel = onSelectModel,
-                        onManage = onNavigateToSettings
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(Radius.lg))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant,
+                        RoundedCornerShape(Radius.lg)
                     )
+                    .padding(horizontal = Spacing.sm, vertical = Spacing.xs)
+            ) {
+                PendingAttachmentPreviewList(
+                    attachments = pendingAttachments,
+                    onRemoveAttachment = onRemoveAttachment
+                )
 
-                    if (workspaceViewModel != null) {
-                        WorkspaceIconButton(
-                            viewModel = workspaceViewModel,
-                            hasRunningSessions = hasRunningSessions,
-                            onSwitchConfirmed = onSwitchWorkspaceConfirmed
+                TextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp, max = 140.dp),
+                    placeholder = {
+                        Text(
+                            "输入消息与 AI 聊天…",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    enabled = !isBusy,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        disabledContainerColor = Color.Transparent,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        disabledIndicatorColor = Color.Transparent
+                    )
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Spacing.xs, vertical = Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val isPlan = currentMode == AgentMode.PLAN
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isPlan) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier
+                                .clickable {
+                                    val nextMode = if (isPlan) AgentMode.BUILD else AgentMode.PLAN
+                                    onToggleMode(nextMode)
+                                }
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .width(58.dp)
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (isPlan) "PLAN" else "BUILD",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isPlan) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                                    )
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(Spacing.sm))
+
+                        ModelIconButton(
+                            provider = activeProvider,
+                            providers = providers,
+                            onSelectModel = onSelectModel,
+                            onManage = onNavigateToSettings
+                        )
+
+                        if (workspaceViewModel != null) {
+                            WorkspaceIconButton(
+                                viewModel = workspaceViewModel,
+                                hasRunningSessions = hasRunningSessions,
+                                onSwitchConfirmed = onSwitchWorkspaceConfirmed
+                            )
+                        }
+
+                        UploadIconButton(
+                            enabled = canUploadFiles && !isBusy,
+                            icon = FeatherIcons.FileText,
+                            contentDescription = "上传文件",
+                            onClick = onUploadFile
+                        )
+
+                        UploadIconButton(
+                            enabled = canUploadImages && !isBusy,
+                            icon = FeatherIcons.Image,
+                            contentDescription = "上传图片",
+                            onClick = onUploadImage
                         )
                     }
-
-                    UploadIconButton(
-                        enabled = canUploadFiles && !isBusy,
-                        icon = FeatherIcons.FileText,
-                        contentDescription = "上传文件",
-                        onClick = onUploadFile
-                    )
-
-                    UploadIconButton(
-                        enabled = canUploadImages && !isBusy,
-                        icon = FeatherIcons.Image,
-                        contentDescription = "上传图片",
-                        onClick = onUploadImage
-                    )
+                    SendButton(canSend = canSend, isBusy = isBusy, tokenProgress = tokenProgress, onSend = onSend, onStop = onStop)
                 }
-                SendButton(canSend = canSend, isBusy = isBusy, tokenProgress = tokenProgress, onSend = onSend, onStop = onStop)
             }
         }
     }
@@ -551,7 +612,7 @@ internal fun SendButton(canSend: Boolean, isBusy: Boolean, tokenProgress: Float,
         MaterialTheme.colorScheme.surfaceVariant
     }
     val iconTint = if (clickable) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-    val arcColor = buttonColor.copy(alpha = 0.45f)
+    val arcColor = buttonColor.copy(alpha = 0.85f)
     val clampedProgress = tokenProgress.coerceIn(0f, 1f)
     Box(
         modifier = Modifier

@@ -265,6 +265,7 @@ fun AIChatPanel(
     val sessionTitle = currentSession?.title?.takeIf { it.isNotBlank() } ?: "新会话"
     val sessionInputTokens = currentSession?.totalInputTokens ?: 0
     val sessionOutputTokens = currentSession?.totalOutputTokens ?: 0
+    val sessionLastInputTokens = currentSession?.lastInputTokens ?: 0
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
@@ -447,25 +448,38 @@ fun AIChatPanel(
     val sendMessage: () -> Unit = {
         val text = inputText.trim()
         if ((text.isNotEmpty() || pendingAttachments.isNotEmpty()) && !isBusy) {
-            val attachments = pendingAttachments
-            val modelRequest = appendAttachmentsToRequest(text, attachments)
-            val images = attachments.toAgentImages()
-            viewModel.executeAgentRequestStream(
-                request = text,
-                modelRequest = modelRequest,
-                currentFile = currentFile,
-                selectedCode = selectedCode,
-                projectRoot = projectRoot,
-                inputImages = images,
-                inputAttachments = attachments.toAgentAttachments()
-            )
-            inputText = ""
-            viewModel.clearInputDraft()
-            pendingAttachments = emptyList()
-            followBottom = true
-            scope.launch {
-                kotlinx.coroutines.delay(0)
-                snapToBottomInstant()
+            val command = viewModel.findSlashCommand(text)
+            if (command != null) {
+                command.execute(viewModel)
+                inputText = ""
+                viewModel.clearInputDraft()
+                pendingAttachments = emptyList()
+                followBottom = true
+                scope.launch {
+                    kotlinx.coroutines.delay(0)
+                    snapToBottomInstant()
+                }
+            } else {
+                val attachments = pendingAttachments
+                val modelRequest = appendAttachmentsToRequest(text, attachments)
+                val images = attachments.toAgentImages()
+                viewModel.executeAgentRequestStream(
+                    request = text,
+                    modelRequest = modelRequest,
+                    currentFile = currentFile,
+                    selectedCode = selectedCode,
+                    projectRoot = projectRoot,
+                    inputImages = images,
+                    inputAttachments = attachments.toAgentAttachments()
+                )
+                inputText = ""
+                viewModel.clearInputDraft()
+                pendingAttachments = emptyList()
+                followBottom = true
+                scope.launch {
+                    kotlinx.coroutines.delay(0)
+                    snapToBottomInstant()
+                }
             }
         }
     }
@@ -672,10 +686,11 @@ fun AIChatPanel(
                 canUploadImages = canUploadImages,
                 onUploadFile = { filePicker.launch(arrayOf("*/*")) },
                 onUploadImage = { imagePicker.launch(arrayOf("image/*")) },
+                slashCommands = viewModel.slashCommands,
                 tokenProgress = run {
                     val contextLimit = activeModelMetadata?.contextTokens ?: 0
                     if (contextLimit > 0) {
-                        (sessionInputTokens + sessionOutputTokens).toFloat() / contextLimit
+                        sessionLastInputTokens.toFloat() / contextLimit
                     } else 0f
                 }
             )
