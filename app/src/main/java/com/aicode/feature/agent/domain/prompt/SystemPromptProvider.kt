@@ -61,6 +61,18 @@ class SystemPromptProvider @Inject constructor(
         }
     }
 
+    private inner class AutoModeSource : PromptSource {
+        @Volatile private var cached: String? = null
+
+        override fun build(ctx: AgentContext): String? {
+            if (ctx.mode != com.aicode.feature.agent.domain.model.AgentMode.AUTO) return null
+            return cached ?: context.assets.open("prompts/81-auto-mode.md").bufferedReader().use { it.readText() }
+                .replace(LEADING_COMMENT, "")
+                .trim()
+                .also { cached = it }
+        }
+    }
+
     private inner class ActiveSkillsSource : PromptSource {
         @Volatile private var cached: String? = null
 
@@ -177,12 +189,14 @@ class SystemPromptProvider @Inject constructor(
     private val projectRuleSource = ProjectRuleSource()
     private val workspaceSource = WorkspaceSource()
     private val planModeSource = PlanModeSource()
+    private val autoModeSource = AutoModeSource()
     private val currentTimeSource = CurrentTimeSource()
 
     fun build(agentContext: AgentContext): String {
         // 1. 获取各个 Source 的基线快照。
-        // PLAN 模式提示词放在最前面（紧随静态规则之后），确保模型优先注意到模式约束
+        // PLAN/AUTO 模式提示词放在最前面（紧随静态规则之后），确保模型优先注意到模式约束
         val planModeContent = planModeSource.build(agentContext)
+        val autoModeContent = autoModeSource.build(agentContext)
         val staticContent = staticRuleSource.build(agentContext)
         val skillsContent = activeSkillsSource.build(agentContext)
         val memoriesContent = memoryListSource.build(agentContext)
@@ -209,6 +223,11 @@ class SystemPromptProvider @Inject constructor(
             append(staticContent)
 
             planModeContent?.let {
+                append("\n\n")
+                append(it)
+            }
+
+            autoModeContent?.let {
                 append("\n\n")
                 append(it)
             }
