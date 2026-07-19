@@ -544,6 +544,34 @@ internal fun CompactionProgressBubble() {
     }
 }
 
+/** 网络重试期间的临时状态气泡，不落库。 */
+@Composable
+internal fun RetryingBubble(attempt: Int, maxRetries: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(Radius.md, Radius.md, Radius.md, Radius.xs),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Text(
+                    text = "网络波动，正在重试 $attempt/$maxRetries",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                TypingDots(color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
 /**
  * 模型流式吐字时的实时气泡：左对齐、与助手气泡同款。
  * 尾部带三个跳动的点表示仍在生成。本轮结束后由落库的助手气泡接管。

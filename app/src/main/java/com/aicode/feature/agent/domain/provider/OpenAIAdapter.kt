@@ -213,6 +213,11 @@ class OpenAIAdapter @Inject constructor(
                                 rawSse.append(line).append('\n')
                                 if (data == "[DONE]") break
                                 val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                                obj.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { errObj ->
+                                    val code = errObj.get("code")?.takeIf { !it.isJsonNull }?.asString
+                                    val msg = errObj.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                                    throw StreamApiException(code, msg)
+                                }
                                 try {
                                     val eventType = obj.get("type")?.asString
                                     if (eventType == "response.output_text.delta") {
@@ -332,6 +337,11 @@ class OpenAIAdapter @Inject constructor(
                         rawSse.append(line).append('\n')
                         if (data == "[DONE]") break
                         val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                        obj.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { errObj ->
+                            val code = errObj.get("code")?.takeIf { !it.isJsonNull }?.asString
+                            val msg = errObj.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                            throw StreamApiException(code, msg)
+                        }
                         // 单行 SSE 解析：不同上游/模型的字段类型偶有出入（如把对象写成数组、把字符串写成对象），
                         // Gson 的 getAsJsonObject/getAsJsonArray 在类型不符时会直接抛 ClassCastException，
                         // asString/asInt 对非原始值会抛 UnsupportedOperationException。

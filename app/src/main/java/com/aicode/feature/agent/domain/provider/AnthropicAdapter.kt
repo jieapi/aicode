@@ -166,6 +166,12 @@ class AnthropicAdapter @Inject constructor(
                         // 单行异常不应中断整条流——宽松解析，出错仅跳过该行；必须放行 CancellationException。
                         try {
                             when (obj.get("type")?.asString) {
+                                "error" -> {
+                                    val errObj = obj.getAsJsonObject("error")
+                                    val code = errObj?.get("type")?.takeIf { !it.isJsonNull }?.asString
+                                    val msg = errObj?.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                                    throw StreamApiException(code, msg)
+                                }
                                 "message_start" -> {
                                     val usage = obj.get("message")?.takeIf { it.isJsonObject }?.asJsonObject
                                         ?.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject

@@ -95,7 +95,7 @@ private const val REASONING_SCROLL_BUCKET_CHARS = 120
  * 缓存 content 子组合——流式期间 targetState 一直不变，文本增长时不会重新调用 content，
  * 导致 [StreamingBubble] 收不到后续文本、停在首句。故改用枚举 + 直接 [when] 分发。
  */
-private enum class TailKind { THINKING, STREAMING, COMPACTING, NONE }
+private enum class TailKind { THINKING, STREAMING, COMPACTING, RETRYING, NONE }
 
 private data class AutoScrollSignal(
     val streamingTextLength: Int,
@@ -269,6 +269,7 @@ fun AIChatPanel(
     val messagesReady = messagesState.loaded && messagesState.sessionId == currentSessionId
     val runningTool by viewModel.runningTool.collectAsStateWithLifecycle()
     val isCompacting by viewModel.isCompacting.collectAsStateWithLifecycle()
+    val retryState by viewModel.retryState.collectAsStateWithLifecycle()
     val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
     val streamingReasoning by viewModel.streamingReasoning.collectAsStateWithLifecycle()
     val pendingPermission by viewModel.pendingToolPermission.collectAsStateWithLifecycle()
@@ -583,9 +584,11 @@ fun AIChatPanel(
                         val streaming = streamingText
                         val showStreaming = streaming != null && streaming.hasVisibleContent()
                         val showThinking = !showReasoning && !showStreaming && !isCompacting && isBusy && runningTool == null && pendingPermission == null && pendingQuestion == null
+                        val showRetrying = retryState != null && isBusy && !isCompacting && !showStreaming && !showReasoning
                         val tailKind = when {
                             showStreaming -> TailKind.STREAMING
                             isCompacting -> TailKind.COMPACTING
+                            showRetrying -> TailKind.RETRYING
                             showThinking -> TailKind.THINKING
                             else -> TailKind.NONE
                         }
@@ -599,6 +602,7 @@ fun AIChatPanel(
                                 TailKind.THINKING -> ThinkingBubble()
                                 TailKind.STREAMING -> StreamingBubble(text = streaming ?: "")
                                 TailKind.COMPACTING -> CompactionProgressBubble()
+                                TailKind.RETRYING -> RetryingBubble(retryState!!.attempt, retryState!!.maxRetries)
                                 TailKind.NONE -> Box(Modifier)
                             }
                         }
