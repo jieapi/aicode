@@ -217,13 +217,22 @@ internal fun ChatInputBar(
                         modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val isPlan = currentMode == AgentMode.PLAN
+                        val modeColor = when (currentMode) {
+                            AgentMode.PLAN -> MaterialTheme.colorScheme.primaryContainer
+                            AgentMode.AUTO -> MaterialTheme.colorScheme.error
+                            AgentMode.BUILD -> MaterialTheme.colorScheme.tertiary
+                        }
+                        val modeTextColor = if (currentMode == AgentMode.PLAN) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (isPlan) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.tertiary,
+                            color = modeColor,
                             modifier = Modifier
                                 .clickable {
-                                    val nextMode = if (isPlan) AgentMode.BUILD else AgentMode.PLAN
+                                    val nextMode = when (currentMode) {
+                                        AgentMode.BUILD -> AgentMode.AUTO
+                                        AgentMode.AUTO -> AgentMode.PLAN
+                                        AgentMode.PLAN -> AgentMode.BUILD
+                                    }
                                     onToggleMode(nextMode)
                                 }
                         ) {
@@ -234,10 +243,10 @@ internal fun ChatInputBar(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = if (isPlan) "PLAN" else "BUILD",
+                                    text = currentMode.name,
                                     style = MaterialTheme.typography.labelMedium.copy(
                                         fontWeight = FontWeight.Bold,
-                                        color = if (isPlan) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                                        color = modeTextColor
                                     )
                                 )
                             }

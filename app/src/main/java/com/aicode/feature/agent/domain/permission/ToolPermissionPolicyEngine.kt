@@ -61,6 +61,21 @@ class ToolPermissionPolicyEngine @Inject constructor(
             return EvalResult(Verdict.DENY, emptyList(), denyReason = "当前处于 PLAN（计划）模式，系统物理沙盒已禁止修改系统状态或执行写操作。请在计划模式下仅调用只读工具探索代码，不要尝试修改文件或执行命令。")
         }
 
+        if (mode == com.aicode.feature.agent.domain.model.AgentMode.AUTO) {
+            // AUTO 模式放行所有权限，但仍保留灾难性 rm 防护（根目录/系统目录删除）
+            if (isShellTool(toolName, args)) {
+                val command = ((args["command"] ?: args["input"]) as? JsonPrimitive)?.content
+                if (command != null) {
+                    val analysis = ShellCommandParser.analyze(command)
+                    val catastrophicReason = checkCatastrophicRm(analysis.segments)
+                    if (catastrophicReason != null) {
+                        return EvalResult(Verdict.DENY, emptyList(), denyReason = catastrophicReason)
+                    }
+                }
+            }
+            return EvalResult(Verdict.ALLOW, emptyList())
+        }
+
         if (capabilities == setOf(ToolCapability.READ_AGENT_CONFIG)) {
             return EvalResult(Verdict.ALLOW, emptyList())
         }

@@ -24,7 +24,7 @@ class SwitchModeTool @Inject constructor(
 ) : AbstractContextualTool() {
 
     override val name = "switchMode"
-    override val description = "切换当前会话的模式。如果你当前处于 BUILD（构建）模式并认为你需要进入 PLAN（计划）模式来构思复杂逻辑，或者当前在 PLAN 模式下计划已经完成需要进入 BUILD 模式修改代码时，调用此工具主动申请切换。切换前需要用户授权。"
+    override val description = "切换当前会话的模式。如果你当前处于 BUILD（构建）模式并认为你需要进入 PLAN（计划）模式来构思复杂逻辑，或者当前在 PLAN 模式下计划已经完成需要进入 BUILD 模式修改代码时，调用此工具主动申请切换。切换前需要用户授权。注意：AUTO（自动）模式只能由用户在界面上手动切换，本工具无法切换到 AUTO。"
     override val permissionPolicy = ToolPermissionPolicy.ASK
     override val capabilities = setOf(ToolCapability.MODIFY_SESSION_STATE)
 
@@ -58,6 +58,10 @@ class SwitchModeTool @Inject constructor(
             AgentMode.valueOf(targetModeStr)
         } catch (e: Exception) {
             return ToolResult.Error("无效的模式: $targetModeStr，只能是 PLAN 或 BUILD", "INVALID_MODE")
+        }
+
+        if (targetMode == AgentMode.AUTO) {
+            return ToolResult.Error("AUTO 模式只能由用户在界面上手动切换，AI 无法通过工具切换", "AUTO_MODE_MANUAL_ONLY")
         }
 
         if (context.mode == targetMode) {
