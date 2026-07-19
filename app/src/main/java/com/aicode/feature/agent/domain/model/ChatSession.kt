@@ -21,5 +21,6 @@ data class ChatSession(
     val providerId: String? = null,
     val model: String? = null,
     val totalInputTokens: Int = 0,
-    val totalOutputTokens: Int = 0
+    val totalOutputTokens: Int = 0,
+    val lastInputTokens: Int = 0
 )

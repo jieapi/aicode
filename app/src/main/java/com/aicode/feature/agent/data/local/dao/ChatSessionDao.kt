@@ -41,4 +41,7 @@ interface ChatSessionDao {
 
     @Query("UPDATE chat_sessions SET totalInputTokens = totalInputTokens + :inputTokens, totalOutputTokens = totalOutputTokens + :outputTokens WHERE id = :id")
     suspend fun addTokenUsage(id: String, inputTokens: Int, outputTokens: Int)
+
+    @Query("UPDATE chat_sessions SET lastInputTokens = :lastInputTokens WHERE id = :id")
+    suspend fun updateLastInputTokens(id: String, lastInputTokens: Int)
 }

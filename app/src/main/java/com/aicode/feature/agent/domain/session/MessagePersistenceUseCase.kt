@@ -50,7 +50,8 @@ class MessagePersistenceUseCase @Inject constructor(
         reasoning: String? = null,
         attachments: List<AgentAttachment> = emptyList(),
         inputTokens: Int = 0,
-        outputTokens: Int = 0
+        outputTokens: Int = 0,
+        isCompacted: Boolean = false
     ) {
         agentMessageDao.insert(
             AgentMessageEntity(
@@ -67,7 +68,8 @@ class MessagePersistenceUseCase @Inject constructor(
                 reasoning = reasoning,
                 attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null,
                 inputTokens = inputTokens,
-                outputTokens = outputTokens
+                outputTokens = outputTokens,
+                isCompacted = isCompacted
             )
         )
     }

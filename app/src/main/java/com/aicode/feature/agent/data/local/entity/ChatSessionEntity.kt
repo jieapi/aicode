@@ -16,7 +16,8 @@ data class ChatSessionEntity(
     val providerId: String? = null,
     val model: String? = null,
     val totalInputTokens: Int = 0,
-    val totalOutputTokens: Int = 0
+    val totalOutputTokens: Int = 0,
+    val lastInputTokens: Int = 0
 ) {
     fun toDomain(): ChatSession = ChatSession(
         id = id,
@@ -28,7 +29,8 @@ data class ChatSessionEntity(
         providerId = providerId,
         model = model,
         totalInputTokens = totalInputTokens,
-        totalOutputTokens = totalOutputTokens
+        totalOutputTokens = totalOutputTokens,
+        lastInputTokens = lastInputTokens
     )
 
     companion object {
@@ -42,7 +44,8 @@ data class ChatSessionEntity(
             providerId = session.providerId,
             model = session.model,
             totalInputTokens = session.totalInputTokens,
-            totalOutputTokens = session.totalOutputTokens
+            totalOutputTokens = session.totalOutputTokens,
+            lastInputTokens = session.lastInputTokens
         )
     }
 }
