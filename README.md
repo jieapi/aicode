@@ -118,7 +118,7 @@ app/src/main/java/com/aicode/
 
 ## Known Limitations
 
-- `targetSdk` 锁定为 28 以绕过 Android 10+ W^X 策略，使 PRoot 可执行。**无法上架 Google Play**。
+- `targetSdk` 锁定为 28 以绕过 Android 10+ W^X 策略，使 PRoot 可执行。
 - Release 按 CPU/容器镜像拆三个 variant：
   - `armsolo`：仅 `arm64-v8a` + arm 镜像（真机首选）
   - `x86solo`：仅 `x86_64` + x86 镜像（模拟器 / Chromebook）

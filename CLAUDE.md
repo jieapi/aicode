@@ -7,10 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 优先使用已有工具进行文件操作，比如读取、修改文件 (Prioritize using existing tools for file operations, such as reading and modifying files).
 
 ## Asset Synchronization
-项目中的 `assets/prompts/` 和 `assets/docs/` 是 AI Agent 的核心知识来源，必须与代码保持同步：
+项目中的 `app/src/main/assets/prompts/` 和 `app/src/main/assets/docs/` 是 AI Agent 的核心知识来源，必须与代码保持同步：
 
-- **工具变更 → 同步 prompts**：当 `feature/agent/domain/tool/` 下的工具新增、删除、重命名或参数签名变化时，必须同步更新 `assets/prompts/60-tools-and-paths.md` 中的工具描述，确保模型看到的工具定义与实际注册一致。
-- **设置功能变更 → 同步 docs**：当 `feature/settings/` 下的设置项新增、删除或行为变化时，必须同步更新 `assets/docs/` 下对应的文档文件：
+- **工具变更 → 同步 prompts**：当 `app/src/main/java/com/aicode/feature/agent/domain/tool/` 下的工具新增、删除、重命名或参数签名变化时，必须同步更新 `app/src/main/assets/prompts/60-tools-and-paths.md` 中的工具描述，确保模型看到的工具定义与实际注册一致。
+- **设置功能变更 → 同步 docs**：当 `app/src/main/java/com/aicode/feature/settings/` 下的设置项新增、删除或行为变化时，必须同步更新 `app/src/main/assets/docs/` 下对应的文档文件：
   - AI 服务商与模型配置变更 → `providers-and-models.md`
   - MCP 服务器与扩展技能配置变更 → `mcp-and-skills.md`
   - 日志、私有目录与保活设置变更 → `logs-and-private-dir.md`
@@ -59,7 +59,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 发版流程（RC 判定）
 
-本项目不能上 Google Play、靠 GitHub Release 分发且无灰度，发出去即终态，RC 是主要兜底。发版前按改动面判断是否先发 RC：
+本项目靠 GitHub Release 分发且无灰度，发出去即终态，RC 是主要兜底。发版前按改动面判断是否先发 RC：
 
 - **必须先发 RC**：本发版周期含新功能 / 行为变化（定档 `x.Y.0`）；或构建链路 / 签名 / flavor / CI 改动；或容器镜像、PRoot、ABI 相关改动。
 - **可直接发正式**：本发版周期仅纯文档 / typo / 资源文案（定档 `x.y.Z`，无行为变化）。
