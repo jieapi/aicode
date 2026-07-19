@@ -74,6 +74,30 @@ fun exponentialDelayMillis(retryIndex: Int): Long {
 }
 
 /**
+ * SSE 流中收到的 error 事件，携带错误码用于重试判定。
+ *
+ * 对齐 Codex CLI 的错误分类：cyber_policy / invalid_request / context_window_exceeded /
+ * quota_exceeded / usage_not_included 等为不可重试；server_error / server_is_overloaded 等默认可重试。
+ */
+class StreamApiException(
+    val code: String?,
+    message: String,
+    val retryAfterMillis: Long? = null
+) : Exception(message.ifBlank { code ?: "stream error" })
+
+// 对齐 Codex CLI is_retryable()：这些错误码明确不可重试
+private val NON_RETRYABLE_STREAM_CODES = setOf(
+    "cyber_policy",
+    "invalid_request_error",
+    "invalid_request",
+    "context_window_exceeded",
+    "quota_exceeded",
+    "usage_not_included",
+    "usage_limit_reached",
+    "invalid_image_request"
+)
+
+/**
  * 对应 opencode 的 isTransientError，并兼容 Android 的网络异常类型。
  *
  * 除传统的 IOException 判定外，还支持 HTTP 状态码感知：
@@ -83,6 +107,10 @@ fun exponentialDelayMillis(retryIndex: Int): Long {
  */
 fun isRetriableNetworkError(t: Throwable): Boolean {
     if (t is CancellationException) return false
+
+    if (t is StreamApiException) {
+        return !NON_RETRYABLE_STREAM_CODES.contains(t.code)
+    }
 
     // 兼容原生网络异常
     if (t is SocketTimeoutException || t is InterruptedIOException ||
@@ -189,17 +217,16 @@ suspend fun streamWithStaircaseRetry(
 ) {
     var attempt = 0
     while (true) {
-        var produced = false
         try {
-            attemptOnce { produced = true }
+            attemptOnce { }
             return
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             coroutineContext.ensureActive()
-            if (produced || attempt >= MAX_NETWORK_RETRIES || !isRetriableNetworkError(e)) throw e
+            if (attempt >= MAX_NETWORK_RETRIES || !isRetriableNetworkError(e)) throw e
             val wait = retryDelayMillis(attempt, e)
-            FileLogger.w(TAG, "流式请求在首字节前失败，第 ${attempt + 1}/$MAX_NETWORK_RETRIES 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
+            FileLogger.w(TAG, "流式请求失败，第 ${attempt + 1}/$MAX_NETWORK_RETRIES 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
             onRetry?.invoke(attempt + 1, MAX_NETWORK_RETRIES)
             attempt++
             if (wait > 0) delay(wait)

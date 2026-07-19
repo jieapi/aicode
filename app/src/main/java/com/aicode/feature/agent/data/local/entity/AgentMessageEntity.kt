@@ -34,7 +34,9 @@ data class AgentMessageEntity(
     /** 上下文压缩生成的内部摘要：参与模型回放，但不作为普通聊天气泡展示。 */
     val isContextSummary: Boolean = false,
     /** 上下文压缩生成的内部用户锚点：参与模型回放，UI 渲染为压缩分隔线。 */
-    val isCompactionMarker: Boolean = false
+    val isCompactionMarker: Boolean = false,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0
 ) {
     fun toUIMessage(): AgentUIMessage {
         return AgentUIMessage(
@@ -47,7 +49,9 @@ data class AgentMessageEntity(
             isError = isError,
             reasoning = reasoning,
             attachments = decodeAttachments(attachmentsJson),
-            isCompactionMarker = isCompactionMarker
+            isCompactionMarker = isCompactionMarker,
+            inputTokens = inputTokens,
+            outputTokens = outputTokens
         )
     }
 

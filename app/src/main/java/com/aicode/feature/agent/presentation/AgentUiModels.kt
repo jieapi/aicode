@@ -36,7 +36,9 @@ data class AgentUIMessage(
     // 仅 ASSISTANT 消息：本轮模型的思考过程，渲染为可折叠「思考过程」气泡；无则为 null。
     val reasoning: String? = null,
     // 上下文压缩内部锚点：不显示用户气泡，渲染为压缩分隔线。
-    val isCompactionMarker: Boolean = false
+    val isCompactionMarker: Boolean = false,
+    val inputTokens: Int = 0,
+    val outputTokens: Int = 0
 )
 
 @Immutable
@@ -115,5 +117,6 @@ data class QueuedRequest(
     val selectedCode: String?,
     val projectRoot: String,
     val inputImages: List<AgentImage> = emptyList(),
-    val inputAttachments: List<AgentAttachment> = emptyList()
+    val inputAttachments: List<AgentAttachment> = emptyList(),
+    val isAutoTrigger: Boolean = false
 )

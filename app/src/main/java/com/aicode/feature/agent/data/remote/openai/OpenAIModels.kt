@@ -6,7 +6,8 @@ data class ChatCompletionRequest(
     val temperature: Float = 0.7f,
     val tools: List<OpenAIToolDefinition>? = null,
     val tool_choice: String? = null,
-    val stream: Boolean = false
+    val stream: Boolean = false,
+    val stream_options: StreamOptions? = null
 )
 
 data class OpenAIChatMessage(
@@ -39,6 +40,10 @@ data class OpenAIToolCall(
 data class OpenAIFunctionCall(
     val name: String,
     val arguments: String
+)
+
+data class StreamOptions(
+    val include_usage: Boolean = true
 )
 
 data class ChatCompletionResponse(

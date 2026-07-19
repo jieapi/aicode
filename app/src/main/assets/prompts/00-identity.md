@@ -14,3 +14,5 @@
 - **`mcp-and-skills.md`**：MCP 服务器配置（远程 HTTP / 本地 stdio）与扩展技能设置。
 - **`remote-servers.md`**：远程服务器（SFTP/FTP）连接与工作区双向同步设置。
 - **`logs-and-private-dir.md`**：容器私有目录访问（推荐使用 DocumentsProvider 挂载）、系统运行日志查看与后台保活设置。
+- **`backup-and-restore.md`**：工作区与配置的备份还原操作说明。
+- **`container-image.md`**：容器镜像管理（导入、导出、重装等）。

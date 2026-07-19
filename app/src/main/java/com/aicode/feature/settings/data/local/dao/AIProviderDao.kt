@@ -10,10 +10,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface AIProviderDao {
-    @Query("SELECT * FROM ai_providers")
+    @Query("SELECT * FROM ai_providers ORDER BY id")
     fun getAllProviders(): Flow<List<AIProviderEntity>>
 
-    @Query("SELECT * FROM ai_providers")
+    @Query("SELECT * FROM ai_providers ORDER BY id")
     suspend fun getAllProvidersOnce(): List<AIProviderEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

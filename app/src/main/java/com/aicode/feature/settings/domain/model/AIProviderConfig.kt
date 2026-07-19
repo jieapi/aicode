@@ -13,7 +13,7 @@ data class AIProviderConfig(
     /** 当前选中使用的模型；为空时回退到 defaultModel。 */
     val selectedModel: String = defaultModel,
     val isEnabled: Boolean = true,
-    val apiPath: String = "/chat/completions",
+    val useFullUrl: Boolean = false,
     val useResponseApi: Boolean = false
 ) {
     /** 实际生效的模型：优先 selectedModel，其次 defaultModel。 */
@@ -23,4 +23,10 @@ data class AIProviderConfig(
 
 enum class ProviderType {
     OPENAI, ANTHROPIC, GEMINI
+}
+
+fun defaultProviderApiPath(type: ProviderType): String = when (type) {
+    ProviderType.ANTHROPIC -> "v1/messages"
+    ProviderType.GEMINI -> "v1beta"
+    else -> "v1/chat/completions"
 }

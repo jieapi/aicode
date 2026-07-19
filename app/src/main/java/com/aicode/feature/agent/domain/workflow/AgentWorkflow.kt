@@ -16,7 +16,9 @@ sealed class AgentEvent {
     data class AssistantText(
         val content: String,
         val toolCalls: List<ToolCall> = emptyList(),
-        val reasoning: String = ""
+        val reasoning: String = "",
+        val inputTokens: Int = 0,
+        val outputTokens: Int = 0
     ) : AgentEvent()
 
     /** 流式过程中模型逐字吐出的文字（[accumulated] 为本轮已累积的完整文本，用于 UI 实时渲染，不落库）。 */
@@ -75,4 +77,12 @@ interface AgentWorkflow {
         context: AgentContext,
         tools: List<AgentTool>
     ): Flow<AgentEvent>
+
+    /**
+     * 手动触发指定会话的上下文压缩（供 /compress 命令调用）。
+     * 复用自动压缩逻辑：解析当前生效 provider，对历史消息调用 ContextCompactor。
+     * 压缩结果由 ContextCompactor 内部持久化，通过 [onEvent] 回调推送压缩进度事件。
+     * @return 是否实际触发了压缩（历史未超阈值时返回 false，不改动）。
+     */
+    suspend fun compactSession(sessionId: String, onEvent: suspend (AgentEvent) -> Unit = {}): Boolean
 }

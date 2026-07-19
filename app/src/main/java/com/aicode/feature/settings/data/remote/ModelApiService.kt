@@ -78,7 +78,7 @@ class ModelApiService @Inject constructor(
         baseUrl: String,
         apiKey: String,
         type: ProviderType,
-        apiPath: String,
+        useFullUrl: Boolean,
         useResponseApi: Boolean,
         model: String
     ): ModelTestResult = withContext(Dispatchers.IO) {
@@ -87,20 +87,33 @@ class ModelApiService @Inject constructor(
             if (apiKey.isBlank()) error("请先填写 API Key")
 
             val (url, payload) = when (type) {
-                ProviderType.ANTHROPIC -> joinUrl(baseUrl, apiPath) to
-                    """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+                ProviderType.ANTHROPIC -> {
+                    val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1/messages")
+                    u to """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+                }
                 ProviderType.GEMINI -> {
-                    val path = if (apiPath.endsWith("/")) "$apiPath$model:generateContent" else "$apiPath/$model:generateContent"
-                    joinUrl(baseUrl, path) to
-                        """{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"""
+                    val u = if (useFullUrl) {
+                        baseUrl
+                    } else {
+                        val path = if (baseUrl.trimEnd('/').endsWith(model)) {
+                            baseUrl.trimEnd('/') + ":generateContent"
+                        } else {
+                            joinUrl(baseUrl, "v1beta/models/$model:generateContent")
+                        }
+                        path
+                    }
+                    u to """{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"""
                 }
                 else -> {
-                    if (useResponseApi) {
-                        joinUrl(baseUrl, apiPath) to
-                            """{"model":${model.jsonStr()},"input":[{"role":"user","content":"hi"}]}"""
+                    val u = if (useFullUrl) {
+                        baseUrl
                     } else {
-                        joinUrl(baseUrl, apiPath) to
-                            """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
+                        joinUrl(baseUrl, "v1/chat/completions")
+                    }
+                    if (useResponseApi) {
+                        u to """{"model":${model.jsonStr()},"input":[{"role":"user","content":"hi"}]}"""
+                    } else {
+                        u to """{"model":${model.jsonStr()},"max_tokens":1,"messages":[{"role":"user","content":"hi"}]}"""
                     }
                 }
             }

@@ -104,7 +104,7 @@ fun ProviderEditorScreen(
     var name by remember { mutableStateOf(initialProvider?.name ?: "") }
     var apiKey by remember { mutableStateOf(initialProvider?.apiKey ?: "") }
     var baseUrl by remember { mutableStateOf(initialProvider?.baseUrl ?: "") }
-    var apiPath by remember { mutableStateOf(initialProvider?.apiPath ?: "/chat/completions") }
+    var useFullUrl by remember { mutableStateOf(initialProvider?.useFullUrl ?: false) }
     var useResponseApi by remember { mutableStateOf(initialProvider?.useResponseApi ?: false) }
     var type by remember { mutableStateOf(initialProvider?.type ?: ProviderType.OPENAI) }
     val providerId = remember { initialProvider?.id ?: System.currentTimeMillis().toString() }
@@ -139,7 +139,7 @@ fun ProviderEditorScreen(
         type = type,
         apiKey = apiKey,
         baseUrl = baseUrl.ifBlank { defaultProviderBaseUrl(type) },
-        apiPath = apiPath.ifBlank { "/chat/completions" },
+        useFullUrl = useFullUrl,
         defaultModel = initialProvider?.defaultModel ?: "",
         isActive = initialProvider?.isActive ?: false,
         models = models.toList(),
@@ -281,14 +281,24 @@ fun ProviderEditorScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    OutlinedTextField(
-                        value = apiPath,
-                        onValueChange = { apiPath = it },
-                        label = { Text("API 地址 (如 /chat/completions)") },
-                        placeholder = { Text("/chat/completions") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("完整 URL")
+                            Text(
+                                if (useFullUrl) "开启后 Base URL 即完整请求地址，不再拼接默认路径" else "关闭后自动拼接默认路径",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = useFullUrl,
+                            onCheckedChange = { useFullUrl = it }
+                        )
+                    }
 
                     if (type == ProviderType.OPENAI) {
                         Row(

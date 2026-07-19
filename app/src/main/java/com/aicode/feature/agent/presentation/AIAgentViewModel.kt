@@ -19,6 +19,7 @@ import com.aicode.feature.agent.domain.model.WorkflowStatus
 import com.aicode.feature.agent.domain.permission.PermissionChoice
 import com.aicode.feature.agent.domain.tool.ToolCall
 import com.aicode.feature.agent.domain.workflow.AgentWorkflow
+import com.aicode.feature.terminal.domain.TerminalSessionManager
 import com.aicode.feature.agent.domain.workflow.AgentEvent
 import com.aicode.feature.agent.domain.tool.ToolPermissionManager
 import com.aicode.feature.agent.domain.tool.ToolRegistry
@@ -26,7 +27,11 @@ import com.aicode.feature.agent.domain.tool.question.AskUserQuestionManager
 import com.aicode.feature.agent.domain.tool.question.UserQuestionAnswer
 import com.aicode.feature.agent.domain.session.SessionUseCase
 import com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
+import com.aicode.feature.agent.domain.command.SlashCommandContext
+import com.aicode.feature.agent.domain.command.SlashCommandRegistry
+import com.aicode.feature.agent.domain.command.SlashCommandHandler
 import com.aicode.feature.agent.presentation.AgentAttachment
+import com.aicode.feature.agent.presentation.component.formatTokenCount
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +47,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -62,8 +68,9 @@ class AIAgentViewModel @Inject constructor(
     private val sessionUseCase: SessionUseCase,
     private val messagePersistenceUseCase: MessagePersistenceUseCase,
     private val planApprovalManager: com.aicode.feature.agent.domain.tool.mode.PlanApprovalManager,
-    private val terminalSessionManager: com.aicode.feature.terminal.domain.TerminalSessionManager
-) : ViewModel() {
+    private val terminalSessionManager: com.aicode.feature.terminal.domain.TerminalSessionManager,
+    private val slashCommandRegistry: SlashCommandRegistry
+) : ViewModel(), SlashCommandContext {
 
     private val sessionJobs = mutableMapOf<String, Job>()
 
@@ -290,6 +297,69 @@ class AIAgentViewModel @Inject constructor(
                 }
             }
         }
+
+        // 订阅后台命令完成事件：notify=true 的命令结束后自动注入消息对并触发 AI 新一轮
+        viewModelScope.launch {
+            terminalSessionManager.tabFinishedEvents.collect { event ->
+                handleBackgroundCommandFinished(event)
+            }
+        }
+    }
+
+    /**
+     * 后台命令（notify=true）结束后的回调：向当前会话注入一对 assistant(tool_call) + tool_result
+     * 消息，使用专属工具名「background_callback」避免 AI 误以为是它自己调的 terminal。
+     * UI 显示工具卡片、AI 在下一轮上下文中看到结构化结果，然后触发 Agent 循环。
+     */
+    private fun handleBackgroundCommandFinished(event: TerminalSessionManager.TabFinishedEvent) {
+        val sessionId = _currentSessionId.value ?: return
+        viewModelScope.launch {
+            val toolCallId = "auto_term_${event.tabId}_${System.currentTimeMillis()}"
+
+            // 注入 assistant 消息：content 为空（UI 不显示气泡），仅携带 tool_call 声明
+            // 工具名用 background_callback 而非 terminal，避免 AI 误以为是自己调的 read
+            messagePersistenceUseCase.persist(
+                sessionId = sessionId,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall(
+                        id = toolCallId,
+                        name = "background_callback",
+                        arguments = mapOf(
+                            "tab_id" to JsonPrimitive(event.tabId),
+                            "command" to JsonPrimitive(event.command ?: ""),
+                            "exit_code" to JsonPrimitive(event.exitCode)
+                        )
+                    )
+                )
+            )
+
+            // 注入 tool result 消息：UI 显示工具卡片，AI 上下文中看到完成通知
+            val cmdDisplay = event.command?.takeIf { it.isNotBlank() }?.let { " \"$it\"" } ?: ""
+            val resultText = buildString {
+                append("[后台任务完成通知] 终端标签 ${event.tabId} 的命令$cmdDisplay 已结束，")
+                append("退出码 ${event.exitCode}。")
+                append("可用 terminal(action=\"read\", tab_id=\"${event.tabId}\") 查看完整输出。")
+            }
+            messagePersistenceUseCase.persist(
+                sessionId = sessionId,
+                role = MessageRole.TOOL,
+                content = resultText,
+                id = "tool_$toolCallId",
+                toolCallId = toolCallId,
+                toolName = "background_callback",
+                toolArgs = "{\"tab_id\":\"${event.tabId}\",\"exit_code\":${event.exitCode}}",
+                isError = event.exitCode != 0
+            )
+
+            // 触发新一轮：不持久化 user 消息，AI 上下文末尾是注入的 tool_result，自然看到完成通知
+            enqueueAgentRequest(
+                request = " ",
+                projectRoot = _currentWorkspace.value,
+                isAutoTrigger = true
+            )
+        }
     }
 
     fun executeAgentRequest(
@@ -364,7 +434,8 @@ class AIAgentViewModel @Inject constructor(
         selectedCode: String? = null,
         projectRoot: String = "",
         inputImages: List<AgentImage> = emptyList(),
-        inputAttachments: List<AgentAttachment> = emptyList()
+        inputAttachments: List<AgentAttachment> = emptyList(),
+        isAutoTrigger: Boolean = false
     ) {
         val sid = _currentSessionId.value
         val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
@@ -377,7 +448,8 @@ class AIAgentViewModel @Inject constructor(
                 selectedCode = selectedCode,
                 projectRoot = projectRoot,
                 inputImages = inputImages,
-                inputAttachments = inputAttachments
+                inputAttachments = inputAttachments,
+                isAutoTrigger = isAutoTrigger
             )
             val currentList = _queuedRequests.value[sid] ?: emptyList()
             _queuedRequests.value = _queuedRequests.value + (sid to (currentList + req))
@@ -390,7 +462,8 @@ class AIAgentViewModel @Inject constructor(
                 projectRoot = projectRoot,
                 inputImages = inputImages,
                 inputAttachments = inputAttachments,
-                targetSessionId = sid
+                targetSessionId = sid,
+                isAutoTrigger = isAutoTrigger
             )
         }
     }
@@ -407,7 +480,8 @@ class AIAgentViewModel @Inject constructor(
             projectRoot = next.projectRoot,
             inputImages = next.inputImages,
             inputAttachments = next.inputAttachments,
-            targetSessionId = sessionId
+            targetSessionId = sessionId,
+            isAutoTrigger = next.isAutoTrigger
         )
     }
 
@@ -419,7 +493,8 @@ class AIAgentViewModel @Inject constructor(
         projectRoot: String = "",
         inputImages: List<AgentImage> = emptyList(),
         inputAttachments: List<AgentAttachment> = emptyList(),
-        targetSessionId: String? = null
+        targetSessionId: String? = null,
+        isAutoTrigger: Boolean = false
     ): Job = viewModelScope.launch {
         val sessionId = targetSessionId ?: ensureSession()
         sessionJobs[sessionId] = coroutineContext[Job]!!
@@ -431,8 +506,10 @@ class AIAgentViewModel @Inject constructor(
             val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
-            messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
-            if (isFirst) sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
+            if (!isAutoTrigger) {
+                messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
+                if (isFirst) sessionUseCase.updateTitle(sessionId, sessionUseCase.deriveTitle(request))
+            }
             sessionUseCase.touch(sessionId, messagePersistenceUseCase.nextTimestamp())
 
             val sessionEntity = sessionUseCase.getSessionById(sessionId)
@@ -483,8 +560,20 @@ class AIAgentViewModel @Inject constructor(
                             MessageRole.ASSISTANT,
                             normalized,
                             toolCalls = event.toolCalls,
-                            reasoning = reasoning
+                            reasoning = reasoning,
+                            inputTokens = event.inputTokens,
+                            outputTokens = event.outputTokens
                         )
+                        if (event.inputTokens > 0 || event.outputTokens > 0) {
+                            viewModelScope.launch {
+                                runCatching {
+                                    chatSessionDao.addTokenUsage(sessionId, event.inputTokens, event.outputTokens)
+                                    if (event.inputTokens > 0) {
+                                        chatSessionDao.updateLastInputTokens(sessionId, event.inputTokens)
+                                    }
+                                }
+                            }
+                        }
                         setStreamingReasoning(sessionId, null)
                         setStreamingText(sessionId, normalized.ifEmpty { null })
                     }
@@ -686,6 +775,81 @@ class AIAgentViewModel @Inject constructor(
             sessionUseCase.updateProviderModel(sid, providerId, model)
         }
     }
+
+    /** 暴露给 UI：发送时完全匹配查找斜杠命令。 */
+    fun findSlashCommand(input: String) = slashCommandRegistry.findExact(input)
+
+    /** 暴露给 UI：输入框下拉菜单展示的命令列表。 */
+    val slashCommands: List<SlashCommandHandler> get() = slashCommandRegistry.all
+
+    /** /status —— 以 Markdown 表格作为 AI 气泡输出当前会话状态。 */
+    override fun showSessionStatus() {
+        val sid = _currentSessionId.value ?: return
+        val session = sessions.value.find { it.id == sid } ?: return
+        val msgCount = messagesState.value.messages.size
+        val model = session.model ?: sessionProviderModelDisplay(sid)
+        val table = buildString {
+            appendLine("| 项目 | 值 |")
+            appendLine("|---|---|")
+            appendLine("| 会话 | ${escapeMd(session.title)} |")
+            appendLine("| 模型 | ${escapeMd(model)} |")
+            appendLine("| 模式 | ${session.mode.name} |")
+            appendLine("| 工作区 | ${escapeMd(session.workspacePath)} |")
+            appendLine("| 消息数 | $msgCount |")
+            appendLine("| 输入 tokens | ${formatTokenCount(session.totalInputTokens)} |")
+            appendLine("| 输出 tokens | ${formatTokenCount(session.totalOutputTokens)} |")
+        }
+        viewModelScope.launch {
+            sessionUseCase.touch(sid, messagePersistenceUseCase.nextTimestamp())
+            messagePersistenceUseCase.persist(sid, MessageRole.ASSISTANT, table.trimEnd(), isCompacted = true)
+        }
+    }
+
+    /** /compress —— 手动触发当前会话的上下文压缩。 */
+    override fun compactCurrentSession() {
+        val sid = _currentSessionId.value ?: return
+        if (isRunning) return
+        sessionJobs[sid]?.let { if (it.isActive) return }
+        val job = viewModelScope.launch {
+            setCompacting(sid, true)
+            try {
+                val changed = agentWorkflow.compactSession(sid) { event ->
+                    when (event) {
+                        is AgentEvent.CompactionStarted -> setCompacting(sid, true)
+                        AgentEvent.CompactionFinished -> setCompacting(sid, false)
+                        else -> {}
+                    }
+                }
+                val resultText = if (changed) "上下文已压缩" else "当前上下文无需压缩（消息过少）"
+                messagePersistenceUseCase.persist(
+                    sessionId = sid,
+                    role = MessageRole.ASSISTANT,
+                    content = resultText
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "手动压缩失败: session=$sid", e)
+                messagePersistenceUseCase.persist(
+                    sessionId = sid,
+                    role = MessageRole.ASSISTANT,
+                    content = "压缩失败: ${e.message}"
+                )
+            } finally {
+                setCompacting(sid, false)
+            }
+        }
+        sessionJobs[sid] = job
+    }
+
+    private fun sessionProviderModelDisplay(sid: String): String {
+        val pair = currentSessionProviderModel.value ?: return "未选择"
+        val (_, model) = pair
+        return model?.takeIf { it.isNotBlank() } ?: "未选择"
+    }
+
+    private fun escapeMd(text: String): String = text.replace("|", "\\|").replace("\n", " ")
+
 
     /** 用户批准计划，唤醒 workflow 继续在 BUILD 模式执行。 */
     fun approvePlanAndBuild() {

@@ -8,6 +8,7 @@ import com.aicode.feature.agent.domain.model.AgentMode
 import com.aicode.feature.agent.domain.model.WorkflowResult
 import com.aicode.feature.agent.domain.model.WorkflowStatus
 import com.aicode.feature.agent.domain.session.SessionUseCase
+import com.aicode.feature.agent.domain.session.MessagePersistenceUseCase
 import com.aicode.feature.agent.domain.permission.PermissionChoice
 import com.aicode.feature.agent.domain.permission.PermissionScope
 import com.aicode.feature.agent.domain.permission.ToolPermissionPolicyEngine
@@ -61,7 +62,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val toolOutputStore: ToolOutputStore,
     private val modelMetadataService: ModelMetadataService,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
-    private val sessionUseCase: SessionUseCase
+    private val sessionUseCase: SessionUseCase,
+    private val messagePersistenceUseCase: MessagePersistenceUseCase
 ) : AgentWorkflow {
 
     private companion object {
@@ -151,11 +153,23 @@ class StatefulAgentWorkflow @Inject constructor(
         return aiProviderRepository.getActiveProviderSync()
     }
 
+    override suspend fun compactSession(sessionId: String, onEvent: suspend (AgentEvent) -> Unit): Boolean {
+        val config = resolveProviderConfig(sessionId)
+            ?: throw IllegalStateException("尚未配置 AI 提供商，请到设置中添加并选择一个")
+        if (config.apiKey.isBlank()) throw IllegalStateException("「${config.name}」未填写 API Key")
+        if (config.effectiveModel.isBlank()) throw IllegalStateException("「${config.name}」未选择模型")
+        val provider = getProviderFor(config, sessionId)
+        val history = messagePersistenceUseCase.buildHistory(sessionId, "__manual_compress__")
+        if (history.size <= 2) return false
+        val compacted = contextCompactor.compactIfNeeded(history, provider, sessionId, force = true, onEvent = onEvent)
+        return compacted.size != history.size
+    }
+
     /**
      * 据 [config] 选定对应的 provider 单例实例并填入其连接字段后返回。
      * 复用于「当前聊天模型」与「识图专用模型」两条路径。
      *
-     * 注意：三个 provider 实例是注入的单例且字段可变（apiKey/baseUrl/apiPath/useResponseApi/model/logSessionId），
+     * 注意：三个 provider 实例是注入的单例且字段可变（apiKey/baseUrl/useFullUrl/useResponseApi/model/logSessionId），
      * 调用方在用本方法切换到不同于当前的 provider 后，必须在发送请求的 try/finally 里保存并恢复所有可变字段，
      * 以免污染后续轮次——见 effect 执行层识图轮的 save/Restore。
      */
@@ -168,7 +182,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.apiKey = config.apiKey
         provider.baseUrl = config.baseUrl
         provider.model = config.effectiveModel
-        provider.apiPath = if (config.apiPath.isNotBlank()) config.apiPath else provider.apiPath
+        provider.useFullUrl = config.useFullUrl
         provider.useResponseApi = config.useResponseApi
         provider.logSessionId = sessionId
         return provider
@@ -289,10 +303,6 @@ class StatefulAgentWorkflow @Inject constructor(
         context: AgentContext,
         tools: List<AgentTool>
     ): WorkflowResult {
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
-        val currentTime = java.time.ZonedDateTime.now().format(formatter)
-        val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
-
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
@@ -300,7 +310,7 @@ class StatefulAgentWorkflow @Inject constructor(
         actionQueue.addLast(
             AgentAction.InitRequest(
                 currentContext.history + AgentMessage.UserMessage(
-                    content = enrichedRequest,
+                    content = userRequest,
                     images = currentContext.inputImages
                 )
             )
@@ -389,10 +399,6 @@ class StatefulAgentWorkflow @Inject constructor(
         context: AgentContext,
         tools: List<AgentTool>
     ): Flow<AgentEvent> = flow {
-        val formatter = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss XXX")
-        val currentTime = java.time.ZonedDateTime.now().format(formatter)
-        val enrichedRequest = "$userRequest\n\n[System] 当前本地时间: $currentTime"
-
         var currentContext = context
         var state = AgentSessionState()
         var currentTools = tools
@@ -400,7 +406,7 @@ class StatefulAgentWorkflow @Inject constructor(
         actionQueue.addLast(
             AgentAction.InitRequest(
                 currentContext.history + AgentMessage.UserMessage(
-                    content = enrichedRequest,
+                    content = userRequest,
                     images = currentContext.inputImages
                 )
             )
@@ -440,7 +446,11 @@ class StatefulAgentWorkflow @Inject constructor(
                                         reasoningAcc.append(chunk.text)
                                         emit(AgentEvent.ReasoningDelta(reasoningAcc.toString()))
                                     }
-                                    is AIStreamChunk.Retrying -> emit(AgentEvent.Retrying(chunk.attempt, chunk.maxRetries))
+                                    is AIStreamChunk.Retrying -> {
+                                        acc.setLength(0)
+                                        reasoningAcc.setLength(0)
+                                        emit(AgentEvent.Retrying(chunk.attempt, chunk.maxRetries))
+                                    }
                                     is AIStreamChunk.Final -> finalResponse = chunk.response
                                 }
                             }
@@ -451,7 +461,7 @@ class StatefulAgentWorkflow @Inject constructor(
                             } else aiResponse
 
                             if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
-                                emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString()))
+                                emit(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString(), aiResponse.inputTokens, aiResponse.outputTokens))
                             }
                             actionQueue.addLast(AgentAction.LlmResponse(responseWithReasoning))
                         } catch (e: CancellationException) {
@@ -585,7 +595,7 @@ class StatefulAgentWorkflow @Inject constructor(
         val provider: AIProvider,
         val apiKey: String,
         val baseUrl: String,
-        val apiPath: String,
+        val useFullUrl: Boolean,
         val useResponseApi: Boolean,
         val model: String,
         val logSessionId: String?
@@ -595,7 +605,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider = provider,
         apiKey = provider.apiKey,
         baseUrl = provider.baseUrl,
-        apiPath = provider.apiPath,
+        useFullUrl = provider.useFullUrl,
         useResponseApi = provider.useResponseApi,
         model = provider.model,
         logSessionId = provider.logSessionId
@@ -604,7 +614,7 @@ class StatefulAgentWorkflow @Inject constructor(
     private fun restoreProvider(snap: ProviderSnapshot) {
         snap.provider.apiKey = snap.apiKey
         snap.provider.baseUrl = snap.baseUrl
-        snap.provider.apiPath = snap.apiPath
+        snap.provider.useFullUrl = snap.useFullUrl
         snap.provider.useResponseApi = snap.useResponseApi
         snap.provider.model = snap.model
         snap.provider.logSessionId = snap.logSessionId
@@ -721,6 +731,15 @@ class StatefulAgentWorkflow @Inject constructor(
     ): PermissionCheckResult {
         if (tool == null) {
             return PermissionCheckResult(true)
+        }
+
+        // switchMode 从 PLAN 切到 BUILD 时，后续会有计划审查面板兜底用户决策，
+        // 此处权限弹窗冗余，直接放行；BUILD→PLAN 方向无后续审查面板，仍走权限弹窗。
+        if (tool.name == "switchMode" && mode == AgentMode.PLAN) {
+            val targetModeStr = (arguments["mode"] as? JsonPrimitive)?.contentOrNull?.trim()?.uppercase()
+            if (targetModeStr == AgentMode.BUILD.name) {
+                return PermissionCheckResult(true)
+            }
         }
 
         val eval = policyEngine.evaluate(tool, tool.name, arguments, mode)

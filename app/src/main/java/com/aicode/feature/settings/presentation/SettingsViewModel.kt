@@ -496,7 +496,7 @@ class SettingsViewModel @Inject constructor(
     fun testModel(provider: AIProviderConfig, model: String) {
         viewModelScope.launch {
             _testing.update { it + model }
-            val result = modelApiService.testModel(provider.baseUrl, provider.apiKey, provider.type, provider.apiPath, provider.useResponseApi, model)
+            val result = modelApiService.testModel(provider.baseUrl, provider.apiKey, provider.type, provider.useFullUrl, provider.useResponseApi, model)
             _testResults.update { it + (model to result) }
             _testing.update { it - model }
         }

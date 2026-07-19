@@ -27,7 +27,7 @@ class GeminiAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://generativelanguage.googleapis.com/"
-    override var apiPath = "v1beta/models"
+    override var useFullUrl = false
     override var useResponseApi = false
     override var model = "gemini-1.5-flash"
     override var logSessionId: String? = null
@@ -59,8 +59,16 @@ class GeminiAdapter @Inject constructor(
             request["tools"] = toolDefs
         }
 
-        val path = if (apiPath.endsWith("/")) "$apiPath$model:generateContent" else "$apiPath/$model:generateContent"
-        val url = joinUrl(baseUrl, path)
+        val url = if (useFullUrl) {
+            baseUrl
+        } else {
+            val path = if (baseUrl.trimEnd('/').endsWith(model)) {
+                baseUrl.trimEnd('/') + ":generateContent"
+            } else {
+                joinUrl(baseUrl, "v1beta/models/$model:generateContent")
+            }
+            path
+        }
         AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
 
         val response = try {
@@ -99,7 +107,11 @@ class GeminiAdapter @Inject constructor(
             }
         }
 
-        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = finishReason)
+        val usageMetadata = response.get("usageMetadata")?.takeIf { it.isJsonObject }?.asJsonObject
+        val inputTokens = usageMetadata?.get("promptTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+        val outputTokens = usageMetadata?.get("candidatesTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+
+        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = finishReason, inputTokens = inputTokens, outputTokens = outputTokens)
     }
 
     override fun completeStream(
@@ -129,8 +141,16 @@ class GeminiAdapter @Inject constructor(
             request["tools"] = toolDefs
         }
 
-        val path = if (apiPath.endsWith("/")) "$apiPath$model:streamGenerateContent?alt=sse" else "$apiPath/$model:streamGenerateContent?alt=sse"
-        val url = joinUrl(baseUrl, path)
+        val url = if (useFullUrl) {
+            baseUrl
+        } else {
+            val path = if (baseUrl.trimEnd('/').endsWith(model)) {
+                baseUrl.trimEnd('/') + ":streamGenerateContent?alt=sse"
+            } else {
+                joinUrl(baseUrl, "v1beta/models/$model:streamGenerateContent?alt=sse")
+            }
+            path
+        }
         
         AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
         val rawSse = StringBuilder()
@@ -141,6 +161,8 @@ class GeminiAdapter @Inject constructor(
                 val textBuilder = StringBuilder()
                 val toolCalls = mutableListOf<ToolCall>()
                 var currentFinishReason: String? = null
+                var streamInputTokens = 0
+                var streamOutputTokens = 0
 
                 val body = api.streamGenerateContent(url = url, apiKey = apiKey, request = request)
 
@@ -164,6 +186,10 @@ class GeminiAdapter @Inject constructor(
                             val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
                             
                             try {
+                                obj.get("usageMetadata")?.takeIf { it.isJsonObject }?.asJsonObject?.let { um ->
+                                    streamInputTokens = um.get("promptTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
+                                    streamOutputTokens = um.get("candidatesTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: streamOutputTokens
+                                }
                                 val chunkCandidates = obj.getAsJsonArray("candidates")
                                 chunkCandidates?.firstOrNull()?.asJsonObject?.let { candidate ->
                                     val reason = candidate.get("finishReason")?.takeIf { !it.isJsonNull }?.asString
@@ -190,6 +216,7 @@ class GeminiAdapter @Inject constructor(
                                         }
                                     }
                                 }
+                                if (currentFinishReason != null) break
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -204,7 +231,7 @@ class GeminiAdapter @Inject constructor(
                 }
 
                 onProduced()
-                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason)))
+                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
                 },
                 onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )

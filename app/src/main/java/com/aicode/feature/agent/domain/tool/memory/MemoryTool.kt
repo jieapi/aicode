@@ -26,6 +26,13 @@ class MemoryTool @Inject constructor(
     override val name = "memory"
     override val permissionPolicy = ToolPermissionPolicy.AUTO_APPROVE
     override val capabilities = setOf(ToolCapability.READ_AGENT_CONFIG, ToolCapability.MODIFY_AGENT_CONFIG)
+
+    override fun effectiveCapabilities(args: Map<String, JsonElement>): Set<ToolCapability> {
+        return when (args["action"]?.jsonPrimitive?.contentOrNull) {
+            "read", "list" -> setOf(ToolCapability.READ_AGENT_CONFIG)
+            else -> capabilities
+        }
+    }
     override val description =
         "管理 AI 的长期记忆。当用户告知新的偏好、项目约定、架构设计，或者你发现了有价值的规律时，使用此工具将其永久记录。"
 

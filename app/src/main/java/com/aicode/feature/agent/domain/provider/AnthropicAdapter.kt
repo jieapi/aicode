@@ -10,6 +10,8 @@ import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
+import com.aicode.feature.settings.domain.model.ProviderType
+import com.aicode.feature.settings.domain.model.defaultProviderApiPath
 import com.google.gson.JsonParser
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -33,7 +35,7 @@ class AnthropicAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://api.anthropic.com/"
-    override var apiPath = "v1/messages"
+    override var useFullUrl = false
     override var useResponseApi = false
     override var model = "claude-3-5-sonnet-20241022"
     override var logSessionId: String? = null
@@ -53,7 +55,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
         val request = AnthropicMessageRequest(
             model = model,
             messages = anthropicMessages,
@@ -95,7 +97,7 @@ class AnthropicAdapter @Inject constructor(
             }
         }
 
-        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = response.stop_reason)
+        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = response.stop_reason, inputTokens = response.usage.input_tokens, outputTokens = response.usage.output_tokens)
     }
 
     override fun completeStream(
@@ -112,7 +114,7 @@ class AnthropicAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.ANTHROPIC))
         val request = AnthropicMessageRequest(
             model = model,
             messages = anthropicMessages,
@@ -132,6 +134,8 @@ class AnthropicAdapter @Inject constructor(
             // content block index -> 累积中的 tool_use（仅 tool_use 块建条目，保序）。
             val toolBlocks = LinkedHashMap<Int, ToolBlockAcc>()
             var stopReason: String? = null
+            var streamInputTokens = 0
+            var streamOutputTokens = 0
 
             val body = api.streamMessage(url = url, apiKey = apiKey, request = request)
 
@@ -162,6 +166,17 @@ class AnthropicAdapter @Inject constructor(
                         // 单行异常不应中断整条流——宽松解析，出错仅跳过该行；必须放行 CancellationException。
                         try {
                             when (obj.get("type")?.asString) {
+                                "error" -> {
+                                    val errObj = obj.getAsJsonObject("error")
+                                    val code = errObj?.get("type")?.takeIf { !it.isJsonNull }?.asString
+                                    val msg = errObj?.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                                    throw StreamApiException(code, msg)
+                                }
+                                "message_start" -> {
+                                    val usage = obj.get("message")?.takeIf { it.isJsonObject }?.asJsonObject
+                                        ?.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
+                                    streamInputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+                                }
                                 "content_block_start" -> {
                                     val index = obj.get("index")?.asInt ?: continue
                                     val block = obj.getAsJsonObject("content_block")
@@ -201,9 +216,13 @@ class AnthropicAdapter @Inject constructor(
                                 }
                                 "message_stop" -> break
                                 "message_delta" -> {
-                                    val delta = obj.getAsJsonObject("delta")
+                                    val delta = obj.get("delta")?.takeIf { it.isJsonObject }?.asJsonObject
                                     delta?.get("stop_reason")?.takeIf { !it.isJsonNull }?.asString?.let {
                                         stopReason = it
+                                    }
+                                    val usage = obj.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
+                                    usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt?.let {
+                                        streamOutputTokens = it
                                     }
                                 }
                             }
@@ -223,9 +242,8 @@ class AnthropicAdapter @Inject constructor(
             val toolCalls = toolBlocks.values.map { acc ->
                 ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString()))
             }
-            // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = stopReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
                 },
                 onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )

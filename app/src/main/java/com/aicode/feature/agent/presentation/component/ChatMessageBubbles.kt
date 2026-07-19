@@ -112,6 +112,12 @@ internal class MarkdownRenderCache(
     }
 }
 
+internal fun formatTokenCount(tokens: Int): String = when {
+    tokens >= 1_000_000 -> "%.1fM".format(tokens / 1_000_000.0)
+    tokens >= 1_000 -> "%.1fk".format(tokens / 1_000.0)
+    else -> tokens.toString()
+}
+
 @Composable
 internal fun AgentMessageItem(
     message: AgentUIMessage,
@@ -194,20 +200,31 @@ internal fun AgentMessageItem(
                 }
                 // 气泡下方复制按钮（工具消息不显示）
                 if (message.content.hasVisibleContent() && message.role != MessageRole.TOOL) {
-                    val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
-                    IconButton(
-                        onClick = {
-                            clipboardManager.setText(AnnotatedString(message.content))
-                            copied = true
-                        },
-                        modifier = Modifier.size(28.dp),
-                        colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
-                    ) {
-                        Icon(
-                            if (copied) FeatherIcons.Check else FeatherIcons.Copy,
-                            contentDescription = if (copied) "已复制" else "复制",
-                            modifier = Modifier.size(14.dp),
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
+                        IconButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(message.content))
+                                copied = true
+                            },
+                            modifier = Modifier.size(28.dp),
+                            colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
+                        ) {
+                            Icon(
+                                if (copied) FeatherIcons.Check else FeatherIcons.Copy,
+                                contentDescription = if (copied) "已复制" else "复制",
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                        if (message.role == MessageRole.ASSISTANT && (message.inputTokens > 0 || message.outputTokens > 0)) {
+                            val inStr = formatTokenCount(message.inputTokens)
+                            val outStr = formatTokenCount(message.outputTokens)
+                            Text(
+                                text = "↑$inStr ↓$outStr",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     // 复制成功 1.5s 后恢复图标
                     if (copied) {
@@ -518,6 +535,34 @@ internal fun CompactionProgressBubble() {
             ) {
                 Text(
                     text = "正在压缩上下文",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                TypingDots(color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+/** 网络重试期间的临时状态气泡，不落库。 */
+@Composable
+internal fun RetryingBubble(attempt: Int, maxRetries: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Start
+    ) {
+        Surface(
+            shape = RoundedCornerShape(Radius.md, Radius.md, Radius.md, Radius.xs),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+            ) {
+                Text(
+                    text = "网络波动，正在重试 $attempt/$maxRetries",
                     color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.bodyMedium
                 )

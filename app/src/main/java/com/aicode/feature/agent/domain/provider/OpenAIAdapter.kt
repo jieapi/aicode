@@ -2,6 +2,8 @@ package com.aicode.feature.agent.domain.provider
 
 import com.aicode.core.util.AILogger
 import com.aicode.feature.agent.data.remote.openai.OpenAIApi
+import com.aicode.feature.settings.domain.model.ProviderType
+import com.aicode.feature.settings.domain.model.defaultProviderApiPath
 import java.io.IOException
 import com.aicode.feature.agent.data.remote.openai.ChatCompletionRequest
 import com.aicode.feature.agent.data.remote.openai.OpenAIChatMessage
@@ -25,6 +27,7 @@ import kotlinx.serialization.json.jsonObject
 import com.aicode.feature.agent.data.remote.openai.OpenAIToolCall
 import com.aicode.feature.agent.data.remote.openai.OpenAIToolDefinition
 import com.aicode.feature.agent.data.remote.openai.OpenAIFunctionDefinition
+import com.aicode.feature.agent.data.remote.openai.StreamOptions
 
 class OpenAIAdapter @Inject constructor(
     private val api: OpenAIApi
@@ -32,7 +35,7 @@ class OpenAIAdapter @Inject constructor(
 
     override var apiKey = ""
     override var baseUrl = "https://api.openai.com/"
-    override var apiPath = "v1/chat/completions"
+    override var useFullUrl = false
     override var useResponseApi = false
     override var model = "gpt-4-turbo"
     override var logSessionId: String? = null
@@ -60,7 +63,7 @@ class OpenAIAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.OPENAI))
         if (useResponseApi) {
             val request = mapOf(
                 "model" to model,
@@ -106,7 +109,10 @@ class OpenAIAdapter @Inject constructor(
             }
             // status of output items is completed
             finishReason = "stop" // simplify for Responses API
-            return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason)
+            val usage = response.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
+            val inputTokens = usage?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+            val outputTokens = usage?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+            return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, inputTokens = inputTokens, outputTokens = outputTokens)
         }
 
         val request = ChatCompletionRequest(
@@ -136,8 +142,9 @@ class OpenAIAdapter @Inject constructor(
         val content = message?.content.asTextContent()
         val toolCalls = message?.tool_calls?.map { convertToToolCall(it) } ?: emptyList()
         val reasoning = message?.reasoning_content?.takeIf { it.isNotEmpty() }
+        val usage = response.usage
 
-        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning)
+        return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0)
     }
 
     override fun completeStream(
@@ -162,7 +169,7 @@ class OpenAIAdapter @Inject constructor(
             )
         }
 
-        val url = joinUrl(baseUrl, apiPath)
+        val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, defaultProviderApiPath(ProviderType.OPENAI))
         
         if (useResponseApi) {
             val request = mapOf(
@@ -178,6 +185,8 @@ class OpenAIAdapter @Inject constructor(
                     val textBuilder = StringBuilder()
                     val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
                     var finishReason: String? = null
+                    var streamInputTokens = 0
+                    var streamOutputTokens = 0
 
                     val body = api.streamResponses(
                         url = url,
@@ -204,6 +213,11 @@ class OpenAIAdapter @Inject constructor(
                                 rawSse.append(line).append('\n')
                                 if (data == "[DONE]") break
                                 val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                                obj.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { errObj ->
+                                    val code = errObj.get("code")?.takeIf { !it.isJsonNull }?.asString
+                                    val msg = errObj.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                                    throw StreamApiException(code, msg)
+                                }
                                 try {
                                     val eventType = obj.get("type")?.asString
                                     if (eventType == "response.output_text.delta") {
@@ -235,6 +249,10 @@ class OpenAIAdapter @Inject constructor(
                                             }
                                         }
                                         finishReason = "stop"
+                                        val usageObj = obj.get("response")?.takeIf { it.isJsonObject }?.asJsonObject
+                                            ?.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject
+                                        streamInputTokens = usageObj?.get("input_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
+                                        streamOutputTokens = usageObj?.get("output_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: 0
                                     }
                                 } catch (e: CancellationException) {
                                     throw e
@@ -252,7 +270,7 @@ class OpenAIAdapter @Inject constructor(
                         .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                         .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
                     onProduced()
-                    emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
+                    emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
                 },
                 onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )
@@ -272,7 +290,8 @@ class OpenAIAdapter @Inject constructor(
             messages = openAIMessages,
             tools = toolDefs,
             tool_choice = if (toolDefs != null) "auto" else null,
-            stream = true
+            stream = true,
+            stream_options = StreamOptions(include_usage = true)
         )
         AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
@@ -286,6 +305,8 @@ class OpenAIAdapter @Inject constructor(
             // tool_call index -> 累积中的工具调用（保序）。
             val toolAccs = LinkedHashMap<Int, OpenAIToolAcc>()
             var finishReason: String? = null
+            var streamInputTokens = 0
+            var streamOutputTokens = 0
 
             val body = api.streamChatCompletion(
                 url = url,
@@ -316,12 +337,21 @@ class OpenAIAdapter @Inject constructor(
                         rawSse.append(line).append('\n')
                         if (data == "[DONE]") break
                         val obj = runCatching { JsonParser.parseString(data).asJsonObject }.getOrNull() ?: continue
+                        obj.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { errObj ->
+                            val code = errObj.get("code")?.takeIf { !it.isJsonNull }?.asString
+                            val msg = errObj.get("message")?.takeIf { !it.isJsonNull }?.asString ?: "未知错误"
+                            throw StreamApiException(code, msg)
+                        }
                         // 单行 SSE 解析：不同上游/模型的字段类型偶有出入（如把对象写成数组、把字符串写成对象），
                         // Gson 的 getAsJsonObject/getAsJsonArray 在类型不符时会直接抛 ClassCastException，
                         // asString/asInt 对非原始值会抛 UnsupportedOperationException。
                         // 单行异常不应中断整条流——这里宽松解析，出错仅跳过该行；已累积的文本与后续行不受影响。
                         // 必须放行 CancellationException，否则会吞掉协程取消信号。
                         try {
+                            obj.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject?.let { u ->
+                                streamInputTokens = u.get("prompt_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamInputTokens
+                                streamOutputTokens = u.get("completion_tokens")?.takeIf { !it.isJsonNull }?.asInt ?: streamOutputTokens
+                            }
                             val choice = obj.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject ?: continue
                             val delta = choice.getAsJsonObject("delta") ?: continue
 
@@ -377,9 +407,8 @@ class OpenAIAdapter @Inject constructor(
             val toolCalls = toolAccs.values
                 .filter { it.id.isNotEmpty() || it.name.isNotEmpty() }
                 .map { acc -> ToolCall(id = acc.id, name = acc.name, arguments = parseArgs(acc.args.toString())) }
-            // 读完整轮才视为「已产出」，确保仅返回工具调用（无文字）的轮次失败时也能重试。
             onProduced()
-            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason)))
+            emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = finishReason, inputTokens = streamInputTokens, outputTokens = streamOutputTokens)))
             },
             onRetry = { attempt, max -> emit(AIStreamChunk.Retrying(attempt, max)) }
             )

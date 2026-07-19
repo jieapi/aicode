@@ -43,7 +43,7 @@ class ListFilesTool @Inject constructor(
         "args" to ToolParameter(
             name = "args",
             type = ParameterType.STRING,
-            description = "ls 风格参数。不填等同 /workspace。支持 -a -A -l -R -d -1 -h -r -t -f --。",
+            description = "ls 风格参数。不填等同 /workspace。支持 -a -A -l -R -d -1 -h -r -t -S -v -f --。",
             required = false
         )
     )
@@ -151,6 +151,7 @@ class ListFilesTool @Inject constructor(
                         "--human-readable" -> options.humanReadable = true
                         "--reverse" -> options.reverse = true
                         "--time" -> options.sortByTime = true
+                        "--size" -> options.sortBySize = true
                         else -> return null
                     }
                 }
@@ -166,6 +167,8 @@ class ListFilesTool @Inject constructor(
                             'h' -> options.humanReadable = true
                             'r' -> options.reverse = true
                             't' -> options.sortByTime = true
+                            'S' -> options.sortBySize = true
+                            'v' -> options.naturalSort = true
                             'f' -> {
                                 options.noSort = true
                                 options.showAll = true
@@ -253,9 +256,13 @@ class ListFilesTool @Inject constructor(
         entries.addAll(children)
 
         if (!options.noSort) {
-            entries.sortWith(compareBy<LsEntry> {
-                if (options.sortByTime) -it.file.lastModified() else 0L
-            }.thenBy { it.name })
+            val comparator = when {
+                options.sortByTime -> compareBy<LsEntry> { -it.file.lastModified() }
+                options.sortBySize -> compareBy<LsEntry> { -it.file.length() }
+                options.naturalSort -> compareBy<LsEntry> { naturalOrderKey(it.name) }
+                else -> null
+            }?.thenBy { it.name }
+            if (comparator != null) entries.sortWith(comparator)
         }
         if (options.reverse) entries.reverse()
         return entries
@@ -291,6 +298,22 @@ class ListFilesTool @Inject constructor(
         return read + write + execute
     }
 
+    private fun naturalOrderKey(s: String): String {
+        val sb = StringBuilder()
+        var i = 0
+        while (i < s.length) {
+            if (s[i].isDigit()) {
+                val start = i
+                while (i < s.length && s[i].isDigit()) i++
+                sb.append(s.substring(start, i).toInt().toString().padStart(10, '0'))
+            } else {
+                sb.append(s[i])
+                i++
+            }
+        }
+        return sb.toString()
+    }
+
     private fun humanSize(bytes: Long): String {
         if (bytes < 1024) return "${bytes}B"
         val units = arrayOf("K", "M", "G", "T")
@@ -314,6 +337,8 @@ class ListFilesTool @Inject constructor(
         var humanReadable: Boolean = false,
         var reverse: Boolean = false,
         var sortByTime: Boolean = false,
+        var sortBySize: Boolean = false,
+        var naturalSort: Boolean = false,
         var noSort: Boolean = false,
         val paths: MutableList<String> = mutableListOf()
     )

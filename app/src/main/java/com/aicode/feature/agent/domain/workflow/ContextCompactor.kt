@@ -44,20 +44,24 @@ class ContextCompactor @Inject constructor(
         messages: List<AgentMessage>,
         aiProvider: AIProvider,
         sessionId: String? = null,
+        force: Boolean = false,
         onEvent: suspend (AgentEvent) -> Unit = {}
     ): List<AgentMessage> {
         val totalTokens = estimateTokens(messages)
         val metadata = modelMetadataService.resolve(inferProviderType(aiProvider), aiProvider.model)
         val usableTokens = ModelContextPolicy.usableInputTokens(metadata)
-        if (totalTokens < usableTokens || messages.size <= 2) {
+        if (messages.size <= 2 || (!force && totalTokens < usableTokens)) {
             return messages.toList()
         }
 
-        FileLogger.i(TAG, "上下文约 $totalTokens tokens，超过可用窗口 $usableTokens/${metadata.contextTokens}，触发压缩机制。")
+        FileLogger.i(TAG, "上下文约 $totalTokens tokens，${if (force) "手动强制压缩" else "超过可用窗口 $usableTokens/${metadata.contextTokens}，触发压缩机制"}。")
         onEvent(AgentEvent.CompactionStarted(totalTokens))
 
         // 拆分 Head（需要压缩的老数据）和 Tail（保留的新数据）
         var splitIndex = selectTailStartIndex(messages, usableTokens)
+        if (force && splitIndex <= 0 && messages.size > 1) {
+            splitIndex = messages.size - 1
+        }
         if (splitIndex <= 0) {
             onEvent(AgentEvent.CompactionFinished)
             return messages.toList()

@@ -96,7 +96,7 @@ class AIProviderRepositoryImpl @Inject constructor(
             models = modelList,
             selectedModel = selectedModel.ifBlank { defaultModel },
             isEnabled = isEnabled,
-            apiPath = apiPath,
+            useFullUrl = useFullUrl,
             useResponseApi = useResponseApi
         )
     }
@@ -108,7 +108,7 @@ class AIProviderRepositoryImpl @Inject constructor(
             type = type.name,
             apiKey = apiKey,
             baseUrl = baseUrl,
-            apiPath = apiPath,
+            useFullUrl = useFullUrl,
             defaultModel = defaultModel,
             isActive = isActive,
             models = models.joinToString("\n"),

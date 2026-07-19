@@ -15,7 +15,11 @@ data class AIResponse(
      */
     val stopReason: String? = null,
     /** 本轮模型的完整思考过程（对应 OpenAI/DeepSeek 的 reasoning_content）。非空时需回传给 API，否则 DeepSeek 思考模式会报 400。 */
-    val reasoning: String? = null
+    val reasoning: String? = null,
+    /** 本轮输入 token 数（来自 API 返回的 usage）。取不到时为 0。 */
+    val inputTokens: Int = 0,
+    /** 本轮输出 token 数（来自 API 返回的 usage）。取不到时为 0。 */
+    val outputTokens: Int = 0
 ) {
     val isTruncated: Boolean
         get() = stopReason == "max_tokens" || stopReason == "length"
@@ -39,7 +43,7 @@ sealed class AIStreamChunk {
 interface AIProvider {
     var apiKey: String
     var baseUrl: String
-    var apiPath: String
+    var useFullUrl: Boolean
     var useResponseApi: Boolean
     var model: String
 
@@ -79,8 +83,11 @@ interface AIProvider {
 fun joinUrl(baseUrl: String, path: String): String {
     val base = baseUrl.trim().trimEnd('/')
     val cleanPath = path.trimStart('/')
-    return if (base.endsWith("/v1")) {
-        "$base/${cleanPath.removePrefix("v1/")}"
+    
+    val lastSegment = base.substringAfterLast('/', "")
+    
+    return if (lastSegment.isNotEmpty() && cleanPath.startsWith("$lastSegment/")) {
+        "$base/${cleanPath.removePrefix("$lastSegment/")}"
     } else {
         "$base/$cleanPath"
     }
