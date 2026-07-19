@@ -217,17 +217,16 @@ suspend fun streamWithStaircaseRetry(
 ) {
     var attempt = 0
     while (true) {
-        var produced = false
         try {
-            attemptOnce { produced = true }
+            attemptOnce { }
             return
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             coroutineContext.ensureActive()
-            if (produced || attempt >= MAX_NETWORK_RETRIES || !isRetriableNetworkError(e)) throw e
+            if (attempt >= MAX_NETWORK_RETRIES || !isRetriableNetworkError(e)) throw e
             val wait = retryDelayMillis(attempt, e)
-            FileLogger.w(TAG, "流式请求在首字节前失败，第 ${attempt + 1}/$MAX_NETWORK_RETRIES 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
+            FileLogger.w(TAG, "流式请求失败，第 ${attempt + 1}/$MAX_NETWORK_RETRIES 次重试（等待 ${wait}ms）: ${e.javaClass.simpleName} ${e.message}")
             onRetry?.invoke(attempt + 1, MAX_NETWORK_RETRIES)
             attempt++
             if (wait > 0) delay(wait)
