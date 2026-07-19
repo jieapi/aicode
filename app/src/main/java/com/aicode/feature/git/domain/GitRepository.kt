@@ -224,6 +224,37 @@ class GitRepository @Inject constructor(
     }
 
     /**
+     * 创建新分支。name 为新分支名；startPoint 为基准分支名（null/空 → 从当前 HEAD）；
+     * checkout=true 则创建并切换（`git checkout -b`），否则仅创建不切换（`git branch`）。
+     * 起点不存在或分支名非法时由 [gitChecked] 据退出码抛 [GitCommandFailureException]，上层 toast。
+     */
+    suspend fun createBranch(name: String, startPoint: String?, checkout: Boolean): String {
+        return if (checkout) {
+            if (startPoint.isNullOrBlank()) gitChecked("checkout", "-b", name)
+            else gitChecked("checkout", "-b", name, startPoint)
+        } else {
+            if (startPoint.isNullOrBlank()) gitChecked("branch", name)
+            else gitChecked("branch", name, startPoint)
+        }
+    }
+
+    /**
+     * 安全删除本地分支（`git branch -d`）：仅删除已合并到上游的分支，未合并时 git 报错
+     * 由 [gitChecked] 据退出码抛 [GitCommandFailureException]，上层 toast。当前分支不可删（git 自身拦截）。
+     */
+    suspend fun deleteBranch(name: String): String = gitChecked("branch", "-d", name)
+
+    /**
+     * 删除远程分支（`git push <remote> --delete <branch>`）。ref 形如 `origin/feature`，拆出 remote 与分支名；
+     * 无 remote 前缀时按 `origin` 兜底。会改远端，失败由 [gitChecked] 抛 [GitCommandFailureException]。
+     */
+    suspend fun deleteRemoteBranch(ref: String): String {
+        val remote = ref.substringBefore('/', "origin")
+        val branch = ref.substringAfter('/', ref)
+        return gitChecked("push", remote, "--delete", branch)
+    }
+
+    /**
      * 切换到指定分支或标签。branch 可以是本地分支名、远程分支名或 tag 名。
      * 远程分支用 `git checkout -b <local> <remote>` 创建本地跟踪分支，去掉远程前缀（如 origin/）。
      */

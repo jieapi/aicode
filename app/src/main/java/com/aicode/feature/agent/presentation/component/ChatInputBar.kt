@@ -229,9 +229,9 @@ internal fun ChatInputBar(
                             modifier = Modifier
                                 .clickable {
                                     val nextMode = when (currentMode) {
-                                        AgentMode.BUILD -> AgentMode.AUTO
-                                        AgentMode.AUTO -> AgentMode.PLAN
-                                        AgentMode.PLAN -> AgentMode.BUILD
+                                        AgentMode.BUILD -> AgentMode.PLAN
+                                        AgentMode.PLAN -> AgentMode.AUTO
+                                        AgentMode.AUTO -> AgentMode.BUILD
                                     }
                                     onToggleMode(nextMode)
                                 }

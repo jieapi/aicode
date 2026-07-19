@@ -376,7 +376,12 @@ class TerminalSessionTool @Inject constructor(
             }
             capturedResult(tabId, actionLabel = "send")
         } else {
-            ToolResult.Error("未找到终端标签: $tabId")
+            val exists = sessionManager.listTabs().any { it.id == tabId }
+            if (exists) {
+                ToolResult.Error("终端 $tabId 已结束，不再活跃，无法发送命令。如需执行新命令请用 start 新建终端", "TERMINAL_NOT_ACTIVE")
+            } else {
+                ToolResult.Error("未找到终端标签: $tabId", "TERMINAL_NOT_FOUND")
+            }
         }
     }
 
@@ -407,7 +412,12 @@ class TerminalSessionTool @Inject constructor(
             FileLogger.i(TAG, "向 $tabId 发送快捷键: $normalized")
             ToolResult.Success(JsonPrimitive("已向终端标签 $tabId 发送快捷键 $normalized。可用 terminal(action=\"read\", tab_id=\"$tabId\") 查看结果。"))
         } else {
-            ToolResult.Error("未找到终端标签: $tabId")
+            val exists = sessionManager.listTabs().any { it.id == tabId }
+            if (exists) {
+                ToolResult.Error("终端 $tabId 已结束，不再活跃，无法发送快捷键", "TERMINAL_NOT_ACTIVE")
+            } else {
+                ToolResult.Error("未找到终端标签: $tabId", "TERMINAL_NOT_FOUND")
+            }
         }
     }
 

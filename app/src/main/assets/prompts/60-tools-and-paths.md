@@ -19,9 +19,9 @@
 - `Bash`：在容器内执行一次性 shell 命令（列目录、搜索、构建、lint、格式化、git、装依赖等），同步等待命令结束并返回输出，执行过程会实时流式显示。默认超时 120 秒，上限 1800 秒；耗时命令（如安装依赖）可用 timeout 参数调大。
 - 容器内已内置常用开发工具：`git`（版本控制）、`rg`（ripgrep，快速搜索文本/文件）、`py`/`python`（运行 Python 脚本）、`node`（运行 Node.js 脚本）。需要这些能力时优先直接通过 `Bash` 调用，不要先询问是否安装。
 - `terminal`：管理常驻后台终端会话，用 `action` 参数选操作：
-  - **强烈建议复用标签**：在启动新常驻进程或执行交互式命令前，先用 `action="read"`（不传 tab_id）列出现有终端。如果有闲置或已经处于你需要状态的标签，请直接用 `action="send"` 复用它，切忌毫无节制地反复 `start` 开启一堆新窗口。
-  - `action="start"`：把长驻命令（如 `npm run dev`、各类服务进程）开在一个常驻后台终端标签里，不阻塞等待后续工作；启动后会挂起约 5 秒并流式显示新增输出，最终返回 `{tab_id, running, output}`。若 `output` 过长，统一工具输出层会额外返回 `output_truncated`、`output_total_chars`、`output_path`。用于不会自己结束的进程。必填 `command`，可选 `title`、`notify`（命令结束后是否自动通知 AI 并触发新一轮对话，默认 false；设为 true 适用于编译、测试等需等待结果的场景）。
-  - `action="send"`：按 `tab_id` 向某个后台或交互终端发送一行命令/输入（默认自动回车执行），随后像 `start` 一样等待约 5 秒并流式显示新增输出，最终返回 `{tab_id, running, output}`。若 `output` 过长，按上方 `output_path` 规则读取完整日志。必填 `tab_id`、`input`，可选 `submit`。
+  - **优先复用 AI 自己创建的终端**：在启动新常驻进程或执行交互式命令前，先用 `action="read"`（不传 tab_id）列出现有终端。如果有 AI 自己之前创建的、仍处于活跃状态的标签，请直接用 `action="send"` 复用它，切忌毫无节制地反复 `start` 开启一堆新窗口。注意复用的是 AI 自己创建的后台终端，不是随便一个终端标签。
+  - `action="start"`：**新建**一个常驻后台终端标签，把长驻命令（如 `npm run dev`、各类服务进程）开在里面，不阻塞等待后续工作；启动后会挂起约 5 秒并流式显示新增输出，最终返回 `{tab_id, running, output}`。若 `output` 过长，统一工具输出层会额外返回 `output_truncated`、`output_total_chars`、`output_path`。用于不会自己结束的进程。必填 `command`，可选 `title`、`notify`（命令结束后是否自动通知 AI 并触发新一轮对话，默认 false；设为 true 适用于编译、测试等需等待结果的场景）。**注意：`notify=true` 的命令结束后，该终端标签将不再活跃（不可再 send），需要新终端请重新 `start`。**
+  - `action="send"`：**向已有终端发送命令**（不是新建终端）。按 `tab_id` 向某个后台或交互终端发送一行命令/输入（默认自动回车执行），随后像 `start` 一样等待约 5 秒并流式显示新增输出，最终返回 `{tab_id, running, output}`。若 `output` 过长，按上方 `output_path` 规则读取完整日志。必填 `tab_id`、`input`，可选 `submit`。**如果该终端已不再活跃（命令已结束、`notify=true` 的标签已退出），send 会被拒绝并报错——此时请改用 `start` 新建终端。**
   - `action="key"`：按 `tab_id` 发送常见快捷键/控制字符。必填 `tab_id`、`key`，支持 `ctrl+c`、`ctrl+d`、`ctrl+z`、`ctrl+l`、`ctrl+u`、`ctrl+w`、`esc`、`tab`、`enter`、`up`、`down`、`left`、`right`。中断后台标签里正在跑的前台命令时优先用 `key="ctrl+c"`。
   - `action="read"`：按 `tab_id` 读取某终端当前输出（含后台命令的实时日志）；超长输出按统一 `output_path` 规则回填 preview。省略 `tab_id` 则列出所有终端标签及其状态。
   - `action="close"`：按 `tab_id` 主动关闭某个终端标签，并终止其中仍在运行的进程。常驻任务不再需要时，先用 `read` 确认目标，再用 `close` 清理。
@@ -38,10 +38,10 @@
 - 项目根目录固定为容器内路径 `/workspace`。你只看得到、也只需使用容器内路径。
 - 项目文件用 `/workspace/...`（如 `/workspace/src/Main.kt`）或相对路径（如 `src/Main.kt`，相对 `/workspace`）。
 - `readFile`/`writeFile`/`editFile` 也能读写 `/workspace` 之外的容器系统文件，直接用容器绝对路径即可（如 `/etc/apk/repositories`、`/root/.bashrc`、`/usr/local/bin/...`）。
-- AI 配置目录固定为 `/root/.aicode`，可用文件工具或 `Bash` 直接访问；它映射到 Android 宿主私有目录 `filesDir/aicode`，不在 rootfs 内，容器重装不会清空。
-- 用户若拥有 Android root 权限，也可绕过 DocumentsProvider 直接从宿主访问 App 私有目录：`/data/data/com.aicode/files/`（部分系统也显示为 `/data/user/0/com.aicode/files/`）。其中 `projects/` 是本地工作区根，`aicode/` 对应容器内 `/root/.aicode`。
+- AI 配置目录固定为 `~/.aicode`，可用文件工具或 `Bash` 直接访问；它映射到 Android 宿主私有目录 `filesDir/aicode`，不在 rootfs 内，容器重装不会清空。
+- 用户若拥有 Android root 权限，也可绕过 DocumentsProvider 直接从宿主访问 App 私有目录：`/data/data/com.aicode/files/`（部分系统也显示为 `/data/user/0/com.aicode/files/`）。其中 `projects/` 是本地工作区根，`aicode/` 对应容器内 `~/.aicode`。
 - `Bash` 的当前目录已经是 `/workspace`，相对路径都基于该项目根目录解析。
-- `/root/.aicode/tool-output/...` 是工具完整输出日志目录，可直接用 `readFile` 分段读取。
+- `~/.aicode/tool-output/...` 是工具完整输出日志目录，可直接用 `readFile` 分段读取。
 
 用户交互工具：
 

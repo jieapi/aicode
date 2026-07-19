@@ -90,9 +90,13 @@ class SearchCodeTool @Inject constructor(
             "--color",
             "never"
         )
-        args.addAll(tokens.map(::shellQuote))
+        args.addAll(tokens.map { shellQuote(expandTilde(it)) })
         return args.joinToString(" ")
     }
+
+    /** 把 `~/` 开头的路径参数展开为 `/root/`，避免被单引号包裹后 shell 不展开 `~`。 */
+    private fun expandTilde(arg: String): String =
+        if (arg.startsWith("~/")) "/root/" + arg.removePrefix("~/") else arg
 
     private fun isRgMissing(output: String): Boolean {
         return output.contains("command not found", ignoreCase = true) ||

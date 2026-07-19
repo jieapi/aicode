@@ -1,6 +1,8 @@
 package com.aicode.feature.git.presentation.component
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,20 +23,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -220,7 +228,10 @@ fun GitScreen(
                         branches = state.branches,
                         tags = state.tags,
                         checkoutLoading = state.checkoutLoading,
-                        onCheckout = viewModel::checkoutBranch
+                        onCheckout = viewModel::checkoutBranch,
+                        onCreateBranch = viewModel::createBranch,
+                        onDeleteBranch = viewModel::deleteBranch,
+                        onDeleteRemoteBranch = viewModel::deleteRemoteBranch
                     )
                     GitTab.LOG -> LogTab(
                         commits = state.commits,
@@ -464,12 +475,16 @@ private fun StatusActionsBar(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun BranchesTab(
     branches: List<GitBranch>,
     tags: List<GitTag>,
     checkoutLoading: String?,
-    onCheckout: (String, Boolean) -> Unit
+    onCheckout: (String, Boolean) -> Unit,
+    onCreateBranch: (String, String?, Boolean) -> Unit,
+    onDeleteBranch: (String) -> Unit,
+    onDeleteRemoteBranch: (String) -> Unit
 ) {
     if (branches.isEmpty() && tags.isEmpty()) {
         EmptyState("暂无分支")
@@ -482,6 +497,8 @@ private fun BranchesTab(
     fun isExpanded(key: String): Boolean = expanded[key] ?: true
 
     var pendingCheckout by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
 
     pendingCheckout?.let { (ref, isRemote) ->
         val isTag = tags.any { it.name == ref }
@@ -507,6 +524,98 @@ private fun BranchesTab(
         )
     }
 
+    if (showCreateDialog) {
+        val localBranchNames = localBranches.map { it.name }
+        var newName by remember { mutableStateOf("") }
+        var startPoint by remember { mutableStateOf(currentBranch) }
+        var checkout by remember { mutableStateOf(true) }
+        var expanded by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = { Text("新建分支") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("分支名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    ExposedDropdownMenuBox(
+                        expanded = expanded,
+                        onExpandedChange = { expanded = !expanded }
+                    ) {
+                        OutlinedTextField(
+                            value = startPoint,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("基准分支") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false }
+                        ) {
+                            localBranchNames.forEach { name ->
+                                DropdownMenuItem(
+                                    text = { Text(name) },
+                                    onClick = { startPoint = name; expanded = false }
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("创建并切换")
+                        Switch(checked = checkout, onCheckedChange = { checkout = it })
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onCreateBranch(newName.trim(), startPoint, checkout)
+                        showCreateDialog = false
+                    },
+                    enabled = newName.isNotBlank()
+                ) { Text("创建") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    pendingDelete?.let { (name, isRemote) ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(if (isRemote) "删除远程分支" else "删除分支") },
+            text = {
+                Text(
+                    if (isRemote) "删除远程分支 $name？该操作不可撤销。"
+                    else "删除本地分支 $name？"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    if (isRemote) onDeleteRemoteBranch(name) else onDeleteBranch(name)
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+            }
+        )
+    }
+
     val localTree = remember(localBranches) { buildBranchTree(localBranches) }
     val remoteTree = remember(remoteBranches) { buildBranchTree(remoteBranches) }
 
@@ -515,7 +624,13 @@ private fun BranchesTab(
         contentPadding = PaddingValues(bottom = Spacing.xl)
     ) {
         item { BranchesOverview(currentBranch, localBranches.size, remoteBranches.size, tags.size) }
-        item { RefSectionHeader("HEAD", isExpanded("head")) { expanded["head"] = !isExpanded("head") } }
+        item {
+            RefSectionHeader(
+                title = "HEAD",
+                isExpanded = isExpanded("head"),
+                onToggle = { expanded["head"] = !isExpanded("head") }
+            )
+        }
         if (isExpanded("head")) {
             item {
                 RefRow(
@@ -528,19 +643,56 @@ private fun BranchesTab(
             }
         }
         if (localBranches.isNotEmpty()) {
-            item { RefSectionHeader("Local (${localBranches.size})", isExpanded("local")) { expanded["local"] = !isExpanded("local") } }
+            item {
+                RefSectionHeader(
+                    title = "Local (${localBranches.size})",
+                    isExpanded = isExpanded("local"),
+                    onToggle = { expanded["local"] = !isExpanded("local") },
+                    onLongClick = { showCreateDialog = true }
+                )
+            }
             if (isExpanded("local")) {
-                renderBranchTree(localTree, depth = 1, expanded, isRemote = false, checkoutLoading = checkoutLoading) { ref, remote -> pendingCheckout = ref to remote }
+                renderBranchTree(
+                    localTree,
+                    depth = 1,
+                    expanded,
+                    isRemote = false,
+                    checkoutLoading = checkoutLoading,
+                    onCheckout = { ref, remote -> pendingCheckout = ref to remote },
+                    onDeleteBranch = { pendingDelete = it to false },
+                    onDeleteRemoteBranch = {}
+                )
             }
         }
         if (remoteBranches.isNotEmpty()) {
-            item { RefSectionHeader("Remote (${remoteBranches.size})", isExpanded("remote")) { expanded["remote"] = !isExpanded("remote") } }
+            item {
+                RefSectionHeader(
+                    title = "Remote (${remoteBranches.size})",
+                    isExpanded = isExpanded("remote"),
+                    onToggle = { expanded["remote"] = !isExpanded("remote") }
+                )
+            }
             if (isExpanded("remote")) {
-                renderBranchTree(remoteTree, depth = 1, expanded, isRemote = true, checkoutLoading = checkoutLoading) { ref, remote -> pendingCheckout = ref to remote }
+                renderBranchTree(
+                    remoteTree,
+                    depth = 1,
+                    expanded,
+                    isRemote = true,
+                    checkoutLoading = checkoutLoading,
+                    onCheckout = { ref, remote -> pendingCheckout = ref to remote },
+                    onDeleteBranch = {},
+                    onDeleteRemoteBranch = { pendingDelete = it to true }
+                )
             }
         }
         if (tags.isNotEmpty()) {
-            item { RefSectionHeader("Tags (${tags.size})", isExpanded("tags")) { expanded["tags"] = !isExpanded("tags") } }
+            item {
+                RefSectionHeader(
+                    title = "Tags (${tags.size})",
+                    isExpanded = isExpanded("tags"),
+                    onToggle = { expanded["tags"] = !isExpanded("tags") }
+                )
+            }
             if (isExpanded("tags")) {
                 tags.forEach { t ->
                     item(key = "tag-${t.name}") {
@@ -613,17 +765,19 @@ private fun BranchesOverview(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RefSectionHeader(
     title: String,
     isExpanded: Boolean,
     indent: Int = 0,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onToggle)
+            .combinedClickable(onClick = onToggle, onLongClick = onLongClick)
             .padding(start = Spacing.lg + (indent * 16).dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -643,6 +797,7 @@ private fun RefSectionHeader(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RefRow(
     name: String,
@@ -652,14 +807,20 @@ private fun RefRow(
     canCheckout: Boolean,
     isLoading: Boolean = false,
     indent: Int = 0,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null
 ) {
     val contentColor = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     Surface(
         color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
         modifier = Modifier
             .fillMaxWidth()
-            .let { if (canCheckout && !isLoading) it.clickable(onClick = onClick) else it }
+            .let {
+                if (isLoading) it
+                else if (onLongClick != null) it.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                else if (canCheckout) it.clickable(onClick = onClick)
+                else it
+            }
     ) {
         Row(
             modifier = Modifier
@@ -757,7 +918,9 @@ private fun LazyListScope.renderBranchTree(
     expanded: MutableMap<String, Boolean>,
     isRemote: Boolean,
     checkoutLoading: String?,
-    onCheckout: (String, Boolean) -> Unit
+    onCheckout: (String, Boolean) -> Unit,
+    onDeleteBranch: (String) -> Unit,
+    onDeleteRemoteBranch: (String) -> Unit
 ) {
     for (node in nodes) {
         val isFolder = node.children.isNotEmpty()
@@ -767,8 +930,9 @@ private fun LazyListScope.renderBranchTree(
                 RefSectionHeader(
                     title = node.segment,
                     isExpanded = isOpen,
-                    indent = depth
-                ) { expanded[node.fullPath] = !isOpen }
+                    indent = depth,
+                    onToggle = { expanded[node.fullPath] = !isOpen }
+                )
             } else {
                 node.branch?.let { b ->
                     RefRow(
@@ -779,13 +943,18 @@ private fun LazyListScope.renderBranchTree(
                         canCheckout = !b.current || isRemote,
                         isLoading = checkoutLoading == b.name,
                         indent = depth,
-                        onClick = { onCheckout(b.name, isRemote) }
+                        onClick = { onCheckout(b.name, isRemote) },
+                        onLongClick = if (isRemote) {
+                            { onDeleteRemoteBranch(b.name) }
+                        } else if (!b.current) {
+                            { onDeleteBranch(b.name) }
+                        } else null
                     )
                 }
             }
         }
         if (isFolder && isOpen) {
-            renderBranchTree(node.children, depth + 1, expanded, isRemote, checkoutLoading, onCheckout)
+            renderBranchTree(node.children, depth + 1, expanded, isRemote, checkoutLoading, onCheckout, onDeleteBranch, onDeleteRemoteBranch)
         }
     }
 }

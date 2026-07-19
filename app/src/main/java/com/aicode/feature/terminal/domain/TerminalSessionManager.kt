@@ -177,15 +177,19 @@ class TerminalSessionManager @Inject constructor(
         return id
     }
 
-    /** 按 id 向标签发送输入并回车执行（AI 持续发命令的入口）。返回是否命中标签。 */
+    /** 按 id 向标签发送输入并回车执行（AI 持续发命令的入口）。返回是否命中标签且仍活跃。 */
     fun sendInput(id: String, input: String, appendNewline: Boolean = true): Boolean {
+        val tab = tab(id) ?: return false
+        if (tab.runState !is RunState.Running) return false
         val text = if (appendNewline && !input.endsWith("\n")) input + "\n" else input
-        return writeToTab(id, text)
+        writeToSession(tab.session, text)
+        return true
     }
 
     /** 按 id 向标签写入原始文本，不自动追加回车。 */
     fun writeToTab(id: String, text: String): Boolean {
         val tab = tab(id) ?: return false
+        if (tab.runState !is RunState.Running) return false
         writeToSession(tab.session, text)
         return true
     }
@@ -193,6 +197,7 @@ class TerminalSessionManager @Inject constructor(
     /** 按 id 向标签写入原始字节（控制字符，如 Ctrl-C=0x03）。 */
     fun writeBytesToTab(id: String, vararg bytes: Int): Boolean {
         val tab = tab(id) ?: return false
+        if (tab.runState !is RunState.Running) return false
         val arr = ByteArray(bytes.size) { bytes[it].toByte() }
         tab.session.write(arr, 0, arr.size)
         return true

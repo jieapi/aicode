@@ -3,6 +3,8 @@ package com.aicode.feature.git.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicode.core.util.FileLogger
+import com.aicode.feature.git.domain.GitCommandFailureException
+import com.aicode.feature.git.domain.GitErrorMessage
 import com.aicode.feature.git.domain.GitRepository
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
@@ -116,7 +118,8 @@ class GitViewModel @Inject constructor(
                 "${name}成功"
             } catch (e: Exception) {
                 FileLogger.e(TAG, "${name}失败", e)
-                "${name}失败: ${e.message}"
+                val reason = (e as? GitCommandFailureException)?.output ?: e.message
+                "${name}失败: ${GitErrorMessage.friendly(reason ?: "")}"
             }
             // 刷新以反映新状态；失败也刷新，让 UI 与仓库一致。
             try {
@@ -210,7 +213,8 @@ class GitViewModel @Inject constructor(
                 "已切换到 $ref"
             } catch (e: Exception) {
                 FileLogger.e(TAG, "切换分支失败", e)
-                "切换失败: ${e.message}"
+                val reason = (e as? GitCommandFailureException)?.output ?: e.message
+                "切换失败: ${GitErrorMessage.friendly(reason ?: "")}"
             }
             try {
                 if (repository.isRepo()) {
@@ -239,5 +243,30 @@ class GitViewModel @Inject constructor(
                 _state.update { it.copy(checkoutLoading = null, toast = "$msg（刷新失败）") }
             }
         }
+    }
+
+    /**
+     * 创建新分支。name 为新分支名；startPoint 为基准分支（null/空 → 从当前 HEAD）；
+     * checkout=true 则创建并切换。复用 runAction：置 busy → 跑命令 → 刷新 → toast。
+     */
+    fun createBranch(name: String, startPoint: String?, checkout: Boolean) {
+        if (name.isBlank()) return
+        runAction("创建分支", { repository.createBranch(name, startPoint, checkout) })
+    }
+
+    /**
+     * 安全删除本地分支（git branch -d）。未合并或为当前分支时 git 报错，经 runAction toast 透出。
+     */
+    fun deleteBranch(name: String) {
+        if (name.isBlank()) return
+        runAction("删除分支", { repository.deleteBranch(name) })
+    }
+
+    /**
+     * 删除远程分支（git push --delete）。会改远端，失败经 runAction toast 透出。
+     */
+    fun deleteRemoteBranch(ref: String) {
+        if (ref.isBlank()) return
+        runAction("删除远程分支", { repository.deleteRemoteBranch(ref) })
     }
 }

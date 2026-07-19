@@ -86,7 +86,7 @@ class WorkspacePathMapper @Inject constructor(
      */
     fun toHostFile(path: String): File {
         val root = hostRoot()
-        val p = path.trim()
+        val p = path.trim().let { if (it.startsWith("~/")) "/root/" + it.removePrefix("~/") else it }
         val file = when {
             p == CONTAINER_ROOT || p == "$CONTAINER_ROOT/" -> root
             p.startsWith("$CONTAINER_ROOT/") -> File(root, p.removePrefix("$CONTAINER_ROOT/"))
