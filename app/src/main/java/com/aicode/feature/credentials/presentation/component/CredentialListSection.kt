@@ -39,9 +39,10 @@ internal fun CredentialListSection(
     userName: String,
     userEmail: String,
     globalUserName: String,
+    repoUrl: String,
     onEdit: (GitCredential?) -> Unit,
     onToggleDefault: (String, Boolean) -> Unit,
-    onSaveIdentity: (String, String) -> Unit
+    onSaveIdentity: (String, String, String) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -52,6 +53,7 @@ internal fun CredentialListSection(
             GitUserIdentityCard(
                 initialName = userName,
                 initialEmail = userEmail,
+                initialRepoUrl = repoUrl,
                 globalHint = globalUserName,
                 onSave = onSaveIdentity
             )

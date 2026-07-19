@@ -36,11 +36,13 @@ import com.aicode.core.theme.Spacing
 internal fun GitUserIdentityCard(
     initialName: String,
     initialEmail: String,
+    initialRepoUrl: String,
     globalHint: String,
-    onSave: (name: String, email: String) -> Unit
+    onSave: (name: String, email: String, repoUrl: String) -> Unit
 ) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     var email by remember(initialEmail) { mutableStateOf(initialEmail) }
+    var repoUrl by remember(initialRepoUrl) { mutableStateOf(initialRepoUrl) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -74,6 +76,13 @@ internal fun GitUserIdentityCard(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
+            OutlinedTextField(
+                value = repoUrl,
+                onValueChange = { repoUrl = it },
+                label = { Text("仓库地址 remote.origin.url") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -84,7 +93,7 @@ internal fun GitUserIdentityCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Button(onClick = { onSave(name.trim(), email.trim()) }) { Text("保存") }
+                Button(onClick = { onSave(name.trim(), email.trim(), repoUrl.trim()) }) { Text("保存") }
             }
         }
     }

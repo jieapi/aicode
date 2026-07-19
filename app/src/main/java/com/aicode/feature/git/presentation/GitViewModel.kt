@@ -9,6 +9,7 @@ import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTab
+import com.aicode.feature.git.domain.model.GitTag
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -38,6 +39,7 @@ class GitViewModel @Inject constructor(
         val status: GitStatus? = null,
         val branches: List<GitBranch> = emptyList(),
         val commits: List<GitCommit> = emptyList(),
+        val tags: List<GitTag> = emptyList(),
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
         val toast: String? = null,
@@ -50,7 +52,9 @@ class GitViewModel @Inject constructor(
         /** 已懒加载的提交文件清单，按 hash 缓存。 */
         val commitFiles: Map<String, List<GitFileChange>> = emptyMap(),
         /** 正在加载文件清单的提交 hash。 */
-        val loadingCommit: String? = null
+        val loadingCommit: String? = null,
+        /** 正在切换分支。 */
+        val checkoutLoading: String? = null
     )
 
     private val _state = MutableStateFlow(GitUiState())
@@ -74,20 +78,23 @@ class GitViewModel @Inject constructor(
                 val commits: List<GitCommit>
                 val hasRemote: Boolean
                 val hasIdentity: Boolean
+                val tags: List<GitTag>
                 coroutineScope {
                     val s = async { repository.status() }
                     val b = async { repository.branches() }
                     val c = async { repository.log() }
                     val r = async { repository.hasRemote() }
                     val id = async { repository.getUserName().isNotBlank() }
+                    val t = async { repository.listTags() }
                     status = s.await()
                     branches = b.await()
                     commits = c.await()
                     hasRemote = r.await()
                     hasIdentity = id.await()
+                    tags = t.await()
                 }
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits, hasRemote = hasRemote, hasIdentity = hasIdentity)
+                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits, tags = tags, hasRemote = hasRemote, hasIdentity = hasIdentity)
                 }
             } catch (e: Exception) {
                 FileLogger.e(TAG, "刷新失败", e)
@@ -118,17 +125,20 @@ class GitViewModel @Inject constructor(
                     val branches: List<GitBranch>
                     val commits: List<GitCommit>
                     val hasRemote: Boolean
+                    val tags: List<GitTag>
                     coroutineScope {
                         val s = async { repository.status() }
                         val b = async { repository.branches() }
                         val c = async { repository.log() }
                         val r = async { repository.hasRemote() }
+                        val t = async { repository.listTags() }
                         status = s.await()
                         branches = b.await()
                         commits = c.await()
                         hasRemote = r.await()
+                        tags = t.await()
                     }
-                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, hasRemote = hasRemote, notARepo = false, toast = msg) }
+                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
                 } else {
                     _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
                 }
@@ -187,4 +197,47 @@ class GitViewModel @Inject constructor(
     }
 
     fun consumeToast() = _state.update { it.copy(toast = null) }
+
+    /**
+     * 切换到指定分支或标签。成功后刷新全量状态。
+     */
+    fun checkoutBranch(ref: String, isRemote: Boolean = false) {
+        if (_state.value.busy || _state.value.checkoutLoading != null) return
+        _state.update { it.copy(checkoutLoading = ref, toast = null) }
+        viewModelScope.launch {
+            val msg = try {
+                repository.checkout(ref, isRemote)
+                "已切换到 $ref"
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "切换分支失败", e)
+                "切换失败: ${e.message}"
+            }
+            try {
+                if (repository.isRepo()) {
+                    val status: GitStatus
+                    val branches: List<GitBranch>
+                    val commits: List<GitCommit>
+                    val hasRemote: Boolean
+                    val tags: List<GitTag>
+                    coroutineScope {
+                        val s = async { repository.status() }
+                        val b = async { repository.branches() }
+                        val c = async { repository.log() }
+                        val r = async { repository.hasRemote() }
+                        val t = async { repository.listTags() }
+                        status = s.await()
+                        branches = b.await()
+                        commits = c.await()
+                        hasRemote = r.await()
+                        tags = t.await()
+                    }
+                    _state.update { it.copy(checkoutLoading = null, status = status, branches = branches, commits = commits, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
+                } else {
+                    _state.update { it.copy(checkoutLoading = null, notARepo = true, toast = msg) }
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(checkoutLoading = null, toast = "$msg（刷新失败）") }
+            }
+        }
+    }
 }

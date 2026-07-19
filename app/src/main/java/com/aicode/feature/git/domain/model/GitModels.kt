@@ -29,6 +29,12 @@ data class GitBranch(
     val remote: Boolean
 )
 
+/** 一个标签。 */
+data class GitTag(
+    val name: String,
+    val shortHash: String
+)
+
 /** `git status` 的聚合视图：分支跟踪信息 + 分组后的文件改动。 */
 data class GitStatus(
     val branch: String,

@@ -71,6 +71,7 @@ import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTab
+import com.aicode.feature.git.domain.model.GitTag
 import com.aicode.feature.git.presentation.GitViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
@@ -172,9 +173,10 @@ fun GitScreen(
                     userName = credState.userName,
                     userEmail = credState.userEmail,
                     globalUserName = credState.globalUserName,
+                    repoUrl = credState.repoUrl,
                     onEdit = { editingCredential = it },
                     onToggleDefault = { id, isDefault -> credentialViewModel.setDefault(id, isDefault) },
-                    onSaveIdentity = { name, email -> credentialViewModel.saveUserIdentity(name, email) }
+                    onSaveIdentity = { name, email, repoUrl -> credentialViewModel.saveUserIdentity(name, email, repoUrl) }
                 )
                 return@Column
             }
@@ -214,7 +216,12 @@ fun GitScreen(
                         onPull = viewModel::pull,
                         onPush = viewModel::push
                     )
-                    GitTab.BRANCHES -> BranchesTab(state.branches)
+                    GitTab.BRANCHES -> BranchesTab(
+                        branches = state.branches,
+                        tags = state.tags,
+                        checkoutLoading = state.checkoutLoading,
+                        onCheckout = viewModel::checkoutBranch
+                    )
                     GitTab.LOG -> LogTab(
                         commits = state.commits,
                         expandedCommits = state.expandedCommits,
@@ -458,25 +465,98 @@ private fun StatusActionsBar(
 }
 
 @Composable
-private fun BranchesTab(branches: List<GitBranch>) {
-    if (branches.isEmpty()) {
+private fun BranchesTab(
+    branches: List<GitBranch>,
+    tags: List<GitTag>,
+    checkoutLoading: String?,
+    onCheckout: (String, Boolean) -> Unit
+) {
+    if (branches.isEmpty() && tags.isEmpty()) {
         EmptyState("暂无分支")
         return
     }
-    // 折叠状态：key = 节点完整路径，value = 是否展开；缺省视为展开。
-    val expanded = remember { mutableStateMapOf<String, Boolean>() }
-    val tree = remember(branches) { buildBranchTree(branches) }
     val currentBranch = branches.firstOrNull { it.current }?.name ?: "未检出分支"
-    val localCount = branches.count { !it.remote }
-    val remoteCount = branches.count { it.remote }
+    val localBranches = branches.filter { !it.remote }
+    val remoteBranches = branches.filter { it.remote }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    fun isExpanded(key: String): Boolean = expanded[key] ?: true
+
+    var pendingCheckout by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+
+    pendingCheckout?.let { (ref, isRemote) ->
+        val isTag = tags.any { it.name == ref }
+        AlertDialog(
+            onDismissRequest = { pendingCheckout = null },
+            title = { Text("切换分支") },
+            text = {
+                Text(
+                    if (isTag) "切换到标签 $ref 将进入 detached HEAD 状态——不处于任何分支上，新提交不属于任何分支。确定继续？"
+                    else if (isRemote) "从远程分支 $ref 创建本地跟踪分支并切换？"
+                    else "确定切换到 $ref？"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCheckout = null
+                    onCheckout(ref, isRemote)
+                }) { Text("切换") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingCheckout = null }) { Text("取消") }
+            }
+        )
+    }
+
+    val localTree = remember(localBranches) { buildBranchTree(localBranches) }
+    val remoteTree = remember(remoteBranches) { buildBranchTree(remoteBranches) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = Spacing.xl)
     ) {
-        item { BranchesOverview(currentBranch, localCount, remoteCount) }
-        item { SectionHeader("分支列表 (${branches.size})") }
-        tree.forEach { node -> renderBranchNode(node, depth = 0, expanded) }
+        item { BranchesOverview(currentBranch, localBranches.size, remoteBranches.size, tags.size) }
+        item { RefSectionHeader("HEAD", isExpanded("head")) { expanded["head"] = !isExpanded("head") } }
+        if (isExpanded("head")) {
+            item {
+                RefRow(
+                    name = currentBranch,
+                    subtitle = "当前检出",
+                    icon = FeatherIcons.GitCommit,
+                    isCurrent = true,
+                    canCheckout = false
+                )
+            }
+        }
+        if (localBranches.isNotEmpty()) {
+            item { RefSectionHeader("Local (${localBranches.size})", isExpanded("local")) { expanded["local"] = !isExpanded("local") } }
+            if (isExpanded("local")) {
+                renderBranchTree(localTree, depth = 1, expanded, isRemote = false, checkoutLoading = checkoutLoading) { ref, remote -> pendingCheckout = ref to remote }
+            }
+        }
+        if (remoteBranches.isNotEmpty()) {
+            item { RefSectionHeader("Remote (${remoteBranches.size})", isExpanded("remote")) { expanded["remote"] = !isExpanded("remote") } }
+            if (isExpanded("remote")) {
+                renderBranchTree(remoteTree, depth = 1, expanded, isRemote = true, checkoutLoading = checkoutLoading) { ref, remote -> pendingCheckout = ref to remote }
+            }
+        }
+        if (tags.isNotEmpty()) {
+            item { RefSectionHeader("Tags (${tags.size})", isExpanded("tags")) { expanded["tags"] = !isExpanded("tags") } }
+            if (isExpanded("tags")) {
+                tags.forEach { t ->
+                    item(key = "tag-${t.name}") {
+                        RefRow(
+                            name = t.name,
+                            subtitle = t.shortHash,
+                            icon = FeatherIcons.Tag,
+                            isCurrent = false,
+                            canCheckout = true,
+                            isLoading = checkoutLoading == t.name,
+                            onClick = { pendingCheckout = t.name to false }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -484,7 +564,8 @@ private fun BranchesTab(branches: List<GitBranch>) {
 private fun BranchesOverview(
     currentBranch: String,
     localCount: Int,
-    remoteCount: Int
+    remoteCount: Int,
+    tagCount: Int
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.md)) {
@@ -524,77 +605,87 @@ private fun BranchesOverview(
             Spacer(Modifier.height(Spacing.md))
 
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                StatusMetric("本地分支", localCount, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
-                StatusMetric("远程分支", remoteCount, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
-                StatusMetric("全部", localCount + remoteCount, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.weight(1f))
+                StatusMetric("本地", localCount, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                StatusMetric("远程", remoteCount, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
+                StatusMetric("标签", tagCount, MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
             }
         }
-    }
-}
-
-/**
- * 递归向 [LazyListScope] 注入节点行。文件夹节点可折叠，展开时递归注入子节点。
- */
-private fun LazyListScope.renderBranchNode(
-    node: BranchNode,
-    depth: Int,
-    expanded: MutableMap<String, Boolean>
-) {
-    val isFolder = node.children.isNotEmpty()
-    val isOpen = expanded[node.fullPath] ?: true
-    item(key = "node-${node.fullPath}") {
-        BranchRow(node, depth, isFolder, isOpen) {
-            expanded[node.fullPath] = !isOpen
-        }
-    }
-    if (isFolder && isOpen) {
-        node.children.forEach { child -> renderBranchNode(child, depth + 1, expanded) }
     }
 }
 
 @Composable
-private fun BranchRow(
-    node: BranchNode,
-    depth: Int,
-    isFolder: Boolean,
-    isOpen: Boolean,
+private fun RefSectionHeader(
+    title: String,
+    isExpanded: Boolean,
+    indent: Int = 0,
     onToggle: () -> Unit
 ) {
-    val isCurrent = node.branch?.current == true
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(start = Spacing.lg + (indent * 16).dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = if (isExpanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+            contentDescription = if (isExpanded) "折叠" else "展开",
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(Spacing.xs))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun RefRow(
+    name: String,
+    subtitle: String?,
+    icon: ImageVector,
+    isCurrent: Boolean,
+    canCheckout: Boolean,
+    isLoading: Boolean = false,
+    indent: Int = 0,
+    onClick: () -> Unit = {}
+) {
     val contentColor = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     Surface(
         color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .let { if (canCheckout && !isLoading) it.clickable(onClick = onClick) else it }
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = Spacing.lg + (depth * 16).dp, end = Spacing.lg)
-                .height(48.dp)
-                .let { if (isFolder) it.clickable(onClick = onToggle) else it },
+                .padding(start = Spacing.lg + (indent * 16).dp, end = Spacing.lg)
+                .height(48.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (isFolder) {
-                Icon(
-                    imageVector = if (isOpen) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
-                    contentDescription = if (isOpen) "折叠" else "展开",
+            if (isLoading) {
+                CircularProgressIndicator(
                     modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
                 )
             } else {
-                Spacer(Modifier.size(18.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            Spacer(Modifier.width(Spacing.xs))
-            Icon(
-                imageVector = if (isFolder) FeatherIcons.Folder else FeatherIcons.GitBranch,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
             Spacer(Modifier.width(Spacing.md))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = node.segment,
+                    text = name,
                     style = MaterialTheme.typography.bodyMedium,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
@@ -602,44 +693,22 @@ private fun BranchRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (isCurrent) {
+                if (subtitle != null) {
                     Text(
-                        text = "当前检出",
+                        text = subtitle,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
                 }
             }
-            when {
-                isFolder -> BranchPill("${countBranchLeaves(node)}")
-                node.branch?.remote == true -> BranchPill("远程")
-                isCurrent -> BranchPill("当前")
-            }
         }
-    }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-}
-
-@Composable
-private fun BranchPill(text: String) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(Radius.pill)
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
-            maxLines = 1
-        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
 /**
- * 分支树的节点：中间段为虚拟文件夹（branch 可能为空），叶子段承载 [GitBranch]。
- * 同名既做文件夹又做叶子（如 `feature` 与 `feature/foo` 并存）时，该节点同时持有 branch 与 children。
+ * 分支树节点：中间段为虚拟文件夹（branch 可能为空），叶子段承载 [GitBranch]。
  */
 private data class BranchNode(
     val segment: String,
@@ -649,8 +718,7 @@ private data class BranchNode(
 )
 
 /**
- * 按 `/` 切分分支名构建层级树。`origin/feature/x` → origin ▸ feature ▸ x，
- * 本地与远程分支天然分桶到各自顶层目录下。同层按段名字典序排序。
+ * 按 `/` 切分分支名构建层级树。同层按段名字典序排序。
  */
 private fun buildBranchTree(branches: List<GitBranch>): List<BranchNode> {
     val root = BranchNode("", "", null)
@@ -680,10 +748,46 @@ private fun sortBranchTree(node: BranchNode) {
     node.children.forEach(::sortBranchTree)
 }
 
-/** 该子树下的实际分支数（含自身若同时是叶子）。 */
-private fun countBranchLeaves(node: BranchNode): Int {
-    val self = if (node.branch != null) 1 else 0
-    return if (node.children.isEmpty()) self else node.children.sumOf(::countBranchLeaves) + self
+/**
+ * 递归向 [LazyListScope] 注入分支树节点。文件夹节点可折叠。
+ */
+private fun LazyListScope.renderBranchTree(
+    nodes: List<BranchNode>,
+    depth: Int,
+    expanded: MutableMap<String, Boolean>,
+    isRemote: Boolean,
+    checkoutLoading: String?,
+    onCheckout: (String, Boolean) -> Unit
+) {
+    for (node in nodes) {
+        val isFolder = node.children.isNotEmpty()
+        val isOpen = expanded[node.fullPath] ?: true
+        item(key = "node-${node.fullPath}") {
+            if (isFolder) {
+                RefSectionHeader(
+                    title = node.segment,
+                    isExpanded = isOpen,
+                    indent = depth
+                ) { expanded[node.fullPath] = !isOpen }
+            } else {
+                node.branch?.let { b ->
+                    RefRow(
+                        name = node.segment,
+                        subtitle = if (b.current) "当前检出" else null,
+                        icon = if (isRemote) FeatherIcons.Cloud else FeatherIcons.GitBranch,
+                        isCurrent = b.current,
+                        canCheckout = !b.current || isRemote,
+                        isLoading = checkoutLoading == b.name,
+                        indent = depth,
+                        onClick = { onCheckout(b.name, isRemote) }
+                    )
+                }
+            }
+        }
+        if (isFolder && isOpen) {
+            renderBranchTree(node.children, depth + 1, expanded, isRemote, checkoutLoading, onCheckout)
+        }
+    }
 }
 
 @Composable
@@ -849,7 +953,18 @@ private fun CommitRow(
                     )
                     Spacer(Modifier.height(Spacing.xs))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        BranchPill(commit.shortHash)
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(Radius.pill)
+                        ) {
+                            Text(
+                                text = commit.shortHash,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
+                                maxLines = 1
+                            )
+                        }
                         Spacer(Modifier.width(Spacing.sm))
                         Text(
                             text = commit.author,

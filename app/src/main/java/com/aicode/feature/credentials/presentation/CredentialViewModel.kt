@@ -41,15 +41,18 @@ class CredentialViewModel @Inject constructor(
         val userEmail: String = "",
         /** 容器 `git config --global` 实际 user.name，回显「git 实际值」（与 userName 同源）。 */
         val globalUserName: String = "",
+        /** 容器 git config 当前 remote.origin.url，作仓库地址编辑框初值。 */
+        val repoUrl: String = "",
         val toast: String? = null
     )
 
-    // 非反应式来源的状态：git config 读出的署名、toast。credentials 走 Room Flow。
+    // 非反应式来源的状态：git config 读出的署名、仓库地址、toast。credentials 走 Room Flow。
     private val _extra = MutableStateFlow(Extra())
     private data class Extra(
         val userName: String = "",
         val userEmail: String = "",
         val globalUserName: String = "",
+        val repoUrl: String = "",
         val toast: String? = null
     )
 
@@ -59,6 +62,7 @@ class CredentialViewModel @Inject constructor(
             userName = extra.userName,
             userEmail = extra.userEmail,
             globalUserName = extra.globalUserName,
+            repoUrl = extra.repoUrl,
             toast = extra.toast
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
@@ -69,7 +73,7 @@ class CredentialViewModel @Inject constructor(
         viewModelScope.launch { fileSync.syncAll() }
     }
 
-    /** 从容器 git config 读取当前署名刷新 UI（编辑框初值 + 实际值回显）。可重入，进凭据页时调一次兜住终端改动。 */
+    /** 从容器 git config 读取当前署名与仓库地址刷新 UI（编辑框初值 + 实际值回显）。可重入，进凭据页时调一次兜住终端改动。 */
     fun refreshIdentity() {
         viewModelScope.launch {
             runCatching {
@@ -77,7 +81,8 @@ class CredentialViewModel @Inject constructor(
                     it.copy(
                         userName = gitRepository.getUserName(),
                         userEmail = gitRepository.getUserEmail(),
-                        globalUserName = gitRepository.getUserName()
+                        globalUserName = gitRepository.getUserName(),
+                        repoUrl = gitRepository.getRepoUrl()
                     )
                 }
             }.onFailure { FileLogger.w(TAG, "读取 git 全局署名失败: ${it.message}") }
@@ -112,13 +117,14 @@ class CredentialViewModel @Inject constructor(
         }
     }
 
-    /** 保存提交署名：跑 `git config --global` 写入 .gitconfig 真源 + 刷新回显。UI 与命令行同一文件。 */
-    fun saveUserIdentity(name: String, email: String) {
+    /** 保存提交署名与仓库地址：跑 `git config` 写入对应 key 真源 + 刷新回显。UI 与命令行同一文件。 */
+    fun saveUserIdentity(name: String, email: String, repoUrl: String) {
         viewModelScope.launch {
             try {
                 gitRepository.setUserIdentity(name, email)
+                gitRepository.setRepoUrl(repoUrl)
                 refreshIdentity()
-                toast("署名已保存到 git 全局配置")
+                toast("署名与仓库地址已保存")
             } catch (e: Exception) {
                 FileLogger.e(TAG, "保存署名失败", e)
                 toast("保存失败: ${e.message}")
