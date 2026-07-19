@@ -6,6 +6,7 @@ import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
 import com.aicode.feature.git.domain.model.GitStatus
+import com.aicode.feature.git.domain.model.GitTag
 import com.aicode.feature.workspace.data.repository.WorkspaceRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -132,17 +133,16 @@ class GitRepository @Inject constructor(
     suspend fun branches(): List<GitBranch> {
         val current = runCatching { git("rev-parse", "--abbrev-ref", "HEAD").trim() }
             .getOrDefault("")
-        val raw = git("for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes")
-        return raw.split('\n')
-            .map { it.removeSuffix("\r").trim() }
-            .filter { it.isNotBlank() }
-            .map { name ->
-                GitBranch(
-                    name = name,
-                    current = name == current && current.isNotBlank() && current != "HEAD",
-                    remote = name.contains('/')
-                )
-            }
+        val localRaw = git("for-each-ref", "--format=%(refname:short)", "refs/heads")
+        val remoteRaw = git("for-each-ref", "--format=%(refname:short)", "refs/remotes")
+        val result = mutableListOf<GitBranch>()
+        for (name in localRaw.split('\n').map { it.removeSuffix("\r").trim() }.filter { it.isNotBlank() }) {
+            result.add(GitBranch(name, current = name == current && current.isNotBlank() && current != "HEAD", remote = false))
+        }
+        for (name in remoteRaw.split('\n').map { it.removeSuffix("\r").trim() }.filter { it.isNotBlank() }) {
+            result.add(GitBranch(name, current = false, remote = true))
+        }
+        return result
     }
 
     /** 最近 [limit] 条提交。 */
@@ -210,6 +210,32 @@ class GitRepository @Inject constructor(
         return gitChecked("push", "--set-upstream", remote, branch)
     }
 
+    /** 本地标签列表，按名字排序。 */
+    suspend fun listTags(): List<GitTag> {
+        val raw = git("tag", "--sort=creatordate", "--format=%(refname:short) %(objectname:short)")
+        if (raw.isBlank() || raw.startsWith("fatal:")) return emptyList()
+        return raw.split('\n').mapNotNull { line ->
+            val l = line.removeSuffix("\r").trim()
+            if (l.isBlank()) return@mapNotNull null
+            val parts = l.split(' ', limit = 2)
+            if (parts.size < 2) return@mapNotNull null
+            GitTag(parts[0], parts[1])
+        }
+    }
+
+    /**
+     * 切换到指定分支或标签。branch 可以是本地分支名、远程分支名或 tag 名。
+     * 远程分支用 `git checkout -b <local> <remote>` 创建本地跟踪分支，去掉远程前缀（如 origin/）。
+     */
+    suspend fun checkout(branch: String, isRemote: Boolean): String {
+        return if (isRemote) {
+            val localName = branch.substringAfter('/', branch)
+            gitChecked("checkout", "-b", localName, "--track", branch)
+        } else {
+            gitChecked("checkout", branch)
+        }
+    }
+
     /**
      * 写入提交署名，**优先项目级**：当前工作区（/workspace/.git/config）已有项目级署名时写 local，
      * 否则写 global（容器 `GIT_CONFIG_GLOBAL=/root/.aicode/.gitconfig`，持久挂载，跨 rootfs 升级不丢）作默认。
@@ -233,6 +259,25 @@ class GitRepository @Inject constructor(
     suspend fun getUserEmail(): String =
         runCatching { git("config", "--get", "user.email").trim() }.getOrDefault("").removeSuffix("\r")
 
+    /**
+     * 写入仓库地址 remote.origin.url，**优先项目级**（与 [setUserIdentity] 同策略）：当前工作区已有 local 的
+     * remote.origin.url 则写 local，否则写 global 作默认。空值时删除对应作用域的 remote.origin.url。
+     * 注意 remote.origin.url 是 git 真实远端地址，改它会影响 push/pull 目标。
+     */
+    suspend fun setRepoUrl(url: String) {
+        val useLocal = hasLocalConfig("remote.origin.url")
+        val scope = if (useLocal) "--local" else "--global"
+        if (url.isNotBlank()) {
+            gitChecked("config", scope, "remote.origin.url", url)
+        } else {
+            // 空值删除该 key，git config --unset 对不存在的 key 返回非零但不影响其它配置
+            runCatching { gitChecked("config", scope, "--unset", "remote.origin.url") }
+        }
+    }
+
+    /** 读取 git 当前实际生效的 remote.origin.url（local→global→system），UI 回显与编辑框初值。失败返回空串。 */
+    suspend fun getRepoUrl(): String =
+        runCatching { git("config", "--get", "remote.origin.url").trim() }.getOrDefault("").removeSuffix("\r")
 
     /**
      * 对单个 shell 参数做单引号转义。含「安全字符」之外的字符（空格、`|`、`$`、反引号、`*` 等）时
