@@ -86,24 +86,29 @@ class SystemPromptProvider @Inject constructor(
 
         override fun build(ctx: AgentContext): String? {
             if (ctx.projectRoot.isBlank()) return null
-            val file = File(ctx.projectRoot, AGENTS_FILE)
-            if (!file.isFile || !file.canRead()) return null
+            val agentsFile = File(ctx.projectRoot, AGENTS_FILE)
+            val claudeFile = File(ctx.projectRoot, CLAUDE_FILE)
+            val file = when {
+                agentsFile.isFile && agentsFile.canRead() -> agentsFile to AGENTS_FILE
+                claudeFile.isFile && claudeFile.canRead() -> claudeFile to CLAUDE_FILE
+                else -> return null
+            }
             
-            val currentMod = file.lastModified()
+            val currentMod = file.first.lastModified()
             // 如果文件未修改且路径一致，直接返回快照基线，避免重复读取与格式化
             if (ctx.projectRoot == lastProjectRoot && currentMod == lastModified && cached != null) {
                 return cached
             }
             
-            val text = try { file.readText() } catch (e: Exception) { return null }
+            val text = try { file.first.readText() } catch (e: Exception) { return null }
             if (text.isBlank()) return null
             
             val body = if (text.length > MAX_AGENTS_CHARS) {
-                text.take(MAX_AGENTS_CHARS) + "\n…（$AGENTS_FILE 过长，已截断）"
+                text.take(MAX_AGENTS_CHARS) + "\n…（${file.second} 过长，已截断）"
             } else {
                 text
             }
-            cached = "项目规则 (来自 /workspace/$AGENTS_FILE，务必遵守):\n${body.trim()}"
+            cached = "项目规则 (来自 /workspace/${file.second}，务必遵守):\n${body.trim()}"
             lastModified = currentMod
             lastProjectRoot = ctx.projectRoot
             return cached
@@ -233,6 +238,7 @@ class SystemPromptProvider @Inject constructor(
     private companion object {
         const val TAG = "SystemPromptProvider"
         const val AGENTS_FILE = "AGENTS.md"
+        const val CLAUDE_FILE = "CLAUDE.md"
         const val MAX_AGENTS_CHARS = 32_000
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
     }
