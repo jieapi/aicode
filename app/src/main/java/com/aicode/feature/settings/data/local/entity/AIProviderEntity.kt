@@ -7,8 +7,9 @@ import androidx.room.PrimaryKey
 data class AIProviderEntity(
     @PrimaryKey val id: String,
     val name: String,
-    val type: String, // "openai", "anthropic"
-    val apiKey: String, // TODO: Consider encryption for real production
+    val type: String,
+    /** 明文 Room，与 git token 同口径；后续统一加密时一并处理。 */
+    val apiKey: String,
     val baseUrl: String,
     val defaultModel: String,
     val isActive: Boolean,

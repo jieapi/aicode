@@ -83,10 +83,8 @@ internal fun SystemLogsSection(
             .padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        // 顶部：日志等级调整卡片
         LogLevelCard(current = currentLogLevel, onSelect = onSelectLogLevel)
 
-        // 中间：日志筛选与文件列表
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(Radius.md),
@@ -127,7 +125,6 @@ internal fun SystemLogsSection(
             }
         }
 
-        // 底部：日志内容区
         Card(
             modifier = Modifier
                 .fillMaxWidth()

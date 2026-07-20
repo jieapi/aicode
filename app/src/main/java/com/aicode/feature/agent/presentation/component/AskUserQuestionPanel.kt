@@ -140,7 +140,6 @@ fun AskUserQuestionPanel(
 
             Spacer(Modifier.height(Spacing.md))
 
-            // 底部按钮行
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 AgentActionButton(
                     text = "跳过",

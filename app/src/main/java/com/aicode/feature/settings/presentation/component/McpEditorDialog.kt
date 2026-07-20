@@ -373,7 +373,6 @@ fun McpServerEditDialog(
                                                 .fillMaxWidth()
                                                 .padding(16.dp)
                                         ) {
-                                            // 顶部工具名 & 开关
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 verticalAlignment = Alignment.CenterVertically
@@ -392,7 +391,6 @@ fun McpServerEditDialog(
                                                 )
                                             }
 
-                                            // 描述
                                             Text(
                                                 text = tool.description ?: "无描述",
                                                 style = MaterialTheme.typography.bodySmall,
@@ -401,7 +399,6 @@ fun McpServerEditDialog(
                                                 overflow = TextOverflow.Ellipsis
                                             )
 
-                                            // 参数标签 pills
                                             val paramKeys = remember(tool.inputSchema) {
                                                 (tool.inputSchema?.get("properties") as? JsonObject)?.keys ?: emptySet()
                                             }
@@ -437,7 +434,6 @@ fun McpServerEditDialog(
                                             )
                                             Spacer(modifier = Modifier.height(8.dp))
 
-                                            // 底部审批要求开关
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 verticalAlignment = Alignment.CenterVertically

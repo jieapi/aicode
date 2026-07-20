@@ -98,10 +98,8 @@ internal fun AboutSection() {
             .padding(Spacing.lg),
         verticalArrangement = Arrangement.spacedBy(Spacing.md)
     ) {
-        // 顶部应用信息卡：左图标 + 右上应用名 + 右下简介（无版本号）
         AboutHeaderCard(appName = stringResource(R.string.app_name), appIcon = appIcon)
 
-        // 版本号卡：可点击自动检查更新
         LinkRow(
             leading = FeatherIcons.Tag,
             title = "版本",
