@@ -19,10 +19,6 @@ import javax.inject.Singleton
 class MessagePersistenceUseCase @Inject constructor(
     private val agentMessageDao: AgentMessageDao
 ) {
-    private companion object {
-        const val LEGACY_PENDING_TOOL_MARKER = "\u23F3"
-    }
-
     private val json = Json { ignoreUnknownKeys = true }
 
     // 单调递增时间戳：保证同毫秒内多次落库的顺序稳定（assistant 永远在其 tool 结果之前）。
@@ -96,7 +92,7 @@ class MessagePersistenceUseCase @Inject constructor(
                 MessageRole.TOOL -> {
                     // 只有真正完成的结果才计入配对；执行中占位行（完成事件未回来的孤儿）不算。
                     if (!e.content.startsWith(pendingToolMarker) &&
-                        !e.content.startsWith(LEGACY_PENDING_TOOL_MARKER)
+                        !e.content.startsWith(SessionUseCase.LEGACY_PENDING_TOOL_MARKER)
                     ) {
                         e.toolCallId?.let { resultIds.add(it) }
                     }

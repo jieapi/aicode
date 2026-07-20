@@ -274,9 +274,7 @@ class AIAgentViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "AIAgentViewModel"
-        // 工具占位行前缀：标记「执行中、结果未回」的孤儿，UI 与回放据此识别并排除。
-        const val PENDING_TOOL_MARKER = "[running]"
-        // 用户主动停止时的收尾文案（追加在已输出内容之后，而非整体替换）。
+        /** 用户主动停止时的收尾文案（追加在已输出内容之后，而非整体替换）。 */
         const val STOPPED_TOOL_TEXT = "已被用户停止"
     }
 
@@ -377,7 +375,7 @@ class AIAgentViewModel @Inject constructor(
         setAgentState(sessionId, AgentUIState.Loading)
 
         try {
-            val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
+            val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
             messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
@@ -503,7 +501,7 @@ class AIAgentViewModel @Inject constructor(
         try {
             var failed = false
             // 必须在插入本次用户消息之前读取历史：workflow 会自己 add(userRequest)，避免重复。
-            val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
+            val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
             if (!isAutoTrigger) {
@@ -584,7 +582,7 @@ class AIAgentViewModel @Inject constructor(
                         messagePersistenceUseCase.persist(
                             sessionId,
                             MessageRole.TOOL,
-                            "$PENDING_TOOL_MARKER ${event.toolName} 执行中…",
+                            "${SessionUseCase.PENDING_TOOL_MARKER} ${event.toolName} 执行中…",
                             id = msgId,
                             toolCallId = event.id,
                             toolName = event.toolName,
