@@ -497,7 +497,7 @@ class StatefulAgentWorkflow @Inject constructor(
                     is AgentSideEffect.ExecuteTool -> {
                         val tool = toolRegistry.getTool(effect.toolCall.name)
                         var runResult = if (tool is StreamingAgentTool) {
-                            runToolStream(tool, effect.toolCall) { emit(it) }
+                            runToolStream(tool, effect.toolCall, currentContext) { emit(it) }
                         } else {
                             // 同步兜底
                             runToolSync(tool, effect.toolCall, currentContext)
@@ -648,14 +648,15 @@ class StatefulAgentWorkflow @Inject constructor(
 
     private suspend fun runToolStream(
         tool: StreamingAgentTool, 
-        toolCall: ToolCall, 
+        toolCall: ToolCall,
+        context: AgentContext,
         onEvent: suspend (AgentEvent) -> Unit
     ): ToolRunResult {
         val live = StringBuilder()
         var lastEmitMs = 0L
         var finalResult: ToolResult? = null
         try {
-            tool.executeStream(toolCall.arguments).collect { ev ->
+            tool.executeStream(toolCall.arguments, context).collect { ev ->
                 when (ev) {
                     is ToolStreamEvent.Progress -> {
                         live.append(ev.chunk).append('\n')

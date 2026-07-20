@@ -317,7 +317,8 @@ class AIAgentViewModel @Inject constructor(
      * UserMessage 即是它，避免重复落库或出现空占位消息。
      */
     private fun handleBackgroundCommandFinished(event: TerminalSessionManager.TabFinishedEvent) {
-        val sessionId = _currentSessionId.value ?: return
+        // 按事件携带的来源会话路由，而非用户当前所在会话：后台命令可能在用户已切到别的会话后才结束。
+        val sessionId = event.sourceSessionId ?: return
         viewModelScope.launch {
             val cmdDisplay = event.command?.takeIf { it.isNotBlank() }?.let { " \"$it\"" } ?: ""
             val status = if (event.exitCode == 0) "completed" else "failed"
@@ -338,7 +339,8 @@ class AIAgentViewModel @Inject constructor(
             }
             enqueueAgentRequest(
                 request = notification,
-                projectRoot = _currentWorkspace.value
+                projectRoot = _currentWorkspace.value,
+                targetSessionId = sessionId
             )
         }
     }
@@ -416,9 +418,10 @@ class AIAgentViewModel @Inject constructor(
         projectRoot: String = "",
         inputImages: List<AgentImage> = emptyList(),
         inputAttachments: List<AgentAttachment> = emptyList(),
-        isAutoTrigger: Boolean = false
+        isAutoTrigger: Boolean = false,
+        targetSessionId: String? = null
     ) {
-        val sid = _currentSessionId.value
+        val sid = targetSessionId ?: _currentSessionId.value
         val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
         if (isCurrentRunning) {
             val req = QueuedRequest(

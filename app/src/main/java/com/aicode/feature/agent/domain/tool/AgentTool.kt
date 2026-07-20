@@ -185,7 +185,7 @@ data class ToolCall(
  * 实现类应同时实现 [AgentTool.execute] 作为非流式兜底；工作流优先走 [executeStream]。
  */
 interface StreamingAgentTool {
-    fun executeStream(args: Map<String, JsonElement>): Flow<ToolStreamEvent>
+    fun executeStream(args: Map<String, JsonElement>, context: com.aicode.feature.agent.domain.model.AgentContext): Flow<ToolStreamEvent>
 }
 
 /** 流式工具执行过程中产生的事件。 */

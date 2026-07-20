@@ -59,7 +59,9 @@ class TerminalSessionManager @Inject constructor(
     data class TabFinishedEvent(
         val tabId: String,
         val command: String?,
-        val exitCode: Int
+        val exitCode: Int,
+        /** 发起该后台命令的会话 id；回调据此路由回原会话，而非用户当前所在会话。 */
+        val sourceSessionId: String?
     )
 
     /**
@@ -75,6 +77,8 @@ class TerminalSessionManager @Inject constructor(
         val isBackground: Boolean,
         val command: String?,
         val notifyOnExit: Boolean = false,
+        /** 发起该后台命令的会话 id；交互标签为 null。回调据此路由回原会话。 */
+        val sourceSessionId: String? = null,
         runState: RunState
     ) {
         var title: String = title
@@ -149,7 +153,12 @@ class TerminalSessionManager @Inject constructor(
      * 命令跑完后 `exec /bin/sh` 保活，使该标签仍是一个可继续输入的会话（dev server 退出后也能复用），
      * 且输出全程留在 emulator 缓冲里，用户切过去或 AI 用 [getTabOutput] 都能看到累计输出。
      */
-    suspend fun startBackgroundCommand(command: String, title: String? = null, notify: Boolean = false): String {
+    suspend fun startBackgroundCommand(
+        command: String,
+        title: String? = null,
+        notify: Boolean = false,
+        sourceSessionId: String? = null
+    ): String {
         ensureContainer()
         val id = nextId()
         // notify=true：命令结束后不 exec 保活 shell，让 session 自然结束以触发 onFinished 回调。
@@ -166,6 +175,7 @@ class TerminalSessionManager @Inject constructor(
                 isBackground = true,
                 command = command,
                 notifyOnExit = notify,
+                sourceSessionId = sourceSessionId,
                 runState = RunState.Running
             )
         )
@@ -340,7 +350,7 @@ class TerminalSessionManager @Inject constructor(
                     }
                     if (target.notifyOnExit) {
                         _tabFinishedEvents.tryEmit(
-                            TabFinishedEvent(target.id, target.command, finished.exitStatus)
+                            TabFinishedEvent(target.id, target.command, finished.exitStatus, target.sourceSessionId)
                         )
                     }
                 }

@@ -225,15 +225,21 @@ class TerminalSessionTool @Inject constructor(
      * 事件流路径下，让 start/send 像 Bash 一样把等待窗口内的新输出实时推给 UI。
      * 其它动作保持非流式语义，直接返回最终结果。
      */
-    override fun executeStream(args: Map<String, JsonElement>): Flow<ToolStreamEvent> = flow {
+    override fun executeStream(
+        args: Map<String, JsonElement>,
+        context: com.aicode.feature.agent.domain.model.AgentContext
+    ): Flow<ToolStreamEvent> = flow {
         when (actionOf(args)) {
-            "start" -> streamStart(args)
+            "start" -> streamStart(args, context)
             "send" -> streamSend(args)
             else -> emit(ToolStreamEvent.Completed(execute(args)))
         }
     }
 
-    private suspend fun kotlinx.coroutines.flow.FlowCollector<ToolStreamEvent>.streamStart(args: Map<String, JsonElement>) {
+    private suspend fun kotlinx.coroutines.flow.FlowCollector<ToolStreamEvent>.streamStart(
+        args: Map<String, JsonElement>,
+        context: com.aicode.feature.agent.domain.model.AgentContext
+    ) {
         val command = args["command"]?.asPlainString()
         if (command == null) {
             emit(ToolStreamEvent.Completed(ToolResult.Error("start 操作缺少必需参数: command")))
@@ -242,7 +248,7 @@ class TerminalSessionTool @Inject constructor(
         val title = args["title"]?.asPlainString()
         val notify = args["notify"]?.asPlainString()?.toBooleanStrictOrNull() ?: false
         val tabId = try {
-            withContext(Dispatchers.Main) { sessionManager.startBackgroundCommand(command, title, notify) }
+            withContext(Dispatchers.Main) { sessionManager.startBackgroundCommand(command, title, notify, context.sessionId) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
