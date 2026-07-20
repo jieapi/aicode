@@ -40,7 +40,7 @@ data class QuestionOption(
 /**
  * 用户对一次 ask_user_question 的全部回答。
  *
- * @param answers 每个问题对应一个 [SingleAnswer]。若用户点了「跳过」，此列表为空。
+ * @param answers 每个问题对应一个 [SingleAnswer]。若用户点了「补充」，此列表为空。
  */
 data class UserQuestionAnswer(
     val answers: List<SingleAnswer>

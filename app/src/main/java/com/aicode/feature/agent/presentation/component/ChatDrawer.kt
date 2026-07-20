@@ -82,7 +82,6 @@ fun ChatDrawerContent(
             .windowInsetsPadding(WindowInsets.systemBars)
             .padding(horizontal = Spacing.md, vertical = Spacing.lg)
     ) {
-        // 顶部：新建会话
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -114,7 +113,6 @@ fun ChatDrawerContent(
             modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm)
         )
 
-        // 中部：历史记录列表（占据剩余空间）
         Box(modifier = Modifier.weight(1f)) {
             if (sessions.isEmpty()) {
                 Text(
@@ -144,7 +142,6 @@ fun ChatDrawerContent(
             }
         }
 
-        // 底部：设置入口
         HorizontalDivider(
             color = MaterialTheme.colorScheme.outlineVariant,
             modifier = Modifier.padding(vertical = Spacing.sm)

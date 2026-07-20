@@ -16,9 +16,13 @@ class SessionUseCase @Inject constructor(
 ) {
     companion object {
         private const val TAG = "SessionUseCase"
-        private const val LEGACY_PENDING_TOOL_MARKER = "\u23F3"
         const val TITLE_MAX = 20
+        /** 工具占位行前缀：标记「执行中、结果未回」的孤儿，UI 与回放据此识别。 */
         const val PENDING_TOOL_MARKER = "[running]"
+        /** 历史版本 emoji 前缀；冷启动收尾与回放仍需识别。 */
+        const val LEGACY_PENDING_TOOL_MARKER = "\u23F3"
+        /** 历史版本停止 emoji 前缀；UI 剥离结果文本时兼容。 */
+        const val LEGACY_STOPPED_TOOL_MARKER = "\u23F9"
         const val INTERRUPTED_TOOL_TEXT = "执行被中断（应用已关闭）"
     }
 

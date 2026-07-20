@@ -115,7 +115,10 @@ class ExecuteCommandTool @Inject constructor(
      * 其最终结果与 [execute] 等价（同样经 [BoundedOutput] 限幅：超大输出仅保留开头+结尾），
      * 保证喂回模型的内容一致且不会撑爆上下文。
      */
-    override fun executeStream(args: Map<String, JsonElement>): Flow<ToolStreamEvent> = flow {
+    override fun executeStream(
+        args: Map<String, JsonElement>,
+        context: com.aicode.feature.agent.domain.model.AgentContext
+    ): Flow<ToolStreamEvent> = flow {
         val command = args["command"]?.jsonPrimitive?.contentOrNull
         if (command == null) {
             emit(ToolStreamEvent.Completed(ToolResult.Error("缺少必需参数: command")))
@@ -143,8 +146,16 @@ class ExecuteCommandTool @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            FileLogger.e(TAG, "execute_command(流式) 失败: $command", e)
-            emit(ToolStreamEvent.Completed(ToolResult.Error("执行命令失败: ${e.message}")))
+            // 兜底：底层 flow 异常终止时，已逐行 emit 给用户的 Progress 仍应作为最终结果保留，
+            // 而不是被这里抛出的空 Error 覆盖掉（否则模型只看到“执行失败”，之前展示的输出全丢）。
+            FileLogger.e(TAG, "execute_command(流式) 异常(已保留此前输出 ${accumulated.totalChars} 字符): $command", e)
+            val saved = accumulated.build()
+            val result = if (saved.isNotEmpty()) {
+                ToolResult.Success(JsonPrimitive(saved))
+            } else {
+                ToolResult.Error("执行命令失败: ${e.message}")
+            }
+            emit(ToolStreamEvent.Completed(result))
         }
     }
 }

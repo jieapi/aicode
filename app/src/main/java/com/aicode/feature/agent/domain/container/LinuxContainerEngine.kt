@@ -222,6 +222,24 @@ class LinuxContainerEngine @Inject constructor(
                 else FileLogger.v(TAG, "命令完成(退出码 0): $command")
                 emit(CommandEvent.Exit(exitCode))
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 看门狗超时 destroy 进程会关闭 stdout 管道，使阻塞中的 readLine 抛 IOException
+            //（而非返回 null）。若不在此吸收，异常会让 flow 异常终止、CommandEvent.Exit 不再 emit，
+            // 上层 executeStream 的 collect 随即中断，已逐行展示给用户的输出在最终 ToolResult 里丢失。
+            // 故此处按是否超时分流：超时则 emit 超时提示 + Exit(null)，保留已 emit 的各行；
+            // 非 IO 异常也转成一行提示 + Exit，避免 flow 异常终止丢掉已输出内容。
+            watchdog.cancel()
+            if (timedOut.get()) {
+                FileLogger.w(TAG, "命令超时(${effectiveTimeout}ms)已终止(readLine 异常): $command", e)
+                emit(CommandEvent.Line(timeoutNotice(effectiveTimeout)))
+                emit(CommandEvent.Exit(null))
+            } else {
+                FileLogger.e(TAG, "命令读输出异常(已保留此前输出): $command", e)
+                emit(CommandEvent.Line("[命令执行异常：${e.message}]"))
+                emit(CommandEvent.Exit(null))
+            }
         } finally {
             // 协程取消（用户离开页面等）时确保子进程被回收，避免泄漏
             cancellationHook?.dispose()

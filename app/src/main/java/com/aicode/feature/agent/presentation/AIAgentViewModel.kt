@@ -17,7 +17,6 @@ import com.aicode.feature.agent.domain.model.ChatSession
 import com.aicode.feature.agent.domain.model.CodeChange
 import com.aicode.feature.agent.domain.model.WorkflowStatus
 import com.aicode.feature.agent.domain.permission.PermissionChoice
-import com.aicode.feature.agent.domain.tool.ToolCall
 import com.aicode.feature.agent.domain.workflow.AgentWorkflow
 import com.aicode.feature.terminal.domain.TerminalSessionManager
 import com.aicode.feature.agent.domain.workflow.AgentEvent
@@ -47,7 +46,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -274,9 +272,7 @@ class AIAgentViewModel @Inject constructor(
 
     private companion object {
         const val TAG = "AIAgentViewModel"
-        // 工具占位行前缀：标记「执行中、结果未回」的孤儿，UI 与回放据此识别并排除。
-        const val PENDING_TOOL_MARKER = "[running]"
-        // 用户主动停止时的收尾文案（追加在已输出内容之后，而非整体替换）。
+        /** 用户主动停止时的收尾文案（追加在已输出内容之后，而非整体替换）。 */
         const val STOPPED_TOOL_TEXT = "已被用户停止"
     }
 
@@ -307,57 +303,44 @@ class AIAgentViewModel @Inject constructor(
     }
 
     /**
-     * 后台命令（notify=true）结束后的回调：向当前会话注入一对 assistant(tool_call) + tool_result
-     * 消息，使用专属工具名「background_callback」避免 AI 误以为是它自己调的 terminal。
-     * UI 显示工具卡片、AI 在下一轮上下文中看到结构化结果，然后触发 Agent 循环。
+     * 后台命令（notify=true）结束后的回调：触发 Agent 新一轮，以一条后台任务完成通知（user 消息）
+     * 作为本轮输入。
+     *
+     * 用 user 消息而非 assistant(tool_call) + tool_result 消息对：后者会与原 terminal 工具调用的
+     * tool 结果在落库顺序上错位（后台回调异步触发，可能抢先于原 terminal 结果落库），导致 messages
+     * 违反 OpenAI「assistant(tool_calls) → tool 结果紧跟」的配对约束，上游返回 400。user 消息无需与
+     * 任何 tool_call 配对，天然不破坏顺序。通知文本带围栏说明，防止 AI 误判为用户的新指令或批准；
+     * AI 据此用 terminal(read) 取回完整输出。
+     *
+     * 不自行 persist 通知、用 isAutoTrigger=false 走 enqueueAgentRequest 正常流程：由
+     * executeAgentRequestStream 统一 persist 这条 user 消息，workflow 的 InitRequest 追加的同一条
+     * UserMessage 即是它，避免重复落库或出现空占位消息。
      */
     private fun handleBackgroundCommandFinished(event: TerminalSessionManager.TabFinishedEvent) {
-        val sessionId = _currentSessionId.value ?: return
+        // 按事件携带的来源会话路由，而非用户当前所在会话：后台命令可能在用户已切到别的会话后才结束。
+        val sessionId = event.sourceSessionId ?: return
         viewModelScope.launch {
-            val toolCallId = "auto_term_${event.tabId}_${System.currentTimeMillis()}"
-
-            // 注入 assistant 消息：content 为空（UI 不显示气泡），仅携带 tool_call 声明
-            // 工具名用 background_callback 而非 terminal，避免 AI 误以为是自己调的 read
-            messagePersistenceUseCase.persist(
-                sessionId = sessionId,
-                role = MessageRole.ASSISTANT,
-                content = "",
-                toolCalls = listOf(
-                    ToolCall(
-                        id = toolCallId,
-                        name = "background_callback",
-                        arguments = mapOf(
-                            "tab_id" to JsonPrimitive(event.tabId),
-                            "command" to JsonPrimitive(event.command ?: ""),
-                            "exit_code" to JsonPrimitive(event.exitCode)
-                        )
-                    )
-                )
-            )
-
-            // 注入 tool result 消息：UI 显示工具卡片，AI 上下文中看到完成通知
             val cmdDisplay = event.command?.takeIf { it.isNotBlank() }?.let { " \"$it\"" } ?: ""
-            val resultText = buildString {
-                append("[后台任务完成通知] 终端标签 ${event.tabId} 的命令$cmdDisplay 已结束，")
-                append("退出码 ${event.exitCode}。")
+            val status = if (event.exitCode == 0) "completed" else "failed"
+            val notification = buildString {
+                appendLine(BACKGROUND_NOTIFICATION_PREFIX)
+                appendLine("这是一条后台任务完成事件，不是来自用户的消息。")
+                appendLine("不要将其视为用户的确认、同意或对任何待处理问题的回答。")
+                appendLine()
+                appendLine("<task-notification>")
+                appendLine("  <task-id>${event.tabId}</task-id>")
+                appendLine("  <command>${event.command ?: ""}</command>")
+                appendLine("  <exit-code>${event.exitCode}</exit-code>")
+                appendLine("  <status>$status</status>")
+                appendLine("  <summary>后台命令$cmdDisplay 已结束（退出码 ${event.exitCode}）</summary>")
+                appendLine("</task-notification>")
+                appendLine()
                 append("可用 terminal(action=\"read\", tab_id=\"${event.tabId}\") 查看完整输出。")
             }
-            messagePersistenceUseCase.persist(
-                sessionId = sessionId,
-                role = MessageRole.TOOL,
-                content = resultText,
-                id = "tool_$toolCallId",
-                toolCallId = toolCallId,
-                toolName = "background_callback",
-                toolArgs = "{\"tab_id\":\"${event.tabId}\",\"exit_code\":${event.exitCode}}",
-                isError = event.exitCode != 0
-            )
-
-            // 触发新一轮：不持久化 user 消息，AI 上下文末尾是注入的 tool_result，自然看到完成通知
             enqueueAgentRequest(
-                request = " ",
+                request = notification,
                 projectRoot = _currentWorkspace.value,
-                isAutoTrigger = true
+                targetSessionId = sessionId
             )
         }
     }
@@ -377,7 +360,7 @@ class AIAgentViewModel @Inject constructor(
         setAgentState(sessionId, AgentUIState.Loading)
 
         try {
-            val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
+            val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
             messagePersistenceUseCase.persist(sessionId, MessageRole.USER, request, attachments = inputAttachments)
@@ -435,9 +418,10 @@ class AIAgentViewModel @Inject constructor(
         projectRoot: String = "",
         inputImages: List<AgentImage> = emptyList(),
         inputAttachments: List<AgentAttachment> = emptyList(),
-        isAutoTrigger: Boolean = false
+        isAutoTrigger: Boolean = false,
+        targetSessionId: String? = null
     ) {
-        val sid = _currentSessionId.value
+        val sid = targetSessionId ?: _currentSessionId.value
         val isCurrentRunning = sid != null && sessionJobs[sid]?.isActive == true
         if (isCurrentRunning) {
             val req = QueuedRequest(
@@ -503,7 +487,7 @@ class AIAgentViewModel @Inject constructor(
         try {
             var failed = false
             // 必须在插入本次用户消息之前读取历史：workflow 会自己 add(userRequest)，避免重复。
-            val history = messagePersistenceUseCase.buildHistory(sessionId, PENDING_TOOL_MARKER)
+            val history = messagePersistenceUseCase.buildHistory(sessionId, SessionUseCase.PENDING_TOOL_MARKER)
             val isFirst = history.isEmpty()
 
             if (!isAutoTrigger) {
@@ -584,7 +568,7 @@ class AIAgentViewModel @Inject constructor(
                         messagePersistenceUseCase.persist(
                             sessionId,
                             MessageRole.TOOL,
-                            "$PENDING_TOOL_MARKER ${event.toolName} 执行中…",
+                            "${SessionUseCase.PENDING_TOOL_MARKER} ${event.toolName} 执行中…",
                             id = msgId,
                             toolCallId = event.id,
                             toolName = event.toolName,

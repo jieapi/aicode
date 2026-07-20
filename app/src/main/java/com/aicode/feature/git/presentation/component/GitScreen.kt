@@ -1,5 +1,6 @@
 package com.aicode.feature.git.presentation.component
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -27,6 +28,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -35,7 +38,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -109,6 +112,8 @@ fun GitScreen(
 
     var showCommitDialog by remember { mutableStateOf(false) }
     var showCredentials by remember { mutableStateOf(false) }
+    // 凭据列表态拦截系统返回键：退回 Git 主视图而非退出整个 Git 页。
+    BackHandler(enabled = showCredentials) { showCredentials = false }
     // editingCredential != null -> 编辑现有；editingCredential == null && isAddingCredential -> 新增；否则列表态。
     // 编辑/新增态直接在 [Scaffold] 之外独立渲染全屏 [CredentialEditorScreen]（它自带 Scaffold/TopAppBar/BackHandler），
     // 避免与本页 Scaffold 嵌套产生双层顶栏，返回由其自身 BackHandler 接管。
@@ -132,6 +137,16 @@ fun GitScreen(
             onBack = { isAddingCredential = false },
             onSave = { credentialViewModel.saveCredential(it); isAddingCredential = false },
             onDelete = { /* 新增态无删除 */ }
+        )
+        return
+    }
+
+    // diff 视图：独立全屏页，不进入下方 GitScreen 的 Scaffold，避免双层顶栏。
+    val diffData = state.diffData
+    if (diffData != null) {
+        DiffViewerScreen(
+            diffData = diffData,
+            onBack = { viewModel.clearDiff() }
         )
         return
     }
@@ -207,6 +222,13 @@ fun GitScreen(
             }
 
             when {
+                state.diffLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(Spacing.sm))
+                        Text("正在计算差异...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
                 state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
@@ -222,7 +244,8 @@ fun GitScreen(
                         onStageAll = viewModel::stageAll,
                         onCommit = { showCommitDialog = true },
                         onPull = viewModel::pull,
-                        onPush = viewModel::push
+                        onPush = viewModel::push,
+                        onFileDiff = viewModel::loadWorktreeDiff
                     )
                     GitTab.BRANCHES -> BranchesTab(
                         branches = state.branches,
@@ -231,14 +254,18 @@ fun GitScreen(
                         onCheckout = viewModel::checkoutBranch,
                         onCreateBranch = viewModel::createBranch,
                         onDeleteBranch = viewModel::deleteBranch,
-                        onDeleteRemoteBranch = viewModel::deleteRemoteBranch
+                        onDeleteRemoteBranch = viewModel::deleteRemoteBranch,
+                        onRenameBranch = viewModel::renameBranch,
+                        onCreateTag = viewModel::createTag,
+                        onDeleteTag = viewModel::deleteTag
                     )
                     GitTab.LOG -> LogTab(
                         commits = state.commits,
                         expandedCommits = state.expandedCommits,
                         commitFiles = state.commitFiles,
                         loadingCommit = state.loadingCommit,
-                        onToggleCommit = viewModel::toggleCommit
+                        onToggleCommit = viewModel::toggleCommit,
+                        onFileDiff = viewModel::loadCommitFileDiff
                     )
                 }
             }
@@ -267,7 +294,8 @@ private fun StatusTab(
     onStageAll: () -> Unit,
     onCommit: () -> Unit,
     onPull: () -> Unit,
-    onPush: () -> Unit
+    onPush: () -> Unit,
+    onFileDiff: (String) -> Unit
 ) {
     val s = status
     val clean = s == null || (s.staged.isEmpty() && s.unstaged.isEmpty() && s.untracked.isEmpty())
@@ -303,7 +331,7 @@ private fun StatusTab(
                 if (s.unstaged.isNotEmpty()) {
                     item { SectionHeader("已修改 (${s.unstaged.size})") }
                     items(s.unstaged, key = { "u-${it.path}" }) { f ->
-                        FileRow(f, actionIcon = FeatherIcons.Plus, actionDesc = "暂存", onAction = { onStage(f.path) }, enabled = !busy)
+                        FileRow(f, actionIcon = FeatherIcons.Plus, actionDesc = "暂存", onAction = { onStage(f.path) }, enabled = !busy, onClick = { onFileDiff(f.path) })
                     }
                 }
                 if (s.untracked.isNotEmpty()) {
@@ -484,7 +512,10 @@ private fun BranchesTab(
     onCheckout: (String, Boolean) -> Unit,
     onCreateBranch: (String, String?, Boolean) -> Unit,
     onDeleteBranch: (String) -> Unit,
-    onDeleteRemoteBranch: (String) -> Unit
+    onDeleteRemoteBranch: (String) -> Unit,
+    onRenameBranch: (String, String) -> Unit,
+    onCreateTag: (String) -> Unit,
+    onDeleteTag: (String) -> Unit
 ) {
     if (branches.isEmpty() && tags.isEmpty()) {
         EmptyState("暂无分支")
@@ -499,6 +530,9 @@ private fun BranchesTab(
     var pendingCheckout by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var pendingRename by remember { mutableStateOf<String?>(null) }
+    var showCreateTagDialog by remember { mutableStateOf(false) }
+    var pendingDeleteTag by remember { mutableStateOf<String?>(null) }
 
     pendingCheckout?.let { (ref, isRemote) ->
         val isTag = tags.any { it.name == ref }
@@ -555,7 +589,7 @@ private fun BranchesTab(
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                         )
                         ExposedDropdownMenu(
                             expanded = expanded,
@@ -616,6 +650,93 @@ private fun BranchesTab(
         )
     }
 
+    pendingRename?.let { oldName ->
+        var newName by remember(oldName) { mutableStateOf(oldName) }
+        AlertDialog(
+            onDismissRequest = { pendingRename = null },
+            title = { Text("重命名分支") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("将 $oldName 重命名为：")
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("新分支名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = newName.trim()
+                        if (trimmed.isNotBlank() && trimmed != oldName) {
+                            onRenameBranch(oldName, trimmed)
+                            pendingRename = null
+                        }
+                    },
+                    enabled = newName.trim().isNotBlank() && newName.trim() != oldName
+                ) { Text("重命名") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRename = null }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showCreateTagDialog) {
+        var tagName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showCreateTagDialog = false },
+            title = { Text("新建标签") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("从当前 HEAD（$currentBranch）创建轻量标签：")
+                    OutlinedTextField(
+                        value = tagName,
+                        onValueChange = { tagName = it },
+                        label = { Text("标签名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = tagName.trim()
+                        if (trimmed.isNotBlank()) {
+                            onCreateTag(trimmed)
+                            showCreateTagDialog = false
+                        }
+                    },
+                    enabled = tagName.trim().isNotBlank()
+                ) { Text("创建") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCreateTagDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    pendingDeleteTag?.let { name ->
+        AlertDialog(
+            onDismissRequest = { pendingDeleteTag = null },
+            title = { Text("删除标签") },
+            text = { Text("删除本地标签 $name？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDeleteTag = null
+                    onDeleteTag(name)
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteTag = null }) { Text("取消") }
+            }
+        )
+    }
+
     val localTree = remember(localBranches) { buildBranchTree(localBranches) }
     val remoteTree = remember(remoteBranches) { buildBranchTree(remoteBranches) }
 
@@ -637,8 +758,7 @@ private fun BranchesTab(
                     name = currentBranch,
                     subtitle = "当前检出",
                     icon = FeatherIcons.GitCommit,
-                    isCurrent = true,
-                    canCheckout = false
+                    isCurrent = true
                 )
             }
         }
@@ -648,7 +768,7 @@ private fun BranchesTab(
                     title = "Local (${localBranches.size})",
                     isExpanded = isExpanded("local"),
                     onToggle = { expanded["local"] = !isExpanded("local") },
-                    onLongClick = { showCreateDialog = true }
+                    onAdd = { showCreateDialog = true }
                 )
             }
             if (isExpanded("local")) {
@@ -659,6 +779,7 @@ private fun BranchesTab(
                     isRemote = false,
                     checkoutLoading = checkoutLoading,
                     onCheckout = { ref, remote -> pendingCheckout = ref to remote },
+                    onRenameBranch = { pendingRename = it },
                     onDeleteBranch = { pendingDelete = it to false },
                     onDeleteRemoteBranch = {}
                 )
@@ -680,6 +801,7 @@ private fun BranchesTab(
                     isRemote = true,
                     checkoutLoading = checkoutLoading,
                     onCheckout = { ref, remote -> pendingCheckout = ref to remote },
+                    onRenameBranch = {},
                     onDeleteBranch = {},
                     onDeleteRemoteBranch = { pendingDelete = it to true }
                 )
@@ -690,7 +812,8 @@ private fun BranchesTab(
                 RefSectionHeader(
                     title = "Tags (${tags.size})",
                     isExpanded = isExpanded("tags"),
-                    onToggle = { expanded["tags"] = !isExpanded("tags") }
+                    onToggle = { expanded["tags"] = !isExpanded("tags") },
+                    onAdd = { showCreateTagDialog = true }
                 )
             }
             if (isExpanded("tags")) {
@@ -701,9 +824,11 @@ private fun BranchesTab(
                             subtitle = t.shortHash,
                             icon = FeatherIcons.Tag,
                             isCurrent = false,
-                            canCheckout = true,
                             isLoading = checkoutLoading == t.name,
-                            onClick = { pendingCheckout = t.name to false }
+                            actions = listOf(
+                                RefAction.Switch(onClick = { pendingCheckout = t.name to false }),
+                                RefAction.Delete(onClick = { pendingDeleteTag = t.name })
+                            )
                         )
                     }
                 }
@@ -772,12 +897,12 @@ private fun RefSectionHeader(
     isExpanded: Boolean,
     indent: Int = 0,
     onToggle: () -> Unit,
-    onLongClick: () -> Unit = {}
+    onAdd: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onToggle, onLongClick = onLongClick)
+            .clickable(onClick = onToggle)
             .padding(start = Spacing.lg + (indent * 16).dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -792,34 +917,55 @@ private fun RefSectionHeader(
             text = title,
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
         )
+        if (onAdd != null) {
+            IconButton(onClick = onAdd, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    FeatherIcons.Plus,
+                    contentDescription = "新增",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * 分支/标签行可执行的操作项，用于长按弹出的操作菜单。
+ */
+private sealed class RefAction(
+    val label: String,
+    val icon: ImageVector,
+    val isDestructive: Boolean,
+    val onClick: () -> Unit
+) {
+    class Switch(onClick: () -> Unit) : RefAction("切换", FeatherIcons.GitCommit, false, onClick)
+    class Rename(onClick: () -> Unit) : RefAction("重命名", FeatherIcons.Edit2, false, onClick)
+    class Delete(onClick: () -> Unit) : RefAction("删除", FeatherIcons.Trash2, true, onClick)
+}
+
 @Composable
 private fun RefRow(
     name: String,
     subtitle: String?,
     icon: ImageVector,
     isCurrent: Boolean,
-    canCheckout: Boolean,
     isLoading: Boolean = false,
     indent: Int = 0,
-    onClick: () -> Unit = {},
-    onLongClick: (() -> Unit)? = null
+    actions: List<RefAction> = emptyList()
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
     val contentColor = if (isCurrent) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     Surface(
         color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
         modifier = Modifier
             .fillMaxWidth()
             .let {
-                if (isLoading) it
-                else if (onLongClick != null) it.combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                else if (canCheckout) it.clickable(onClick = onClick)
-                else it
+                if (isLoading || actions.isEmpty()) it
+                else it.clickable { menuExpanded = true }
             }
     ) {
         Row(
@@ -865,6 +1011,77 @@ private fun RefRow(
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+    if (menuExpanded) {
+        RefActionSheet(
+            refName = name,
+            actions = actions,
+            onDismiss = { menuExpanded = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RefActionSheet(
+    refName: String,
+    actions: List<RefAction>,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = Spacing.xl)
+        ) {
+            Text(
+                text = refName,
+                style = MaterialTheme.typography.titleSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(horizontal = Spacing.lg)
+                    .padding(bottom = Spacing.md)
+            )
+            actions.forEach { action ->
+                val tint = if (action.isDestructive) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface
+                Surface(
+                    onClick = {
+                        onDismiss()
+                        action.onClick()
+                    },
+                    color = Color.Transparent
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.lg, vertical = Spacing.md),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = action.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = tint
+                        )
+                        Spacer(Modifier.width(Spacing.lg))
+                        Text(
+                            text = action.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = tint
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -919,6 +1136,7 @@ private fun LazyListScope.renderBranchTree(
     isRemote: Boolean,
     checkoutLoading: String?,
     onCheckout: (String, Boolean) -> Unit,
+    onRenameBranch: (String) -> Unit,
     onDeleteBranch: (String) -> Unit,
     onDeleteRemoteBranch: (String) -> Unit
 ) {
@@ -935,26 +1153,32 @@ private fun LazyListScope.renderBranchTree(
                 )
             } else {
                 node.branch?.let { b ->
+                    val actions = if (isRemote) {
+                        listOf(
+                            RefAction.Switch(onClick = { onCheckout(b.name, true) }),
+                            RefAction.Delete(onClick = { onDeleteRemoteBranch(b.name) })
+                        )
+                    } else {
+                        buildList {
+                            if (!b.current) add(RefAction.Switch(onClick = { onCheckout(b.name, false) }))
+                            add(RefAction.Rename(onClick = { onRenameBranch(b.name) }))
+                            if (!b.current) add(RefAction.Delete(onClick = { onDeleteBranch(b.name) }))
+                        }
+                    }
                     RefRow(
                         name = node.segment,
                         subtitle = if (b.current) "当前检出" else null,
                         icon = if (isRemote) FeatherIcons.Cloud else FeatherIcons.GitBranch,
                         isCurrent = b.current,
-                        canCheckout = !b.current || isRemote,
                         isLoading = checkoutLoading == b.name,
                         indent = depth,
-                        onClick = { onCheckout(b.name, isRemote) },
-                        onLongClick = if (isRemote) {
-                            { onDeleteRemoteBranch(b.name) }
-                        } else if (!b.current) {
-                            { onDeleteBranch(b.name) }
-                        } else null
+                        actions = actions
                     )
                 }
             }
         }
         if (isFolder && isOpen) {
-            renderBranchTree(node.children, depth + 1, expanded, isRemote, checkoutLoading, onCheckout, onDeleteBranch, onDeleteRemoteBranch)
+            renderBranchTree(node.children, depth + 1, expanded, isRemote, checkoutLoading, onCheckout, onRenameBranch, onDeleteBranch, onDeleteRemoteBranch)
         }
     }
 }
@@ -965,7 +1189,8 @@ private fun LogTab(
     expandedCommits: Set<String>,
     commitFiles: Map<String, List<GitFileChange>>,
     loadingCommit: String?,
-    onToggleCommit: (String) -> Unit
+    onToggleCommit: (String) -> Unit,
+    onFileDiff: (String, String) -> Unit
 ) {
     if (commits.isEmpty()) {
         EmptyState("暂无提交记录")
@@ -1004,7 +1229,7 @@ private fun LogTab(
                             items = files,
                             key = { f -> "file-${c.hash}-${f.statusCode}-${f.path}" }
                         ) { file ->
-                            CommitFileRow(file)
+                            CommitFileRow(file, onClick = { onFileDiff(c.hash, file.path) })
                         }
                     }
                 }
@@ -1197,13 +1422,16 @@ private fun LoadingFilesRow() {
 }
 
 @Composable
-private fun CommitFileRow(file: GitFileChange) {
+private fun CommitFileRow(file: GitFileChange, onClick: () -> Unit = {}) {
     val fileName = file.path.substringAfterLast('/')
     val directory = file.path.substringBeforeLast('/', missingDelimiterValue = "")
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.xs, bottom = Spacing.xs),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(start = 60.dp, end = Spacing.lg, top = Spacing.xs, bottom = Spacing.xs),
             verticalAlignment = Alignment.CenterVertically
         ) {
             StatusChip(file.statusCode)
@@ -1257,14 +1485,18 @@ private fun FileRow(
     actionIcon: ImageVector,
     actionDesc: String,
     onAction: () -> Unit,
-    enabled: Boolean
+    enabled: Boolean,
+    onClick: (() -> Unit)? = null
 ) {
     val fileName = file.path.substringAfterLast('/')
     val directory = file.path.substringBeforeLast('/', missingDelimiterValue = "")
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.lg, vertical = Spacing.sm),
+            modifier = Modifier
+                .fillMaxWidth()
+                .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+                .padding(horizontal = Spacing.lg, vertical = Spacing.sm),
             verticalAlignment = Alignment.CenterVertically
         ) {
             StatusChip(file.statusCode)

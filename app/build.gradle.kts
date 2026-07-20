@@ -243,6 +243,8 @@ dependencies {
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.41.0")
     // Markdown Renderer — Code Syntax Highlighting
     implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.41.0")
+    // 语法高亮引擎（markdown-renderer-code 传递引入，显式声明以供 diff 视图直接使用）
+    implementation("dev.snipme:highlights-jvm:1.1.0")
 
     // Core Android
     implementation("androidx.core:core:1.16.0")

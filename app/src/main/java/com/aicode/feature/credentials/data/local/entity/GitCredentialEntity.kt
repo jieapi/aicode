@@ -17,7 +17,7 @@ data class GitCredentialEntity(
     val host: String,
     /** 账号用户名。与 token 拼成 `user:token` 后 base64 注入 Authorization。 */
     val username: String,
-    /** 访问令牌（PAT 等）。明文 Room。 // TODO: Consider encryption for real production */
+    /** 访问令牌（PAT 等）。明文 Room，与 AI apiKey 同口径。 */
     val token: String,
     /** 用户自定义别名，为空时 UI 显示 host · username。 */
     val label: String = "",

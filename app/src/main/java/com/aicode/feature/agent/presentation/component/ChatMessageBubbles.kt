@@ -45,6 +45,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,8 +55,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import android.content.ClipData
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +76,9 @@ import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.markdownAnimations
@@ -129,6 +135,11 @@ internal fun AgentMessageItem(
         return
     }
 
+    if (message.isBackgroundNotification) {
+        BackgroundNotificationBar(message)
+        return
+    }
+
     val hasReasoning = message.role == MessageRole.ASSISTANT && !message.reasoning.isNullOrEmpty()
     val hasContent = message.content.hasVisibleContent()
     val hasAttachments = message.attachments.isNotEmpty()
@@ -136,7 +147,8 @@ internal fun AgentMessageItem(
 
     val isUser = message.role == MessageRole.USER
     var copied by remember { mutableStateOf(false) }
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val copyScope = rememberCoroutineScope()
 
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
         if (hasReasoning) {
@@ -204,8 +216,12 @@ internal fun AgentMessageItem(
                         val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
                         IconButton(
                             onClick = {
-                                clipboardManager.setText(AnnotatedString(message.content))
-                                copied = true
+                                copyScope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(ClipData.newPlainText("message", message.content))
+                                    )
+                                    copied = true
+                                }
                             },
                             modifier = Modifier.size(28.dp),
                             colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
@@ -345,6 +361,48 @@ private fun calculateMessageAttachmentSampleSize(width: Int, height: Int, reqWid
     return sampleSize.coerceAtLeast(1)
 }
 
+/**
+ * 后台任务完成通知的轻量提示条：不作为普通用户气泡展示，仅以紧凑横条形式告知用户
+ * 哪个后台命令结束了、成功与否。从通知文本里提取 <status>/<summary> 字段。
+ */
+@Composable
+private fun BackgroundNotificationBar(message: AgentUIMessage) {
+    val content = message.content
+    val status = Regex("<status>(.*?)</status>")
+        .find(content)?.groupValues?.getOrNull(1)?.trim()?.lowercase()
+    val summary = Regex("<summary>(.*?)</summary>")
+        .find(content)?.groupValues?.getOrNull(1)?.trim()
+    val isSuccess = status == "completed"
+    val dotColor = if (isSuccess) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+    val label = if (summary.isNullOrEmpty()) "后台命令已完成" else summary
+
+    Surface(
+        shape = RoundedCornerShape(Radius.md),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(0.88f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+            )
+            Text(
+                text = label,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
 @Composable
 private fun CompactionDivider() {
     Row(
@@ -461,6 +519,34 @@ internal fun MarkdownContent(
                             node = it.node,
                             highlightsBuilder = highlightsBuilder,
                             showHeader = true,
+                        )
+                    },
+                    // 库默认 maxLines=1 + Ellipsis，单元格长文会被截断；这里放开为完整多行显示。
+                    table = {
+                        MarkdownTable(
+                            content = it.content,
+                            node = it.node,
+                            style = it.typography.table,
+                            headerBlock = { content, header, tableWidth, style ->
+                                MarkdownTableHeader(
+                                    content = content,
+                                    header = header,
+                                    tableWidth = tableWidth,
+                                    style = style,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            },
+                            rowBlock = { content, header, tableWidth, style ->
+                                MarkdownTableRow(
+                                    content = content,
+                                    header = header,
+                                    tableWidth = tableWidth,
+                                    style = style,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            },
                         )
                     },
                 ),
