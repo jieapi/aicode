@@ -26,8 +26,6 @@ keystore.properties
 /skills-lock.json
 /AGENTS.md
 /CLAUDE.md
-build-smoke-debug.log
 
 # 临时调试文件
 /*.log
-/bg-task-async-notify-demo.md

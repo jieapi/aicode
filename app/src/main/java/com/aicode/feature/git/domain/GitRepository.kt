@@ -310,19 +310,23 @@ class GitRepository @Inject constructor(
         runCatching { git("config", "--get", "user.email").trim() }.getOrDefault("").removeSuffix("\r")
 
     /**
-     * 写入仓库地址 remote.origin.url，**优先项目级**（与 [setUserIdentity] 同策略）：当前工作区已有 local 的
-     * remote.origin.url 则写 local，否则写 global 作默认。空值时删除对应作用域的 remote.origin.url。
-     * 注意 remote.origin.url 是 git 真实远端地址，改它会影响 push/pull 目标。
+     * 写入仓库地址 remote.origin.url，**仅写项目级**：remote.origin.url 是单个仓库的远端地址，
+     * 与 user.name/email 这种「身份默认值」不同——它绝不该写 global。一旦写进 global，后续 `git clone`
+     * 任何新仓库时，git 会同时解析出全局与 clone 写入的 local 两个 origin.url，导致 fetch 走全局旧值、
+     * push 出现多条指向不同仓库的条目（实测复现），clone 下来的仓库 fetch 到的是错误仓库。
+     *
+     * 故此处始终写 `--local`（当前工作区须是 git 仓库），非仓库时抛 [GitCommandFailureException] 提示用户，
+     * 不再退到 global 兑底。同时顺手清掉全局可能残留的 remote.origin.url（历史版本误写下的），一次性消除污染。
      */
     suspend fun setRepoUrl(url: String) {
-        val useLocal = hasLocalConfig("remote.origin.url")
-        val scope = if (useLocal) "--local" else "--global"
         if (url.isNotBlank()) {
-            gitChecked("config", scope, "remote.origin.url", url)
+            gitChecked("config", "--local", "remote.origin.url", url)
         } else {
-            // 空值删除该 key，git config --unset 对不存在的 key 返回非零但不影响其它配置
-            runCatching { gitChecked("config", scope, "--unset", "remote.origin.url") }
+            // 空值删除 local 的 remote.origin.url，git config --unset 对不存在的 key 返回非零但不影响其它配置
+            runCatching { gitChecked("config", "--local", "--unset", "remote.origin.url") }
         }
+        // 清除全局残留的 remote.origin.url（历史误写），避免污染后续 git clone 等命令。
+        runCatching { git("config", "--global", "--unset", "remote.origin.url") }
     }
 
     /** 读取 git 当前实际生效的 remote.origin.url（local→global→system），UI 回显与编辑框初值。失败返回空串。 */

@@ -27,8 +27,9 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -757,8 +758,7 @@ private fun BranchesTab(
                     name = currentBranch,
                     subtitle = "当前检出",
                     icon = FeatherIcons.GitCommit,
-                    isCurrent = true,
-                    canCheckout = false
+                    isCurrent = true
                 )
             }
         }
@@ -824,9 +824,7 @@ private fun BranchesTab(
                             subtitle = t.shortHash,
                             icon = FeatherIcons.Tag,
                             isCurrent = false,
-                            canCheckout = true,
                             isLoading = checkoutLoading == t.name,
-                            onClick = { pendingCheckout = t.name to false },
                             actions = listOf(
                                 RefAction.Switch(onClick = { pendingCheckout = t.name to false }),
                                 RefAction.Delete(onClick = { pendingDeleteTag = t.name })
@@ -938,23 +936,25 @@ private fun RefSectionHeader(
 /**
  * 分支/标签行可执行的操作项，用于长按弹出的操作菜单。
  */
-private sealed class RefAction(val label: String, val onClick: () -> Unit) {
-    class Switch(onClick: () -> Unit) : RefAction("切换", onClick)
-    class Rename(onClick: () -> Unit) : RefAction("重命名", onClick)
-    class Delete(onClick: () -> Unit) : RefAction("删除", onClick)
+private sealed class RefAction(
+    val label: String,
+    val icon: ImageVector,
+    val isDestructive: Boolean,
+    val onClick: () -> Unit
+) {
+    class Switch(onClick: () -> Unit) : RefAction("切换", FeatherIcons.GitCommit, false, onClick)
+    class Rename(onClick: () -> Unit) : RefAction("重命名", FeatherIcons.Edit2, false, onClick)
+    class Delete(onClick: () -> Unit) : RefAction("删除", FeatherIcons.Trash2, true, onClick)
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RefRow(
     name: String,
     subtitle: String?,
     icon: ImageVector,
     isCurrent: Boolean,
-    canCheckout: Boolean,
     isLoading: Boolean = false,
     indent: Int = 0,
-    onClick: () -> Unit = {},
     actions: List<RefAction> = emptyList()
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -964,13 +964,8 @@ private fun RefRow(
         modifier = Modifier
             .fillMaxWidth()
             .let {
-                if (isLoading) it
-                else if (actions.isNotEmpty()) it.combinedClickable(
-                    onClick = onClick,
-                    onLongClick = { menuExpanded = true }
-                )
-                else if (canCheckout) it.clickable(onClick = onClick)
-                else it
+                if (isLoading || actions.isEmpty()) it
+                else it.clickable { menuExpanded = true }
             }
     ) {
         Row(
@@ -1014,22 +1009,79 @@ private fun RefRow(
                     )
                 }
             }
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = { menuExpanded = false }
-            ) {
-                actions.forEach { action ->
-                    DropdownMenuItem(
-                        text = { Text(action.label) },
-                        onClick = {
-                            menuExpanded = false
-                            action.onClick()
-                        }
-                    )
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+    if (menuExpanded) {
+        RefActionSheet(
+            refName = name,
+            actions = actions,
+            onDismiss = { menuExpanded = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RefActionSheet(
+    refName: String,
+    actions: List<RefAction>,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = Spacing.xl)
+        ) {
+            Text(
+                text = refName,
+                style = MaterialTheme.typography.titleSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(horizontal = Spacing.lg)
+                    .padding(bottom = Spacing.md)
+            )
+            actions.forEach { action ->
+                val tint = if (action.isDestructive) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface
+                Surface(
+                    onClick = {
+                        onDismiss()
+                        action.onClick()
+                    },
+                    color = Color.Transparent
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Spacing.lg, vertical = Spacing.md),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = action.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = tint
+                        )
+                        Spacer(Modifier.width(Spacing.lg))
+                        Text(
+                            text = action.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = tint
+                        )
+                    }
                 }
             }
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
 
@@ -1118,10 +1170,8 @@ private fun LazyListScope.renderBranchTree(
                         subtitle = if (b.current) "当前检出" else null,
                         icon = if (isRemote) FeatherIcons.Cloud else FeatherIcons.GitBranch,
                         isCurrent = b.current,
-                        canCheckout = !b.current || isRemote,
                         isLoading = checkoutLoading == b.name,
                         indent = depth,
-                        onClick = { onCheckout(b.name, isRemote) },
                         actions = actions
                     )
                 }
