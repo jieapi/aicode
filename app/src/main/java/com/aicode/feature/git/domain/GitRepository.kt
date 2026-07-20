@@ -245,6 +245,25 @@ class GitRepository @Inject constructor(
     suspend fun deleteBranch(name: String): String = gitChecked("branch", "-d", name)
 
     /**
+     * 重命名本地分支（`git branch -m <old> <new>`）。当前分支也可重命名：传单参数 `git branch -m <new>`
+     * 重命名当前分支；这里统一用双参数形式，由上层保证 oldName 非空。名字非法或已存在时由 [gitChecked]
+     * 据退出码抛 [GitCommandFailureException]，上层 toast。
+     */
+    suspend fun renameBranch(oldName: String, newName: String): String =
+        gitChecked("branch", "-m", oldName, newName)
+
+    /**
+     * 创建轻量标签（`git tag <name>`），指向当前 HEAD。附注标签需消息且交互复杂，暂只做轻量标签；
+     * 名字非法或已存在时由 [gitChecked] 据退出码抛 [GitCommandFailureException]，上层 toast。
+     */
+    suspend fun createTag(name: String): String = gitChecked("tag", name)
+
+    /**
+     * 删除本地标签（`git tag -d <name>`）。不存在时由 [gitChecked] 据退出码抛 [GitCommandFailureException]，上层 toast。
+     */
+    suspend fun deleteTag(name: String): String = gitChecked("tag", "-d", name)
+
+    /**
      * 删除远程分支（`git push <remote> --delete <branch>`）。ref 形如 `origin/feature`，拆出 remote 与分支名；
      * 无 remote 前缀时按 `origin` 兜底。会改远端，失败由 [gitChecked] 抛 [GitCommandFailureException]。
      */
@@ -309,6 +328,30 @@ class GitRepository @Inject constructor(
     /** 读取 git 当前实际生效的 remote.origin.url（local→global→system），UI 回显与编辑框初值。失败返回空串。 */
     suspend fun getRepoUrl(): String =
         runCatching { git("config", "--get", "remote.origin.url").trim() }.getOrDefault("").removeSuffix("\r")
+
+    /**
+     * 读取指定 ref（提交/分支/标签）下某文件的完整内容（`git show <ref>:<path>`）。
+ * 用于提交文件 diff：取 `<hash>^:<path>`（改动前）与 `<hash>:<path>`（改动后）对比。
+ * 文件在指定 ref 不存在时（如新增文件的首个提交）git 报错输出 `fatal:`，此处检测到即返回空串，
+ * 上层据空串判定为「新增/删除」，整个文件按全增或全删呈现。
+ */
+    suspend fun showFileContent(ref: String, path: String): String {
+        val out = git("show", "$ref:$path")
+        // git show 对不存在的路径输出 fatal 到 stderr，runCommandSync 合并了 stdout+stderr。
+        // 检测到 fatal 前缀视为该版本无此文件，返回空串让 diff 按全增/全删处理。
+        return if (out.startsWith("fatal:") || out.startsWith("error:")) "" else out
+    }
+
+    /**
+     * 读取工作区当前文件内容。用于工作区改动 diff：与 `HEAD:<path>` 对比看出未暂存的改动。
+ * 文件不存在或读取失败返回空串。经容器内直接读文件而非 git show，因为工作区文件即当前内容。
+ */
+    suspend fun worktreeFileContent(path: String): String =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                java.io.File(workspaceRepository.currentPath(), path).takeIf { it.isFile }?.readText() ?: ""
+            }.getOrDefault("")
+        }
 
     /**
      * 对单个 shell 参数做单引号转义。含「安全字符」之外的字符（空格、`|`、`$`、反引号、`*` 等）时

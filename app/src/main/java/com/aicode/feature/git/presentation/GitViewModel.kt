@@ -3,6 +3,7 @@ package com.aicode.feature.git.presentation
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aicode.core.util.FileLogger
+import com.aicode.core.util.LineDiff
 import com.aicode.feature.git.domain.GitCommandFailureException
 import com.aicode.feature.git.domain.GitErrorMessage
 import com.aicode.feature.git.domain.GitRepository
@@ -12,6 +13,10 @@ import com.aicode.feature.git.domain.model.GitFileChange
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTab
 import com.aicode.feature.git.domain.model.GitTag
+import com.aicode.feature.git.presentation.component.DiffData
+import com.aicode.feature.git.presentation.component.DiffRow
+import com.aicode.feature.git.presentation.component.highlightCode
+import com.aicode.feature.git.presentation.component.inferSyntaxLanguage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -33,7 +38,11 @@ class GitViewModel @Inject constructor(
     private val repository: GitRepository
 ) : ViewModel() {
 
-    private companion object { const val TAG = "GitViewModel" }
+    private companion object {
+        const val TAG = "GitViewModel"
+        /** diff 行数上限：超过则跳过 LCS，避免移动端 O(n·m) 内存压力。与 FileTools 对齐。 */
+        const val MAX_DIFF_LINES = 2000
+    }
 
     data class GitUiState(
         val loading: Boolean = true,
@@ -56,7 +65,11 @@ class GitViewModel @Inject constructor(
         /** 正在加载文件清单的提交 hash。 */
         val loadingCommit: String? = null,
         /** 正在切换分支。 */
-        val checkoutLoading: String? = null
+        val checkoutLoading: String? = null,
+        /** diff 视图数据；非 null 时 UI 全屏渲染 diff 页。 */
+        val diffData: DiffData? = null,
+        /** 正在加载 diff。 */
+        val diffLoading: Boolean = false
     )
 
     private val _state = MutableStateFlow(GitUiState())
@@ -268,5 +281,159 @@ class GitViewModel @Inject constructor(
     fun deleteRemoteBranch(ref: String) {
         if (ref.isBlank()) return
         runAction("删除远程分支", { repository.deleteRemoteBranch(ref) })
+    }
+
+    /**
+     * 重命名本地分支（git branch -m）。当前分支也可重命名。失败经 runAction toast 透出。
+     */
+    fun renameBranch(oldName: String, newName: String) {
+        if (oldName.isBlank() || newName.isBlank()) return
+        runAction("重命名分支", { repository.renameBranch(oldName, newName) })
+    }
+
+    /**
+     * 创建轻量标签（git tag <name>），指向当前 HEAD。失败经 runAction toast 透出。
+     */
+    fun createTag(name: String) {
+        if (name.isBlank()) return
+        runAction("创建标签", { repository.createTag(name) })
+    }
+
+    /**
+     * 删除本地标签（git tag -d）。失败经 runAction toast 透出。
+     */
+    fun deleteTag(name: String) {
+        if (name.isBlank()) return
+        runAction("删除标签", { repository.deleteTag(name) })
+    }
+
+    /**
+     * 退出 diff 视图，清空 diff 状态。
+     */
+    fun clearDiff() = _state.update { it.copy(diffData = null) }
+
+    /**
+     * 加载某次提交中某文件的差异（改动前 vs 改动后）。
+ * hash 为提交 hash，path 为文件路径。后台线程算 diff + 高亮，完成后填 diffData。
+ */
+    fun loadCommitFileDiff(hash: String, path: String) {
+        if (_state.value.diffLoading) return
+        _state.update { it.copy(diffLoading = true, diffData = null) }
+        viewModelScope.launch {
+            val data = runCatching { computeDiff(path, "${hash}^", hash, repository::showFileContent) }
+                .getOrElse { e ->
+                    FileLogger.e(TAG, "加载提交文件 diff 失败: $path", e)
+                    null
+                }
+            _state.update { it.copy(diffLoading = false, diffData = data, toast = if (data == null) "加载差异失败" else null) }
+        }
+    }
+
+    /**
+     * 加载工作区某文件的未暂存差异（HEAD vs 工作区当前内容）。
+ * path 为文件路径。用 showFileContent("HEAD", path) 取版本库快照，用 worktreeFileContent(path) 取工作区当前内容。
+ */
+    fun loadWorktreeDiff(path: String) {
+        if (_state.value.diffLoading) return
+        _state.update { it.copy(diffLoading = true, diffData = null) }
+        viewModelScope.launch {
+            val data = runCatching {
+                computeDiff(path, "HEAD", "工作区") { ref, p ->
+                    if (ref == "工作区") repository.worktreeFileContent(p)
+                    else repository.showFileContent(ref, p)
+                }
+            }.getOrElse { e ->
+                FileLogger.e(TAG, "加载工作区 diff 失败: $path", e)
+                null
+            }
+            _state.update { it.copy(diffLoading = false, diffData = data, toast = if (data == null) "加载差异失败" else null) }
+        }
+    }
+
+    /**
+     * 取旧/新两份文件内容，用 [LineDiff] 算行级差异，对每行做语法高亮，组装成 [DiffData]。
+ * 二进制文件（含 NUL 字节）或超大文件（任一侧超 [MAX_DIFF_LINES]）降级处理。
+ * [contentProvider] 负责按 ref 取文件内容，供提交 diff 和工作区 diff 复用。
+ */
+    private suspend fun computeDiff(
+        path: String,
+        oldRef: String,
+        newRef: String,
+        contentProvider: suspend (String, String) -> String
+    ): DiffData {
+        val oldContent = contentProvider(oldRef, path)
+        val newContent = contentProvider(newRef, path)
+
+        // 二进制检测：git show 对二进制文件返回乱码，直接看是否含 NUL。
+        if (oldContent.contains('\u0000') || newContent.contains('\u0000')) {
+            return DiffData(path, oldRef, newRef, emptyList(), 0, 0, isBinary = true)
+        }
+
+        val oldLines = oldContent.split('\n')
+        val newLines = newContent.split('\n')
+        if (maxOf(oldLines.size, newLines.size) > MAX_DIFF_LINES) {
+            return DiffData(path, oldRef, newRef, emptyList(), 0, 0, isLarge = true)
+        }
+
+        val diffLines = LineDiff.diff(oldContent, newContent)
+        val language = inferSyntaxLanguage(path)
+
+        // 对旧/新文件整体各跑一次高亮，拿到全文的 token 区间；渲染时按行偏移截取对应 SpanStyle。
+        val oldHighlighted = highlightCode(oldContent, language)
+        val newHighlighted = highlightCode(newContent, language)
+
+        // 构建行号 + 高亮截取。oldLineOffsets/newLineOffsets 为每行在全文中的起始偏移。
+        val oldOffsets = lineOffsets(oldContent)
+        val newOffsets = lineOffsets(newContent)
+
+        var oldNum = 0
+        var newNum = 0
+        val rows = diffLines.map { line ->
+            val (oldN, newN) = when (line.type) {
+                LineDiff.LineType.CONTEXT -> { oldNum++; newNum++; oldNum to newNum }
+                LineDiff.LineType.REMOVE -> { oldNum++; oldNum to null }
+                LineDiff.LineType.ADD -> { newNum++; null to newNum }
+            }
+            // 截取该行在高亮全文中的 SpanStyle。行索引 = 行号 - 1（0-based）。
+            val highlighted = when (line.type) {
+                LineDiff.LineType.REMOVE -> sliceLineHighlight(oldHighlighted, oldOffsets, oldN?.let { it - 1 })
+                LineDiff.LineType.ADD -> sliceLineHighlight(newHighlighted, newOffsets, newN?.let { it - 1 })
+                LineDiff.LineType.CONTEXT -> sliceLineHighlight(oldHighlighted, oldOffsets, oldN?.let { it - 1 })
+            }
+            DiffRow(line.type, line.text, highlighted, oldN, newN)
+        }
+
+        val added = rows.count { it.type == LineDiff.LineType.ADD }
+        val removed = rows.count { it.type == LineDiff.LineType.REMOVE }
+        return DiffData(path, oldRef, newRef, rows, added, removed)
+    }
+
+    /**
+     * 从全文高亮 AnnotatedString 中截取某行的 SpanStyle，返回只含该行文本+样式的新 AnnotatedString。
+ * lineIndex 超出范围或高亮为 null 时返回 null（降级纯文本）。
+ */
+    private fun sliceLineHighlight(
+        highlighted: androidx.compose.ui.text.AnnotatedString?,
+        offsets: IntArray,
+        lineIndex: Int?
+    ): androidx.compose.ui.text.AnnotatedString? {
+        if (highlighted == null || lineIndex == null || lineIndex < 0 || lineIndex >= offsets.size) return null
+        val start = offsets[lineIndex]
+        val end = if (lineIndex + 1 < offsets.size) offsets[lineIndex + 1] - 1 else highlighted.length
+        if (start >= highlighted.length || end <= start) return null
+        return highlighted.subSequence(start, end)
+    }
+
+    /** 计算每行在全文中的起始偏移（含末行后的虚拟偏移 = 全文长度）。 */
+    private fun lineOffsets(text: String): IntArray {
+        val lines = text.split('\n')
+        val offsets = IntArray(lines.size + 1)
+        var pos = 0
+        for (i in lines.indices) {
+            offsets[i] = pos
+            pos += lines[i].length + 1 // +1 为换行符
+        }
+        offsets[lines.size] = pos
+        return offsets
     }
 }
