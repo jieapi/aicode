@@ -45,6 +45,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,8 +55,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import android.content.ClipData
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +76,9 @@ import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownTable
+import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
+import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.m3.markdownColor
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.markdownAnimations
@@ -136,7 +142,8 @@ internal fun AgentMessageItem(
 
     val isUser = message.role == MessageRole.USER
     var copied by remember { mutableStateOf(false) }
-    val clipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val copyScope = rememberCoroutineScope()
 
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
         if (hasReasoning) {
@@ -204,8 +211,12 @@ internal fun AgentMessageItem(
                         val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
                         IconButton(
                             onClick = {
-                                clipboardManager.setText(AnnotatedString(message.content))
-                                copied = true
+                                copyScope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(ClipData.newPlainText("message", message.content))
+                                    )
+                                    copied = true
+                                }
                             },
                             modifier = Modifier.size(28.dp),
                             colors = IconButtonDefaults.iconButtonColors(contentColor = iconTint),
@@ -461,6 +472,34 @@ internal fun MarkdownContent(
                             node = it.node,
                             highlightsBuilder = highlightsBuilder,
                             showHeader = true,
+                        )
+                    },
+                    // 库默认 maxLines=1 + Ellipsis，单元格长文会被截断；这里放开为完整多行显示。
+                    table = {
+                        MarkdownTable(
+                            content = it.content,
+                            node = it.node,
+                            style = it.typography.table,
+                            headerBlock = { content, header, tableWidth, style ->
+                                MarkdownTableHeader(
+                                    content = content,
+                                    header = header,
+                                    tableWidth = tableWidth,
+                                    style = style,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            },
+                            rowBlock = { content, header, tableWidth, style ->
+                                MarkdownTableRow(
+                                    content = content,
+                                    header = header,
+                                    tableWidth = tableWidth,
+                                    style = style,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            },
                         )
                     },
                 ),
