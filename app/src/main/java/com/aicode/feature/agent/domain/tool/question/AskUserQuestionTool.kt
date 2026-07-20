@@ -176,7 +176,7 @@ class AskUserQuestionTool @Inject constructor(
         // 将用户回答序列化为 JSON 字符串，喂回给模型
         val resultText = buildString {
             if (answer.answers.isEmpty()) {
-                append("用户跳过了问题，未做出选择。请根据合理默认值继续，或换一种方式提问。")
+                append("用户未在预设选项中做出选择，想补充说明。请根据用户后续补充的内容继续，或换一种方式提问。")
             } else {
                 for (a in answer.answers) {
                     append("「${a.question}」= ")

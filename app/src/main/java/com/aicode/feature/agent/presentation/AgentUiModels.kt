@@ -37,6 +37,8 @@ data class AgentUIMessage(
     val reasoning: String? = null,
     // 上下文压缩内部锚点：不显示用户气泡，渲染为压缩分隔线。
     val isCompactionMarker: Boolean = false,
+    // 后台任务完成通知：参与模型上下文但不显示为普通用户气泡，渲染为轻量提示条。
+    val isBackgroundNotification: Boolean = false,
     val inputTokens: Int = 0,
     val outputTokens: Int = 0
 )
@@ -55,6 +57,12 @@ data class AgentAttachment(
 enum class MessageRole {
     USER, ASSISTANT, TOOL
 }
+
+/**
+ * 后台任务完成通知的固定前缀。既是 [handleBackgroundCommandFinished] 生成通知时的起首文本，
+ * 也是 UI 层识别此类消息（不渲染为普通用户气泡）的依据。改这里需同步两边。
+ */
+const val BACKGROUND_NOTIFICATION_PREFIX = "[系统通知 - 非用户输入]"
 
 /**
  * 一次会话消息查询的结果快照。

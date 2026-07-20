@@ -135,6 +135,11 @@ internal fun AgentMessageItem(
         return
     }
 
+    if (message.isBackgroundNotification) {
+        BackgroundNotificationBar(message)
+        return
+    }
+
     val hasReasoning = message.role == MessageRole.ASSISTANT && !message.reasoning.isNullOrEmpty()
     val hasContent = message.content.hasVisibleContent()
     val hasAttachments = message.attachments.isNotEmpty()
@@ -354,6 +359,48 @@ private fun calculateMessageAttachmentSampleSize(width: Int, height: Int, reqWid
         }
     }
     return sampleSize.coerceAtLeast(1)
+}
+
+/**
+ * 后台任务完成通知的轻量提示条：不作为普通用户气泡展示，仅以紧凑横条形式告知用户
+ * 哪个后台命令结束了、成功与否。从通知文本里提取 <status>/<summary> 字段。
+ */
+@Composable
+private fun BackgroundNotificationBar(message: AgentUIMessage) {
+    val content = message.content
+    val status = Regex("<status>(.*?)</status>")
+        .find(content)?.groupValues?.getOrNull(1)?.trim()?.lowercase()
+    val summary = Regex("<summary>(.*?)</summary>")
+        .find(content)?.groupValues?.getOrNull(1)?.trim()
+    val isSuccess = status == "completed"
+    val dotColor = if (isSuccess) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error
+    val label = if (summary.isNullOrEmpty()) "后台命令已完成" else summary
+
+    Surface(
+        shape = RoundedCornerShape(Radius.md),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth(0.88f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Spacing.sm, vertical = Spacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(dotColor)
+            )
+            Text(
+                text = label,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
 }
 
 @Composable

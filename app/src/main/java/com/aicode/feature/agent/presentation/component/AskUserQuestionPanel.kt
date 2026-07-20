@@ -61,7 +61,7 @@ private const val OTHER_LABEL = "其他"
  *
  * @param question 待回答的问题请求。
  * @param onConfirm 用户点击确认后回传答案。
- * @param onSkip 用户点击跳过，返回空答案。
+ * @param onSkip 用户点击「补充」，返回空答案——表示用户想补充说明而非在预设选项中做选择。
  */
 @Composable
 fun AskUserQuestionPanel(
@@ -142,7 +142,7 @@ fun AskUserQuestionPanel(
 
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 AgentActionButton(
-                    text = "跳过",
+                    text = "补充",
                     onClick = onSkip,
                     modifier = Modifier.weight(1f),
                     tone = AgentActionTone.Neutral

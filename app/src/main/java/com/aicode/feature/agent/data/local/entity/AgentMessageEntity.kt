@@ -3,6 +3,7 @@ package com.aicode.feature.agent.data.local.entity
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.aicode.feature.agent.presentation.AgentAttachment
+import com.aicode.feature.agent.presentation.BACKGROUND_NOTIFICATION_PREFIX
 import com.aicode.feature.agent.presentation.MessageRole
 import com.aicode.feature.agent.presentation.AgentUIMessage
 import kotlinx.serialization.decodeFromString
@@ -39,9 +40,10 @@ data class AgentMessageEntity(
     val outputTokens: Int = 0
 ) {
     fun toUIMessage(): AgentUIMessage {
+        val roleEnum = MessageRole.valueOf(role)
         return AgentUIMessage(
             id = id,
-            role = MessageRole.valueOf(role),
+            role = roleEnum,
             content = content,
             timestamp = timestamp,
             toolName = toolName,
@@ -50,6 +52,8 @@ data class AgentMessageEntity(
             reasoning = reasoning,
             attachments = decodeAttachments(attachmentsJson),
             isCompactionMarker = isCompactionMarker,
+            isBackgroundNotification = roleEnum == MessageRole.USER &&
+                content.startsWith(BACKGROUND_NOTIFICATION_PREFIX),
             inputTokens = inputTokens,
             outputTokens = outputTokens
         )
