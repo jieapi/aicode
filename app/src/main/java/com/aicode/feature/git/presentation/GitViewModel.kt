@@ -10,6 +10,7 @@ import com.aicode.feature.git.domain.GitRepository
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
+import com.aicode.feature.git.domain.model.GitGraph
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTab
 import com.aicode.feature.git.domain.model.GitTag
@@ -50,6 +51,8 @@ class GitViewModel @Inject constructor(
         val status: GitStatus? = null,
         val branches: List<GitBranch> = emptyList(),
         val commits: List<GitCommit> = emptyList(),
+        /** 拓扑图视图：提交（含父哈希）+ 引用 + 泳道布局，供 LogTab 绘制彩色分支连线。 */
+        val graph: GitGraph = GitGraph.EMPTY,
         val tags: List<GitTag> = emptyList(),
         val tab: GitTab = GitTab.STATUS,
         val busy: Boolean = false,
@@ -90,26 +93,27 @@ class GitViewModel @Inject constructor(
             try {
                 val status: GitStatus
                 val branches: List<GitBranch>
-                val commits: List<GitCommit>
+                val graph: GitGraph
                 val hasRemote: Boolean
                 val hasIdentity: Boolean
                 val tags: List<GitTag>
                 coroutineScope {
                     val s = async { repository.status() }
                     val b = async { repository.branches() }
-                    val c = async { repository.log() }
+                    val g = async { repository.graph() }
                     val r = async { repository.hasRemote() }
                     val id = async { repository.getUserName().isNotBlank() }
                     val t = async { repository.listTags() }
                     status = s.await()
                     branches = b.await()
-                    commits = c.await()
+                    graph = g.await()
                     hasRemote = r.await()
                     hasIdentity = id.await()
                     tags = t.await()
                 }
+                val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits, tags = tags, hasRemote = hasRemote, hasIdentity = hasIdentity)
+                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits, graph = graph, tags = tags, hasRemote = hasRemote, hasIdentity = hasIdentity)
                 }
             } catch (e: Exception) {
                 FileLogger.e(TAG, "刷新失败", e)
@@ -139,22 +143,23 @@ class GitViewModel @Inject constructor(
                 if (repository.isRepo()) {
                     val status: GitStatus
                     val branches: List<GitBranch>
-                    val commits: List<GitCommit>
+                    val graph: GitGraph
                     val hasRemote: Boolean
                     val tags: List<GitTag>
                     coroutineScope {
                         val s = async { repository.status() }
                         val b = async { repository.branches() }
-                        val c = async { repository.log() }
+                        val g = async { repository.graph() }
                         val r = async { repository.hasRemote() }
                         val t = async { repository.listTags() }
                         status = s.await()
                         branches = b.await()
-                        commits = c.await()
+                        graph = g.await()
                         hasRemote = r.await()
                         tags = t.await()
                     }
-                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
+                    val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, graph = graph, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
                 } else {
                     _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
                 }
@@ -233,22 +238,23 @@ class GitViewModel @Inject constructor(
                 if (repository.isRepo()) {
                     val status: GitStatus
                     val branches: List<GitBranch>
-                    val commits: List<GitCommit>
+                    val graph: GitGraph
                     val hasRemote: Boolean
                     val tags: List<GitTag>
                     coroutineScope {
                         val s = async { repository.status() }
                         val b = async { repository.branches() }
-                        val c = async { repository.log() }
+                        val g = async { repository.graph() }
                         val r = async { repository.hasRemote() }
                         val t = async { repository.listTags() }
                         status = s.await()
                         branches = b.await()
-                        commits = c.await()
+                        graph = g.await()
                         hasRemote = r.await()
                         tags = t.await()
                     }
-                    _state.update { it.copy(checkoutLoading = null, status = status, branches = branches, commits = commits, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
+                    val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                    _state.update { it.copy(checkoutLoading = null, status = status, branches = branches, commits = commits, graph = graph, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
                 } else {
                     _state.update { it.copy(checkoutLoading = null, notARepo = true, toast = msg) }
                 }

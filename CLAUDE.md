@@ -42,6 +42,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **新功能 / 行为变化 / 多文件改动**：新建分支 `feat/xxx`，改完走发版流程（属行为变化，发版时按新功能档升 `x.Y.0` 且须先发 RC；但提交本身**不要**动 `versionName`，见版本号规范）。
   - **纯 bug 修复 / 重构**：新建分支 `fix/xxx`；极小且不触碰启动/容器的可在 `main` 上快速修，但优先走分支以便回退与验证。
   - **纯文档 / typo / 资源文案**：可直接在 `main` 上改。
+- **改动前先定分支**：接到改动需求时，先判断当前所在分支是否适合承载这次改动——若当前分支主题与改动无关（如在 `fix/a` 上做 `fix/b` 的事），不要直接动手，先询问是否新建分支。同时检查已有分支（`git branch`）有没有主题相近的：若有合适的，可把改动放到那个分支而非另开新枝；若没有再新建。避免同一主题散落在多个分支、或无关改动混进当前分支。
 - **命名**：`feat/` 与 `fix/` 前缀 + 短主题，如 `feat/session-model`、`fix/provider-injection`。
 - **从哪拉分支**：从 `main` 最新拉分支，不要从一个功能分支再分岔（除非确实依赖它）。一份功能一个分支，**不要在同一分支混入不相关改动**。
 - **提交前必跑冒烟**：改完编译型代码（`.kt` / `.gradle.kts` / `AndroidManifest.xml`）→ 提交前默认 `./gradlew :app:assembleUniversalDebug` 验证可编译（**勿跑 `assembleDebug`/`assembleRelease` 三 flavor**，详见 Build and Run）。**禁止推未编译验证的分支**——历史教训：构造函数加参数却漏改 DI `@Provides` 的传参，导致整条分支编译不过。

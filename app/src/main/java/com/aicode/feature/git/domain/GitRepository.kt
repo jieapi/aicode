@@ -5,6 +5,10 @@ import com.aicode.feature.agent.domain.container.LinuxContainerEngine
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
+import com.aicode.feature.git.domain.model.GitGraph
+import com.aicode.feature.git.domain.model.GitGraphRef
+import com.aicode.feature.git.domain.model.GraphCommit
+import com.aicode.feature.git.domain.model.GraphEdge
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTag
 import com.aicode.feature.workspace.data.repository.WorkspaceRepository
@@ -157,6 +161,165 @@ class GitRepository @Inject constructor(
     }
 
     /**
+     * 拓扑图视图：提交（含父哈希）+ 引用（分支/标签）+ 泳道布局。
+     *
+     * `git log --pretty=format:...%P` 在常规字段后追加父哈希列表（空格分隔，多个即合并提交）；
+     * `git for-each-ref` 一次拿全部分支/标签及其指向的提交哈希与是否 HEAD。提交与引用解析后，
+     * 在 [Dispatchers.Default] 上跑纯 Kotlin 泳道分配算法（见 [computeLanes]），产出 [GitGraph]。
+     * 失败（非仓库/无提交）返回 [GitGraph.EMPTY]，不抛——UI 据空图显示空态。
+     */
+    suspend fun graph(limit: Int = 100): GitGraph = withContext(Dispatchers.Default) {
+        val logRaw = runCatching { git("log", "--pretty=format:%H|%h|%an|%ar|%s|%P", "-n", limit.toString()) }
+            .getOrDefault("")
+        if (logRaw.isBlank() || logRaw.startsWith("fatal:")) return@withContext GitGraph.EMPTY
+
+        val commits = logRaw.split('\n').mapNotNull { line ->
+            val parts = line.removeSuffix("\r").split('|', limit = 6)
+            if (parts.size < 6) null
+            else {
+                val parents = parts[5].split(' ').filter { it.isNotBlank() }
+                GraphCommit(parts[0], parts[1], parts[2], parts[3], parts[4], parents)
+            }
+        }
+        if (commits.isEmpty()) return@withContext GitGraph.EMPTY
+
+        val refs = loadRefs()
+        val layout = computeLanes(commits)
+        GitGraph(commits, refs, layout.lanes, layout.edges, layout.activeLanes, layout.maxLane)
+    }
+
+    /**
+     * 一次拉取所有分支/标签及其指向的提交哈希，解析为 `commitHash -> List<GitGraphRef>`。
+     * `%(refname:short)` 短名、`%(objectname)` 指向的完整哈希、`%(HEAD)` 标记当前分支（输出 `*` 或空）。
+     * 本地分支（refs/heads）isRemote=false，远程分支（refs/remotes）isRemote=true，标签（refs/tags）isBranch=false。
+     */
+    private suspend fun loadRefs(): Map<String, List<GitGraphRef>> {
+        val raw = runCatching {
+            git(
+                "for-each-ref",
+                "--format=%(refname:short)|%(objectname)|%(HEAD)|%(refname)",
+                "refs/heads", "refs/remotes", "refs/tags"
+            )
+        }.getOrDefault("")
+        if (raw.isBlank() || raw.startsWith("fatal:")) return emptyMap()
+        val result = mutableMapOf<String, MutableList<GitGraphRef>>()
+        for (line in raw.split('\n')) {
+            val l = line.removeSuffix("\r").trim()
+            if (l.isBlank()) continue
+            val parts = l.split('|', limit = 4)
+            if (parts.size < 4) continue
+            val name = parts[0]
+            val hash = parts[1]
+            val isHead = parts[2].trim() == "*"
+            val refname = parts[3]
+            val isBranch = refname.startsWith("refs/heads") || refname.startsWith("refs/remotes")
+            val isRemote = refname.startsWith("refs/remotes")
+            result.getOrPut(hash) { mutableListOf() }
+                .add(GitGraphRef(name, isBranch, isHead && !isRemote, isRemote))
+        }
+        return result
+    }
+
+    /**
+     * 纯 Kotlin 泳道分配算法（IDE 风格拓扑布局）。
+     *
+     * 维护「活跃泳道」数组 `active: Array<String?>`，每个槽位记录当前占据该列的提交哈希。
+     * 按提交从新到旧顺序处理（与 git log 输出一致）：
+     * - 找当前提交是否已占据某泳道（其哈希已在 active 中，即被某子提交的父引用占位）→ 复用该泳道为当前列。
+     * - 未占据则取最左侧空闲槽位为新泳道（该提交是某分支的最新提交，未被任何子提交引用）。
+     * - 记录当前提交的 lane。
+     * - 快照此刻 [active] 中所有非空槽位的列号为该提交的 [GitGraph.activeLanes]：这些泳道
+     *   从上一行延续下来并穿过本行，UI 需为它们画贯穿竖线，避免分支支线在中间行断裂。
+     * - 处理父提交：第一个父复用当前提交的泳道（主线延续）；其余父（合并的第二个及以后）各自分配泳道——
+     *   若该父已在某活跃泳道则复用，否则取最左空闲槽位占位。
+     * - 当前提交无父（根提交）则释放其泳道。
+     * - 同时为每个父生成一条 [GraphEdge]（fromLane=当前列, toLane=父列, lane=父列），跨列即分叉/合并折线。
+     *
+     * 父提交可能不在本次 limit 范围内（哈希在 active 中查不到对应提交记录），此时仍保留泳道占位
+     * 以维持连线连续性，直至其被后续提交释放。
+     */
+    private fun computeLanes(commits: List<GraphCommit>): GraphLayout {
+        val lanes = mutableMapOf<String, Int>()
+        val edges = mutableListOf<GraphEdge>()
+        val activeLanes = mutableMapOf<String, List<Int>>()
+        // 活跃泳道：槽位索引即列号，值为占据该列的提交哈希（或 null=空闲）。
+        val active = mutableListOf<String?>()
+        var maxLane = 0
+
+        for (commit in commits) {
+            // 当前提交是否已被某子提交的父引用占位。
+            var lane = active.indexOf(commit.hash)
+            if (lane < 0) {
+                // 未占位：取最左空闲槽位。
+                lane = active.indexOf(null)
+                if (lane < 0) {
+                    lane = active.size
+                    active.add(commit.hash)
+                } else {
+                    active[lane] = commit.hash
+                }
+            }
+            if (lane > maxLane) maxLane = lane
+            lanes[commit.hash] = lane
+
+            if (commit.parents.isEmpty()) {
+                // 根提交：释放当前泳道后快照。
+                active[lane] = null
+                activeLanes[commit.hash] = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+                continue
+            }
+
+            // 第一父复用当前泳道（主线延续）。
+            val parents = commit.parents
+            val firstParent = parents[0]
+            // 第一父若已在其他泳道（被别的分支占位），则当前列释放、主线转到父列。这是出边（分叉），
+            // 颜色取当前提交所在列（fromLane），表示该分支从此处分出。
+            val firstParentLane = active.indexOf(firstParent)
+            if (firstParentLane >= 0 && firstParentLane != lane) {
+                edges.add(GraphEdge(lane, firstParentLane, lane, isMergeIn = false))
+                active[lane] = null // 当前列释放，主线让位于第一父已有列。
+            } else {
+                edges.add(GraphEdge(lane, lane, lane, isMergeIn = false))
+                active[lane] = firstParent
+            }
+
+            // 其余父（合并的第二个及以后）：各自分配泳道。这些是合并入边——父支线从顶部汇入本提交，
+            // 颜色取父所在列（toLane），表示该支线沿用其分支主色延续下来。
+            for (i in 1 until parents.size) {
+                val p = parents[i]
+                val existing = active.indexOf(p)
+                val pLane = if (existing >= 0) {
+                    existing
+                } else {
+                    val free = active.indexOf(null)
+                    if (free < 0) {
+                        active.add(p)
+                        active.size - 1
+                    } else {
+                        active[free] = p
+                        free
+                    }
+                }
+                if (pLane > maxLane) maxLane = pLane
+                edges.add(GraphEdge(lane, pLane, pLane, isMergeIn = true))
+            }
+
+            // 快照本行贯穿的活跃泳道：在所有父泳道分配完毕后取 active 中非空槽位。此时新分出的支线
+            // 列也已占位，其竖线才能在本行贯穿，合并节点旁的支线才不会从顶部凭空出现而与节点断开。
+            activeLanes[commit.hash] = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+        }
+        return GraphLayout(lanes, edges, activeLanes, maxLane)
+    }
+
+    /** [computeLanes] 的输出：泳道映射 + 边列表 + 每行活跃泳道快照 + 最大列号。 */
+    private class GraphLayout(
+        val lanes: Map<String, Int>,
+        val edges: List<GraphEdge>,
+        val activeLanes: Map<String, List<Int>>,
+        val maxLane: Int
+    )
+
+    /**
      * 某次提交改动的文件清单。用 `diff-tree --root` 以兼容无父的根提交；`--no-renames` 让重命名
      * 退化为「删除旧 + 新增新」，状态码取首字符即可复用 [com.aicode.feature.git.domain.model.GitFileChange]。
      * 返回空列表表示该提交无文件改动（如空提交）。
@@ -210,9 +373,9 @@ class GitRepository @Inject constructor(
         return gitChecked("push", "--set-upstream", remote, branch)
     }
 
-    /** 本地标签列表，按名字排序。 */
+    /** 本地标签列表，按创建时间倒序（最新在前）。 */
     suspend fun listTags(): List<GitTag> {
-        val raw = git("tag", "--sort=creatordate", "--format=%(refname:short) %(objectname:short)")
+        val raw = git("tag", "--sort=-creatordate", "--format=%(refname:short) %(objectname:short)")
         if (raw.isBlank() || raw.startsWith("fatal:")) return emptyList()
         return raw.split('\n').mapNotNull { line ->
             val l = line.removeSuffix("\r").trim()

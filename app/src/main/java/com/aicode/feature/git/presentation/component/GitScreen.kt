@@ -1,6 +1,7 @@
 package com.aicode.feature.git.presentation.component
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,6 +64,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -80,9 +86,13 @@ import com.aicode.feature.credentials.presentation.component.GitUserIdentityCard
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
+import com.aicode.feature.git.domain.model.GitGraph
+import com.aicode.feature.git.domain.model.GitGraphRef
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTab
 import com.aicode.feature.git.domain.model.GitTag
+import com.aicode.feature.git.domain.model.GraphCommit
+import com.aicode.feature.git.domain.model.GraphEdge
 import com.aicode.feature.git.presentation.GitViewModel
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.*
@@ -260,7 +270,7 @@ fun GitScreen(
                         onDeleteTag = viewModel::deleteTag
                     )
                     GitTab.LOG -> LogTab(
-                        commits = state.commits,
+                        graph = state.graph,
                         expandedCommits = state.expandedCommits,
                         commitFiles = state.commitFiles,
                         loadingCommit = state.loadingCommit,
@@ -564,68 +574,83 @@ private fun BranchesTab(
         var startPoint by remember { mutableStateOf(currentBranch) }
         var checkout by remember { mutableStateOf(true) }
         var expanded by remember { mutableStateOf(false) }
+        val sheetState = rememberModalBottomSheetState()
 
-        AlertDialog(
+        ModalBottomSheet(
             onDismissRequest = { showCreateDialog = false },
-            title = { Text("新建分支") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.lg)
+                    .padding(bottom = Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "新建分支",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    label = { Text("分支名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = !expanded }
+                ) {
                     OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
-                        label = { Text("分支名") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        value = startPoint,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("基准分支") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
-                    ExposedDropdownMenuBox(
+                    ExposedDropdownMenu(
                         expanded = expanded,
-                        onExpandedChange = { expanded = !expanded }
+                        onDismissRequest = { expanded = false }
                     ) {
-                        OutlinedTextField(
-                            value = startPoint,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("基准分支") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = expanded,
-                            onDismissRequest = { expanded = false }
-                        ) {
-                            localBranchNames.forEach { name ->
-                                DropdownMenuItem(
-                                    text = { Text(name) },
-                                    onClick = { startPoint = name; expanded = false }
-                                )
-                            }
+                        localBranchNames.forEach { name ->
+                            DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = { startPoint = name; expanded = false }
+                            )
                         }
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("创建并切换")
-                        Switch(checked = checkout, onCheckedChange = { checkout = it })
-                    }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        onCreateBranch(newName.trim(), startPoint, checkout)
-                        showCreateDialog = false
-                    },
-                    enabled = newName.isNotBlank()
-                ) { Text("创建") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateDialog = false }) { Text("取消") }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("创建并切换")
+                    Switch(checked = checkout, onCheckedChange = { checkout = it })
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showCreateDialog = false }) { Text("取消") }
+                    Spacer(Modifier.width(Spacing.sm))
+                    Button(
+                        onClick = {
+                            onCreateBranch(newName.trim(), startPoint, checkout)
+                            showCreateDialog = false
+                        },
+                        enabled = newName.isNotBlank()
+                    ) { Text("创建") }
+                }
             }
-        )
+        }
     }
 
     pendingDelete?.let { (name, isRemote) ->
@@ -687,37 +712,56 @@ private fun BranchesTab(
 
     if (showCreateTagDialog) {
         var tagName by remember { mutableStateOf("") }
-        AlertDialog(
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(
             onDismissRequest = { showCreateTagDialog = false },
-            title = { Text("新建标签") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("从当前 HEAD（$currentBranch）创建轻量标签：")
-                    OutlinedTextField(
-                        value = tagName,
-                        onValueChange = { tagName = it },
-                        label = { Text("标签名") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Spacing.lg)
+                    .padding(bottom = Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "新建标签",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "从当前 HEAD（$currentBranch）创建轻量标签",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = tagName,
+                    onValueChange = { tagName = it },
+                    label = { Text("标签名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { showCreateTagDialog = false }) { Text("取消") }
+                    Spacer(Modifier.width(Spacing.sm))
+                    Button(
+                        onClick = {
+                            val trimmed = tagName.trim()
+                            if (trimmed.isNotBlank()) {
+                                onCreateTag(trimmed)
+                                showCreateTagDialog = false
+                            }
+                        },
+                        enabled = tagName.trim().isNotBlank()
+                    ) { Text("创建") }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val trimmed = tagName.trim()
-                        if (trimmed.isNotBlank()) {
-                            onCreateTag(trimmed)
-                            showCreateTagDialog = false
-                        }
-                    },
-                    enabled = tagName.trim().isNotBlank()
-                ) { Text("创建") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreateTagDialog = false }) { Text("取消") }
             }
-        )
+        }
     }
 
     pendingDeleteTag?.let { name ->
@@ -1185,28 +1229,46 @@ private fun LazyListScope.renderBranchTree(
 
 @Composable
 private fun LogTab(
-    commits: List<GitCommit>,
+    graph: GitGraph,
     expandedCommits: Set<String>,
     commitFiles: Map<String, List<GitFileChange>>,
     loadingCommit: String?,
     onToggleCommit: (String) -> Unit,
     onFileDiff: (String, String) -> Unit
 ) {
+    val commits = graph.commits
     if (commits.isEmpty()) {
         EmptyState("暂无提交记录")
         return
     }
+    // 泳道调色板：按列号循环取色，分支越多颜色越丰富。
+    val laneColors = rememberLaneColors(graph.maxLane + 1)
+    // 每个提交到其父提交的边列表（按提交索引分组），供 Canvas 绘制连线。
+    val edgesByCommit = remember(graph) { groupEdgesByCommit(graph) }
+    // Canvas 宽度：每个泳道一列，加左右内边距。
+    val laneWidth = 26.dp
+    val canvasWidth = laneWidth * (graph.maxLane + 1) + Spacing.sm * 2
+    // 每行高度，用于计算连线纵向跨度（节点居中）。
+    val rowHeight = 72.dp
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(bottom = Spacing.xl)
     ) {
-        item { LogOverview(commits = commits, expandedCount = expandedCommits.size) }
+        item { LogOverview(commits = commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }, expandedCount = expandedCommits.size) }
         item { SectionHeader("提交记录 (${commits.size})") }
-        commits.forEach { c ->
+        commits.forEachIndexed { index, c ->
             val isExpanded = c.hash in expandedCommits
             item(key = "commit-${c.hash}") {
-                CommitRow(
+                GraphCommitRow(
                     commit = c,
+                    lane = graph.lanes[c.hash] ?: 0,
+                    edges = edgesByCommit[index].orEmpty(),
+                    activeLanes = graph.activeLanes[c.hash].orEmpty(),
+                    laneColors = laneColors,
+                    canvasWidth = canvasWidth,
+                    laneWidth = laneWidth,
+                    rowHeight = rowHeight,
+                    refs = graph.refs[c.hash].orEmpty(),
                     isExpanded = isExpanded,
                     onToggle = { onToggleCommit(c.hash) }
                 )
@@ -1215,21 +1277,21 @@ private fun LogTab(
                 val files = commitFiles[c.hash]
                 when {
                     loadingCommit == c.hash && files == null -> {
-                        item(key = "loading-${c.hash}") { LoadingFilesRow() }
+                        item(key = "loading-${c.hash}") { LoadingFilesRow(canvasWidth) }
                     }
                     files == null -> Unit
                     files.isEmpty() -> {
-                        item(key = "empty-${c.hash}") { EmptyCommitFilesRow() }
+                        item(key = "empty-${c.hash}") { EmptyCommitFilesRow(canvasWidth) }
                     }
                     else -> {
                         item(key = "summary-${c.hash}") {
-                            CommitFilesSummary(files.size)
+                            CommitFilesSummary(files.size, canvasWidth)
                         }
                         items(
                             items = files,
                             key = { f -> "file-${c.hash}-${f.statusCode}-${f.path}" }
                         ) { file ->
-                            CommitFileRow(file, onClick = { onFileDiff(c.hash, file.path) })
+                            CommitFileRow(file, indent = canvasWidth + Spacing.sm, onClick = { onFileDiff(c.hash, file.path) })
                         }
                     }
                 }
@@ -1313,99 +1375,310 @@ private fun DateMetric(date: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun CommitRow(
-    commit: GitCommit,
+private fun GraphCommitRow(
+    commit: GraphCommit,
+    lane: Int,
+    edges: List<GraphEdge>,
+    activeLanes: List<Int>,
+    laneColors: List<Color>,
+    canvasWidth: androidx.compose.ui.unit.Dp,
+    laneWidth: androidx.compose.ui.unit.Dp,
+    rowHeight: androidx.compose.ui.unit.Dp,
+    refs: List<GitGraphRef>,
     isExpanded: Boolean,
     onToggle: () -> Unit
 ) {
+    val isMerge = commit.isMerge
+    val nodeColor = laneColors.getOrElse(lane) { Color.Gray }
     Surface(
         color = if (isExpanded) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(horizontal = Spacing.lg, vertical = Spacing.md)
+                .heightIn(min = rowHeight)
+                .clickable(onClick = onToggle),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.Top) {
-                Icon(
-                    imageVector = if (isExpanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
-                    contentDescription = if (isExpanded) "折叠" else "展开",
-                    modifier = Modifier.size(20.dp).padding(top = 2.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(Spacing.sm))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = commit.message,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
+            // 左侧拓扑图区域：Canvas 绘制节点 + 上下连线。
+            GraphCanvas(
+                edges = edges,
+                activeLanes = activeLanes,
+                lane = lane,
+                isMerge = isMerge,
+                laneColors = laneColors,
+                canvasWidth = canvasWidth,
+                laneWidth = laneWidth,
+                rowHeight = rowHeight
+            )
+            // 右侧提交信息。
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = Spacing.lg)
+            ) {
+                // 引用标签行（分支/标签 pill）。
+                if (refs.isNotEmpty()) {
+                    RefPills(refs = refs)
                     Spacer(Modifier.height(Spacing.xs))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(Radius.pill)
-                        ) {
+                }
+                Row(verticalAlignment = Alignment.Top) {
+                    Icon(
+                        imageVector = if (isExpanded) FeatherIcons.ChevronDown else FeatherIcons.ChevronRight,
+                        contentDescription = if (isExpanded) "折叠" else "展开",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(Spacing.xs))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = commit.message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = nodeColor.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(Radius.pill)
+                            ) {
+                                Text(
+                                    text = commit.shortHash,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = nodeColor,
+                                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
+                                    maxLines = 1
+                                )
+                            }
+                            Spacer(Modifier.width(Spacing.sm))
                             Text(
-                                text = commit.shortHash,
+                                text = commit.author,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = commit.date,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
                         }
-                        Spacer(Modifier.width(Spacing.sm))
-                        Text(
-                            text = commit.author,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
                     }
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
+/**
+ * 拓扑图 Canvas：绘制当前提交的节点圆点 + 分支连线。
+ *
+ * 绘制顺序（后绘制覆盖先绘制，保证节点压在线上）：
+ * 1. 贯穿竖线：[activeLanes] 中每个泳道画一条贯穿全行（0→height）的竖线。这些是穿过本行
+ *    仍活跃的分支主线（含本提交所在列），保证分支支线在中间行不断裂。
+ * 2. 出边下半段：本提交到父提交的跨列边，从本行中心画贝塞尔曲线到底部目标列，表示分叉/合并。
+ *    同列边已被贯穿竖线覆盖，不重复画。
+ * 3. 入边上半段：指向本提交的跨列边（来自上方提交的合并支线），从顶部源列画曲线到本行中心。
+ * 4. 节点圆点：合并提交画环形双圈，普通提交画实心圆。
+ */
+@Composable
+private fun GraphCanvas(
+    edges: List<GraphEdge>,
+    activeLanes: List<Int>,
+    lane: Int,
+    isMerge: Boolean,
+    laneColors: List<Color>,
+    canvasWidth: androidx.compose.ui.unit.Dp,
+    laneWidth: androidx.compose.ui.unit.Dp,
+    rowHeight: androidx.compose.ui.unit.Dp
+) {
+    val nodeColor = laneColors.getOrElse(lane) { Color.Gray }
+    Canvas(modifier = Modifier.size(width = canvasWidth, height = rowHeight)) {
+        val lanePx = laneWidth.toPx()
+        val padPx = Spacing.sm.toPx()
+        val centerX = lane * lanePx + lanePx / 2f + padPx
+        val centerY = size.height / 2f
+        val stroke = 2.5.dp.toPx()
+
+        // 1. 贯穿竖线：所有活跃泳道画全行竖线，保证分支主线连续。
+        for (activeLane in activeLanes) {
+            val color = laneColors.getOrElse(activeLane) { Color.Gray }
+            val x = activeLane * lanePx + lanePx / 2f + padPx
+            drawLine(
+                color = color,
+                start = androidx.compose.ui.geometry.Offset(x, 0f),
+                end = androidx.compose.ui.geometry.Offset(x, size.height),
+                strokeWidth = stroke,
+                cap = StrokeCap.Round
+            )
+        }
+
+        // 2. 跨列连线：无论是本提交向父分叉（第一父），还是合并父支线（第二父及以后），
+        //    在自上而下的渲染顺序中，父节点都在下方。因此所有跨列边都从本行中心，
+        //    画贝塞尔曲线到底部目标列。同列边已被贯穿竖线覆盖，不重复画。
+        for (edge in edges) {
+            if (edge.fromLane == edge.toLane) continue
+            val color = laneColors.getOrElse(edge.lane) { Color.Gray }
+            val fromX = edge.fromLane * lanePx + lanePx / 2f + padPx
+            val toX = edge.toLane * lanePx + lanePx / 2f + padPx
+            val midY = size.height * 0.75f
+            val path = Path().apply {
+                moveTo(fromX, centerY)
+                cubicTo(
+                    fromX, midY,
+                    toX, midY,
+                    toX, size.height
+                )
+            }
+            drawPath(
+                path = path,
+                color = color,
+                style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+        }
+
+        // 3. 节点圆点：合并提交画环形双圈，普通提交画实心圆。
+        val nodeRadius = if (isMerge) 7.dp.toPx() else 5.dp.toPx()
+        if (isMerge) {
+            drawCircle(
+                color = nodeColor,
+                radius = nodeRadius,
+                center = androidx.compose.ui.geometry.Offset(centerX, centerY),
+                style = Stroke(width = 2.5.dp.toPx())
+            )
+            drawCircle(
+                color = nodeColor,
+                radius = nodeRadius / 2f,
+                center = androidx.compose.ui.geometry.Offset(centerX, centerY)
+            )
+        } else {
+            drawCircle(
+                color = nodeColor,
+                radius = nodeRadius,
+                center = androidx.compose.ui.geometry.Offset(centerX, centerY)
+            )
+        }
+    }
+}
+
+/** 提交引用标签行：当前分支高亮 primary，其余用各分支色。 */
+@Composable
+private fun RefPills(refs: List<GitGraphRef>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        refs.forEach { ref ->
+            val isCurrent = ref.isCurrent
+            val bg = if (isCurrent) MaterialTheme.colorScheme.primary
+                else if (ref.isBranch) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.tertiaryContainer
+            val fg = if (isCurrent) MaterialTheme.colorScheme.onPrimary
+                else if (ref.isBranch) MaterialTheme.colorScheme.onSecondaryContainer
+                else MaterialTheme.colorScheme.onTertiaryContainer
+            Surface(
+                color = bg,
+                shape = RoundedCornerShape(Radius.xs)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = Spacing.sm, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (ref.isRemote) FeatherIcons.Cloud else if (ref.isBranch) FeatherIcons.GitBranch else FeatherIcons.Tag,
+                        contentDescription = null,
+                        tint = fg,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Spacer(Modifier.width(2.dp))
                     Text(
-                        text = commit.date,
+                        text = ref.name,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                        color = fg,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
         }
     }
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+/**
+ * 泳道调色板：按列数生成一组区分度高的颜色，循环复用。
+ * 颜色取自常见 IDE 分支配色，深浅适中以适配明暗主题。
+ */
+@Composable
+private fun rememberLaneColors(count: Int): List<Color> {
+    val palette = remember {
+        listOf(
+            Color(0xFF2563EB), // 蓝
+            Color(0xFF16A34A), // 绿
+            Color(0xFFD97706), // 琥珀
+            Color(0xFF9333EA), // 紫
+            Color(0xFF0891B2), // 青
+            Color(0xFFDC2626), // 红
+            Color(0xFF7C3AED), // 靛
+            Color(0xFFCA8A04)  // 金
+        )
+    }
+    return remember(count) {
+        (0 until count).map { palette[it % palette.size] }
+    }
+}
+
+/**
+ * 把 [GitGraph.edges] 按来源提交索引分组。[GitRepository.computeLanes] 按提交顺序为每个提交
+ * 生成 `parents.size` 条边（根提交 0 条），故 edges 是扁平有序的，按父数累积分组即可重建对应。
+ * 返回 `Map<提交索引, List<GraphEdge>>`，供 [GraphCommitRow] 绘制本行连线。
+ */
+private fun groupEdgesByCommit(graph: GitGraph): Map<Int, List<GraphEdge>> {
+    val result = mutableMapOf<Int, List<GraphEdge>>()
+    var edgeIdx = 0
+    graph.commits.forEachIndexed { commitIdx, commit ->
+        // 根提交无边；非根提交有 parents.size 条边。
+        val n = if (commit.parents.isEmpty()) 0 else commit.parents.size
+        val list = mutableListOf<GraphEdge>()
+        repeat(n) {
+            if (edgeIdx < graph.edges.size) {
+                list.add(graph.edges[edgeIdx++])
+            }
+        }
+        result[commitIdx] = list
+    }
+    return result
 }
 
 @Composable
-private fun CommitFilesSummary(count: Int) {
+private fun CommitFilesSummary(count: Int, indent: androidx.compose.ui.unit.Dp) {
     Text(
         text = "$count 个文件改动",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.xs)
+        modifier = Modifier.fillMaxWidth().padding(start = indent, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.xs)
     )
 }
 
 @Composable
-private fun EmptyCommitFilesRow() {
+private fun EmptyCommitFilesRow(indent: androidx.compose.ui.unit.Dp) {
     Text(
         text = "该提交无文件改动",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm)
+        modifier = Modifier.fillMaxWidth().padding(start = indent, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm)
     )
 }
 
 @Composable
-private fun LoadingFilesRow() {
+private fun LoadingFilesRow(indent: androidx.compose.ui.unit.Dp) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 60.dp, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm),
+        modifier = Modifier.fillMaxWidth().padding(start = indent, end = Spacing.lg, top = Spacing.sm, bottom = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         CircularProgressIndicator(
@@ -1422,7 +1695,7 @@ private fun LoadingFilesRow() {
 }
 
 @Composable
-private fun CommitFileRow(file: GitFileChange, onClick: () -> Unit = {}) {
+private fun CommitFileRow(file: GitFileChange, indent: androidx.compose.ui.unit.Dp, onClick: () -> Unit = {}) {
     val fileName = file.path.substringAfterLast('/')
     val directory = file.path.substringBeforeLast('/', missingDelimiterValue = "")
 
@@ -1431,7 +1704,7 @@ private fun CommitFileRow(file: GitFileChange, onClick: () -> Unit = {}) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
-                .padding(start = 60.dp, end = Spacing.lg, top = Spacing.xs, bottom = Spacing.xs),
+                .padding(start = indent, end = Spacing.lg, top = Spacing.xs, bottom = Spacing.xs),
             verticalAlignment = Alignment.CenterVertically
         ) {
             StatusChip(file.statusCode)
@@ -1459,7 +1732,7 @@ private fun CommitFileRow(file: GitFileChange, onClick: () -> Unit = {}) {
         }
         HorizontalDivider(
             color = MaterialTheme.colorScheme.outlineVariant,
-            modifier = Modifier.padding(start = 104.dp)
+            modifier = Modifier.padding(start = indent + 44.dp)
         )
     }
 }
