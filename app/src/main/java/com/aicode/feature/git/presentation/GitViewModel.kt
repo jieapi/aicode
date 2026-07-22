@@ -67,6 +67,8 @@ class GitViewModel @Inject constructor(
         val commitFiles: Map<String, List<GitFileChange>> = emptyMap(),
         /** 正在加载文件清单的提交 hash。 */
         val loadingCommit: String? = null,
+        /** 正在分页加载更旧的提交（滚动到底触发）。不置 busy，避免阻塞写操作。 */
+        val graphLoadingMore: Boolean = false,
         /** 正在切换分支。 */
         val checkoutLoading: String? = null,
         /** diff 视图数据；非 null 时 UI 全屏渲染 diff 页。 */
@@ -80,6 +82,27 @@ class GitViewModel @Inject constructor(
 
     init { refresh() }
 
+    /** 仓库快照：并发拉取 status/branches/graph/remote/tags（+可选 identity）的结果。 */
+    private data class RepoSnapshot(
+        val status: GitStatus,
+        val branches: List<GitBranch>,
+        val graph: GitGraph,
+        val hasRemote: Boolean,
+        val tags: List<GitTag>,
+        val hasIdentity: Boolean = false
+    )
+
+    /** 并发拉取仓库快照。[includeIdentity] 为真时额外拉取 user.name 是否已配置（提交按钮门控用）。 */
+    private suspend fun loadSnapshot(includeIdentity: Boolean): RepoSnapshot = coroutineScope {
+        val s = async { repository.status() }
+        val b = async { repository.branches() }
+        val g = async { repository.graph() }
+        val r = async { repository.hasRemote() }
+        val t = async { repository.listTags() }
+        val id = async { if (includeIdentity) repository.getUserName().isNotBlank() else false }
+        RepoSnapshot(s.await(), b.await(), g.await(), r.await(), t.await(), id.await())
+    }
+
     fun setTab(tab: GitTab) = _state.update { it.copy(tab = tab) }
 
     fun refresh() {
@@ -91,29 +114,10 @@ class GitViewModel @Inject constructor(
                 return@launch
             }
             try {
-                val status: GitStatus
-                val branches: List<GitBranch>
-                val graph: GitGraph
-                val hasRemote: Boolean
-                val hasIdentity: Boolean
-                val tags: List<GitTag>
-                coroutineScope {
-                    val s = async { repository.status() }
-                    val b = async { repository.branches() }
-                    val g = async { repository.graph() }
-                    val r = async { repository.hasRemote() }
-                    val id = async { repository.getUserName().isNotBlank() }
-                    val t = async { repository.listTags() }
-                    status = s.await()
-                    branches = b.await()
-                    graph = g.await()
-                    hasRemote = r.await()
-                    hasIdentity = id.await()
-                    tags = t.await()
-                }
-                val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                val snap = loadSnapshot(includeIdentity = true)
+                val commits = snap.graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = status, branches = branches, commits = commits, graph = graph, tags = tags, hasRemote = hasRemote, hasIdentity = hasIdentity)
+                    it.copy(loading = false, notARepo = false, status = snap.status, branches = snap.branches, commits = commits, graph = snap.graph, tags = snap.tags, hasRemote = snap.hasRemote, hasIdentity = snap.hasIdentity)
                 }
             } catch (e: Exception) {
                 FileLogger.e(TAG, "刷新失败", e)
@@ -141,25 +145,9 @@ class GitViewModel @Inject constructor(
             // 刷新以反映新状态；失败也刷新，让 UI 与仓库一致。
             try {
                 if (repository.isRepo()) {
-                    val status: GitStatus
-                    val branches: List<GitBranch>
-                    val graph: GitGraph
-                    val hasRemote: Boolean
-                    val tags: List<GitTag>
-                    coroutineScope {
-                        val s = async { repository.status() }
-                        val b = async { repository.branches() }
-                        val g = async { repository.graph() }
-                        val r = async { repository.hasRemote() }
-                        val t = async { repository.listTags() }
-                        status = s.await()
-                        branches = b.await()
-                        graph = g.await()
-                        hasRemote = r.await()
-                        tags = t.await()
-                    }
-                    val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
-                    _state.update { it.copy(busy = false, status = status, branches = branches, commits = commits, graph = graph, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
+                    val snap = loadSnapshot(includeIdentity = false)
+                    val commits = snap.graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                    _state.update { it.copy(busy = false, status = snap.status, branches = snap.branches, commits = commits, graph = snap.graph, tags = snap.tags, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
                 } else {
                     _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
                 }
@@ -220,6 +208,27 @@ class GitViewModel @Inject constructor(
     fun consumeToast() = _state.update { it.copy(toast = null) }
 
     /**
+     * 分页加载更旧的提交。UI 滚到底时调用：取已加载提交作为锚点，[repository.graphAppend] 用
+     * `--skip` 取下一页并整体重算泳道布局，返回完整图直接替换 state.graph。不置 busy，避免阻塞写操作。
+     * 守卫：正在加载或无更多时直接返回。失败 toast 提示且保留 hasMore 允许重试。
+     */
+    fun loadMoreCommits() {
+        val current = _state.value
+        if (current.graphLoadingMore || !current.graph.hasMore) return
+        _state.update { it.copy(graphLoadingMore = true) }
+        viewModelScope.launch {
+            try {
+                val graph = repository.graphAppend(current.graph.commits)
+                val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                _state.update { it.copy(graph = graph, commits = commits, graphLoadingMore = false) }
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "加载更多提交失败", e)
+                _state.update { it.copy(graphLoadingMore = false, toast = "加载更多失败: ${e.message}") }
+            }
+        }
+    }
+
+    /**
      * 切换到指定分支或标签。成功后刷新全量状态。
      */
     fun checkoutBranch(ref: String, isRemote: Boolean = false) {
@@ -236,25 +245,9 @@ class GitViewModel @Inject constructor(
             }
             try {
                 if (repository.isRepo()) {
-                    val status: GitStatus
-                    val branches: List<GitBranch>
-                    val graph: GitGraph
-                    val hasRemote: Boolean
-                    val tags: List<GitTag>
-                    coroutineScope {
-                        val s = async { repository.status() }
-                        val b = async { repository.branches() }
-                        val g = async { repository.graph() }
-                        val r = async { repository.hasRemote() }
-                        val t = async { repository.listTags() }
-                        status = s.await()
-                        branches = b.await()
-                        graph = g.await()
-                        hasRemote = r.await()
-                        tags = t.await()
-                    }
-                    val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
-                    _state.update { it.copy(checkoutLoading = null, status = status, branches = branches, commits = commits, graph = graph, tags = tags, hasRemote = hasRemote, notARepo = false, toast = msg) }
+                    val snap = loadSnapshot(includeIdentity = false)
+                    val commits = snap.graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                    _state.update { it.copy(checkoutLoading = null, status = snap.status, branches = snap.branches, commits = commits, graph = snap.graph, tags = snap.tags, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
                 } else {
                     _state.update { it.copy(checkoutLoading = null, notARepo = true, toast = msg) }
                 }

@@ -8,10 +8,12 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.mutableStateMapOf
@@ -57,6 +60,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -274,8 +278,10 @@ fun GitScreen(
                         expandedCommits = state.expandedCommits,
                         commitFiles = state.commitFiles,
                         loadingCommit = state.loadingCommit,
+                        graphLoadingMore = state.graphLoadingMore,
                         onToggleCommit = viewModel::toggleCommit,
-                        onFileDiff = viewModel::loadCommitFileDiff
+                        onFileDiff = viewModel::loadCommitFileDiff,
+                        onLoadMore = viewModel::loadMoreCommits
                     )
                 }
             }
@@ -1233,8 +1239,10 @@ private fun LogTab(
     expandedCommits: Set<String>,
     commitFiles: Map<String, List<GitFileChange>>,
     loadingCommit: String?,
+    graphLoadingMore: Boolean,
     onToggleCommit: (String) -> Unit,
-    onFileDiff: (String, String) -> Unit
+    onFileDiff: (String, String) -> Unit,
+    onLoadMore: () -> Unit
 ) {
     val commits = graph.commits
     if (commits.isEmpty()) {
@@ -1250,8 +1258,20 @@ private fun LogTab(
     val canvasWidth = laneWidth * (graph.maxLane + 1) + Spacing.sm * 2
     // 每行高度，用于计算连线纵向跨度（节点居中）。
     val rowHeight = 72.dp
+    val listState = rememberLazyListState()
+    // 滚到底且还有更多、且不在加载中时触发加载下一页。用 derivedStateOf 避免每帧回调。
+    val reachedBottom by remember {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf false
+            lastVisible >= listState.layoutInfo.totalItemsCount - 3
+        }
+    }
+    LaunchedEffect(reachedBottom) {
+        if (reachedBottom && graph.hasMore && !graphLoadingMore) onLoadMore()
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
+        state = listState,
         contentPadding = PaddingValues(bottom = Spacing.xl)
     ) {
         item { LogOverview(commits = commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }, expandedCount = expandedCommits.size) }
@@ -1263,7 +1283,8 @@ private fun LogTab(
                     commit = c,
                     lane = graph.lanes[c.hash] ?: 0,
                     edges = edgesByCommit[index].orEmpty(),
-                    activeLanes = graph.activeLanes[c.hash].orEmpty(),
+                    activeTopLanes = graph.activeTopLanes[c.hash].orEmpty(),
+                    activeBottomLanes = graph.activeBottomLanes[c.hash].orEmpty(),
                     laneColors = laneColors,
                     canvasWidth = canvasWidth,
                     laneWidth = laneWidth,
@@ -1293,6 +1314,27 @@ private fun LogTab(
                         ) { file ->
                             CommitFileRow(file, indent = canvasWidth + Spacing.sm, onClick = { onFileDiff(c.hash, file.path) })
                         }
+                    }
+                }
+            }
+        }
+        // 末尾加载更多指示：hasMore 为真时显示，加载中转圈，否则静态「上拉加载」提示。
+        if (graph.hasMore) {
+            item(key = "load-more") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = Spacing.md),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (graphLoadingMore) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                    } else {
+                        Text(
+                            "上拉加载更早提交",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -1379,7 +1421,8 @@ private fun GraphCommitRow(
     commit: GraphCommit,
     lane: Int,
     edges: List<GraphEdge>,
-    activeLanes: List<Int>,
+    activeTopLanes: List<Int>,
+    activeBottomLanes: List<Int>,
     laneColors: List<Color>,
     canvasWidth: androidx.compose.ui.unit.Dp,
     laneWidth: androidx.compose.ui.unit.Dp,
@@ -1397,6 +1440,7 @@ private fun GraphCommitRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(IntrinsicSize.Min)
                 .heightIn(min = rowHeight)
                 .clickable(onClick = onToggle),
             verticalAlignment = Alignment.CenterVertically
@@ -1404,13 +1448,16 @@ private fun GraphCommitRow(
             // 左侧拓扑图区域：Canvas 绘制节点 + 上下连线。
             GraphCanvas(
                 edges = edges,
-                activeLanes = activeLanes,
+                activeTopLanes = activeTopLanes,
+                activeBottomLanes = activeBottomLanes,
                 lane = lane,
                 isMerge = isMerge,
                 laneColors = laneColors,
                 canvasWidth = canvasWidth,
                 laneWidth = laneWidth,
-                rowHeight = rowHeight
+                modifier = Modifier
+                    .width(canvasWidth)
+                    .fillMaxHeight()
             )
             // 右侧提交信息。
             Column(
@@ -1483,61 +1530,102 @@ private fun GraphCommitRow(
  * 拓扑图 Canvas：绘制当前提交的节点圆点 + 分支连线。
  *
  * 绘制顺序（后绘制覆盖先绘制，保证节点压在线上）：
- * 1. 贯穿竖线：[activeLanes] 中每个泳道画一条贯穿全行（0→height）的竖线。这些是穿过本行
- *    仍活跃的分支主线（含本提交所在列），保证分支支线在中间行不断裂。
- * 2. 出边下半段：本提交到父提交的跨列边，从本行中心画贝塞尔曲线到底部目标列，表示分叉/合并。
- *    同列边已被贯穿竖线覆盖，不重复画。
- * 3. 入边上半段：指向本提交的跨列边（来自上方提交的合并支线），从顶部源列画曲线到本行中心。
- * 4. 节点圆点：合并提交画环形双圈，普通提交画实心圆。
+ * 1. 分段竖线：结合 [activeTopLanes] 与 [activeBottomLanes]，对每个泳道按需画全长（0→height）、
+ *    上半段（0→centerY）或下半段（centerY→height）竖线，避免在分叉/合并节点处竖线悬空延伸。
+ * 2. 跨列连线：画从节点中心到下半段目标列的贝塞尔曲线。
+ * 3. 节点圆点：合并提交画环形双圈，普通提交画实心圆。
  */
 @Composable
 private fun GraphCanvas(
     edges: List<GraphEdge>,
-    activeLanes: List<Int>,
+    activeTopLanes: List<Int>,
+    activeBottomLanes: List<Int>,
     lane: Int,
     isMerge: Boolean,
     laneColors: List<Color>,
     canvasWidth: androidx.compose.ui.unit.Dp,
     laneWidth: androidx.compose.ui.unit.Dp,
-    rowHeight: androidx.compose.ui.unit.Dp
+    modifier: Modifier = Modifier
 ) {
     val nodeColor = laneColors.getOrElse(lane) { Color.Gray }
-    Canvas(modifier = Modifier.size(width = canvasWidth, height = rowHeight)) {
+    Canvas(modifier = modifier) {
         val lanePx = laneWidth.toPx()
         val padPx = Spacing.sm.toPx()
         val centerX = lane * lanePx + lanePx / 2f + padPx
         val centerY = size.height / 2f
         val stroke = 2.5.dp.toPx()
 
-        // 1. 贯穿竖线：所有活跃泳道画全行竖线，保证分支主线连续。
-        for (activeLane in activeLanes) {
-            val color = laneColors.getOrElse(activeLane) { Color.Gray }
-            val x = activeLane * lanePx + lanePx / 2f + padPx
-            drawLine(
-                color = color,
-                start = androidx.compose.ui.geometry.Offset(x, 0f),
-                end = androidx.compose.ui.geometry.Offset(x, size.height),
-                strokeWidth = stroke,
-                cap = StrokeCap.Round
-            )
+        // 所有相关泳道（包含 top 和 bottom 的并集）
+        val allLanes = (activeTopLanes + activeBottomLanes + lane).toSet()
+
+        // 跨列边（出边与入边）均在下半段绘制贝塞尔曲线。
+        // curveBotLanes 记录被曲线接替下半段竖线的列：仅当该列上半段无竖线（非贯穿通道）时才排除，
+        // 避免孤立半段；若该列上半段已有竖线（主干穿过），则保留下半段竖线使其贯穿，曲线叠画在上方。
+        val crossEdgeToLanes = edges.filter { it.fromLane != it.toLane }.map { it.toLane }.toSet()
+        val curveBotLanes = crossEdgeToLanes.filterNot { it in activeTopLanes }.toSet()
+
+        // 1. 分段竖线绘制：精细控制 0->centerY 与 centerY->height
+        for (l in allLanes) {
+            val inTop = l in activeTopLanes
+            val inBot = l in activeBottomLanes && l !in curveBotLanes
+            val color = laneColors.getOrElse(l) { Color.Gray }
+            val x = l * lanePx + lanePx / 2f + padPx
+
+            if (inTop && inBot) {
+                // 贯穿整行
+                drawLine(
+                    color = color,
+                    start = androidx.compose.ui.geometry.Offset(x, 0f),
+                    end = androidx.compose.ui.geometry.Offset(x, size.height),
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Round
+                )
+            } else if (inTop) {
+                // 仅上半段（到达节点终止，或下半段转为斜曲线）
+                drawLine(
+                    color = color,
+                    start = androidx.compose.ui.geometry.Offset(x, 0f),
+                    end = androidx.compose.ui.geometry.Offset(x, centerY),
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Round
+                )
+            } else if (inBot) {
+                // 仅下半段（从该节点新分出/延伸）
+                drawLine(
+                    color = color,
+                    start = androidx.compose.ui.geometry.Offset(x, centerY),
+                    end = androidx.compose.ui.geometry.Offset(x, size.height),
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Round
+                )
+            }
         }
 
-        // 2. 跨列连线：无论是本提交向父分叉（第一父），还是合并父支线（第二父及以后），
-        //    在自上而下的渲染顺序中，父节点都在下方。因此所有跨列边都从本行中心，
-        //    画贝塞尔曲线到底部目标列。同列边已被贯穿竖线覆盖，不重复画。
+        // 2. 跨列连线（均在下半段）：出边从节点中心→目标列底部，入边从目标列底部→节点中心
         for (edge in edges) {
             if (edge.fromLane == edge.toLane) continue
             val color = laneColors.getOrElse(edge.lane) { Color.Gray }
             val fromX = edge.fromLane * lanePx + lanePx / 2f + padPx
             val toX = edge.toLane * lanePx + lanePx / 2f + padPx
-            val midY = size.height * 0.75f
+            val midY = centerY + (size.height - centerY) * 0.5f
             val path = Path().apply {
-                moveTo(fromX, centerY)
-                cubicTo(
-                    fromX, midY,
-                    toX, midY,
-                    toX, size.height
-                )
+                if (edge.isMergeIn) {
+                    // 合并入边：父支线从目标列底部弯入本节点中心
+                    moveTo(toX, size.height)
+                    cubicTo(
+                        toX, midY,
+                        fromX, midY,
+                        fromX, centerY
+                    )
+                } else {
+                    // 出边：本节点从中心向目标列底部分叉
+                    moveTo(fromX, centerY)
+                    cubicTo(
+                        fromX, midY,
+                        toX, midY,
+                        toX, size.height
+                    )
+                }
             }
             drawPath(
                 path = path,

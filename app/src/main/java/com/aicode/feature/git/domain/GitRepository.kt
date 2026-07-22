@@ -33,6 +33,10 @@ class GitRepository @Inject constructor(
     private val engine: LinuxContainerEngine,
     private val workspaceRepository: WorkspaceRepository
 ) {
+    private companion object {
+        /** 提交拓扑图每页加载条数。首批与每次「加载更多」都取这么多条，超过的需滚到底再拉。 */
+        const val GRAPH_PAGE_SIZE = 100
+    }
     /**
      * 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。仅用于只读命令（status/branches/log/remote 等）：
      * 这些靠输出解析、容错，git 非零退出码不会让 UI 误判（解析得空罢了）。凭据由 `credential.helper=store`
@@ -167,13 +171,48 @@ class GitRepository @Inject constructor(
      * `git for-each-ref` 一次拿全部分支/标签及其指向的提交哈希与是否 HEAD。提交与引用解析后，
      * 在 [Dispatchers.Default] 上跑纯 Kotlin 泳道分配算法（见 [computeLanes]），产出 [GitGraph]。
      * 失败（非仓库/无提交）返回 [GitGraph.EMPTY]，不抛——UI 据空图显示空态。
+     *
+     * 首批加载取 [GRAPH_PAGE_SIZE] 条；[hasMore] 按本批返回条数是否达到页大小判定，UI 滚到底据此
+     * 触发 [graphAppend] 追加下一页。提交数不足页大小时 hasMore=false，UI 不再显示加载更多。
      */
-    suspend fun graph(limit: Int = 100): GitGraph = withContext(Dispatchers.Default) {
-        val logRaw = runCatching { git("log", "--pretty=format:%H|%h|%an|%ar|%s|%P", "-n", limit.toString()) }
-            .getOrDefault("")
-        if (logRaw.isBlank() || logRaw.startsWith("fatal:")) return@withContext GitGraph.EMPTY
+    suspend fun graph(limit: Int = GRAPH_PAGE_SIZE): GitGraph =
+        graphAppend(emptyList(), limit)
 
-        val commits = logRaw.split('\n').mapNotNull { line ->
+    /**
+     * 分页加载下一批提交并整体重算泳道布局。
+     *
+     * 从已加载数量处 `git log --skip=<existingCommits.size> -n <limit>` 取下一批提交，与 [existingCommits]
+     * 合并为完整列表后整体调 [computeLanes] 重算布局——泳道分配依赖全局子父顺序，父提交可能跨批次
+     * 指向已加载提交，单算新批次会让列号与旧布局冲突导致连线断裂，故必须整图重算。重算开销 O(已加载数)，
+     * 移动端纯内存 Kotlin 计算毫秒级，可接受。
+     *
+     * 返回含全部已加载提交（旧+新）的完整 [GitGraph]，ViewModel 直接整体替换 state.graph；UI 的 LazyColumn
+     * 因 `item(key=...)` 机制只增量重组新行不闪烁。[hasMore] = 新批次返回条数达到页大小（未到则历史末尾）。
+     */
+    suspend fun graphAppend(
+        existingCommits: List<GraphCommit>,
+        limit: Int = GRAPH_PAGE_SIZE
+    ): GitGraph = withContext(Dispatchers.Default) {
+        val skip = existingCommits.size
+        val logRaw = runCatching { git("log", "--pretty=format:%H|%h|%an|%ar|%s|%P", "--skip", skip.toString(), "-n", limit.toString()) }
+            .getOrDefault("")
+        if (logRaw.isBlank() || logRaw.startsWith("fatal:")) {
+            return@withContext if (existingCommits.isEmpty()) GitGraph.EMPTY
+            else buildGraph(existingCommits, hasMore = false)
+        }
+
+        val newCommits = parseGraphCommits(logRaw)
+        if (newCommits.isEmpty() && existingCommits.isEmpty()) return@withContext GitGraph.EMPTY
+
+        // 合并去重：新批次理论上不会与已加载重复（--skip 跳过已加载数量），但防御性按 hash 去重保顺序。
+        val existingHashes = existingCommits.mapTo(HashSet()) { it.hash }
+        val merged = existingCommits + newCommits.filter { it.hash !in existingHashes }
+        buildGraph(merged, hasMore = newCommits.size >= limit)
+    }
+
+    /** 解析 `git log --pretty=format:%H|%h|%an|%ar|%s|%P` 输出为 [GraphCommit] 列表。 */
+    private fun parseGraphCommits(raw: String): List<GraphCommit> =
+        raw.split('\n').mapNotNull { line ->
             val parts = line.removeSuffix("\r").split('|', limit = 6)
             if (parts.size < 6) null
             else {
@@ -181,11 +220,23 @@ class GitRepository @Inject constructor(
                 GraphCommit(parts[0], parts[1], parts[2], parts[3], parts[4], parents)
             }
         }
-        if (commits.isEmpty()) return@withContext GitGraph.EMPTY
 
+    /** 对完整提交列表重算泳道布局并组装 [GitGraph]。 */
+    private suspend fun buildGraph(commits: List<GraphCommit>, hasMore: Boolean): GitGraph {
+        if (commits.isEmpty()) return GitGraph.EMPTY
         val refs = loadRefs()
         val layout = computeLanes(commits)
-        GitGraph(commits, refs, layout.lanes, layout.edges, layout.activeLanes, layout.maxLane)
+        return GitGraph(
+            commits,
+            refs,
+            layout.lanes,
+            layout.edges,
+            layout.activeTopLanes,
+            layout.activeBottomLanes,
+            layout.activeLanes,
+            layout.maxLane,
+            hasMore
+        )
     }
 
     /**
@@ -230,17 +281,23 @@ class GitRepository @Inject constructor(
      * - 记录当前提交的 lane。
      * - 快照此刻 [active] 中所有非空槽位的列号为该提交的 [GitGraph.activeLanes]：这些泳道
      *   从上一行延续下来并穿过本行，UI 需为它们画贯穿竖线，避免分支支线在中间行断裂。
-     * - 处理父提交：第一个父复用当前提交的泳道（主线延续）；其余父（合并的第二个及以后）各自分配泳道——
+     * - 处理父提交：第一个父若未占位则复用当前提交的泳道（主线延续），若已在其他活跃泳道则
+     *   生成跨列出边并释放当前泳道（主线跳列）；其余父（合并的第二个及以后）各自分配泳道——
      *   若该父已在某活跃泳道则复用，否则取最左空闲槽位占位。
      * - 当前提交无父（根提交）则释放其泳道。
-     * - 同时为每个父生成一条 [GraphEdge]（fromLane=当前列, toLane=父列, lane=父列），跨列即分叉/合并折线。
+     * - 同时为每个父生成一条 [GraphEdge]：第一父跨列时为出边（fromLane=当前列, toLane=父列,
+     *   lane=当前列）；第一父同列时为竖直边。其余父为合并入边（fromLane=当前列, toLane=父列,
+     *   lane=父列），跨列即合并折线。
      *
      * 父提交可能不在本次 limit 范围内（哈希在 active 中查不到对应提交记录），此时仍保留泳道占位
      * 以维持连线连续性，直至其被后续提交释放。
      */
     private fun computeLanes(commits: List<GraphCommit>): GraphLayout {
+        val commitMap = commits.associateBy { it.hash }
         val lanes = mutableMapOf<String, Int>()
         val edges = mutableListOf<GraphEdge>()
+        val activeTopLanes = mutableMapOf<String, List<Int>>()
+        val activeBottomLanes = mutableMapOf<String, List<Int>>()
         val activeLanes = mutableMapOf<String, List<Int>>()
         // 活跃泳道：槽位索引即列号，值为占据该列的提交哈希（或 null=空闲）。
         val active = mutableListOf<String?>()
@@ -262,59 +319,74 @@ class GitRepository @Inject constructor(
             if (lane > maxLane) maxLane = lane
             lanes[commit.hash] = lane
 
+            // 快照上半段（0 -> centerY）活跃泳道：此时 active 反应进入本节点前上方的分支通道。
+            val topSnapshot = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+            activeTopLanes[commit.hash] = topSnapshot
+
             if (commit.parents.isEmpty()) {
-                // 根提交：释放当前泳道后快照。
+                // 根提交：释放当前泳道后快照下半段。
                 active[lane] = null
-                activeLanes[commit.hash] = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+                val botSnapshot = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+                activeBottomLanes[commit.hash] = botSnapshot
+                activeLanes[commit.hash] = botSnapshot
                 continue
             }
 
             // 第一父复用当前泳道（主线延续）。
             val parents = commit.parents
             val firstParent = parents[0]
-            // 第一父若已在其他泳道（被别的分支占位），则当前列释放、主线转到父列。这是出边（分叉），
-            // 颜色取当前提交所在列（fromLane），表示该分支从此处分出。
             val firstParentLane = active.indexOf(firstParent)
             if (firstParentLane >= 0 && firstParentLane != lane) {
                 edges.add(GraphEdge(lane, firstParentLane, lane, isMergeIn = false))
-                active[lane] = null // 当前列释放，主线让位于第一父已有列。
+                active[lane] = null
             } else {
                 edges.add(GraphEdge(lane, lane, lane, isMergeIn = false))
                 active[lane] = firstParent
             }
 
-            // 其余父（合并的第二个及以后）：各自分配泳道。这些是合并入边——父支线从顶部汇入本提交，
-            // 颜色取父所在列（toLane），表示该支线沿用其分支主色延续下来。
+            // 其余父（合并的第二个及以后）：优先复用活跃列表中后续能继承该父的泳道，否则分配新泳道。
             for (i in 1 until parents.size) {
                 val p = parents[i]
                 val existing = active.indexOf(p)
                 val pLane = if (existing >= 0) {
                     existing
                 } else {
-                    val free = active.indexOf(null)
-                    if (free < 0) {
-                        active.add(p)
-                        active.size - 1
+                    // 查找 active 中是否有占位提交 X（非当前列），X 的父引用直接包含 p。
+                    // 若有，说明 p 是 X 的父，会在 X 处理完后自然继承该列，入边直接指向该列而不抢占 active。
+                    val reuse = active.indexOfFirst { aHash ->
+                        aHash != null && active.indexOf(aHash) != lane && commitMap[aHash]?.parents?.contains(p) == true
+                    }
+                    if (reuse >= 0) {
+                        reuse
                     } else {
-                        active[free] = p
-                        free
+                        val free = active.indexOf(null)
+                        if (free < 0) {
+                            active.add(p)
+                            active.size - 1
+                        } else {
+                            active[free] = p
+                            free
+                        }
                     }
                 }
                 if (pLane > maxLane) maxLane = pLane
                 edges.add(GraphEdge(lane, pLane, pLane, isMergeIn = true))
             }
 
-            // 快照本行贯穿的活跃泳道：在所有父泳道分配完毕后取 active 中非空槽位。此时新分出的支线
-            // 列也已占位，其竖线才能在本行贯穿，合并节点旁的支线才不会从顶部凭空出现而与节点断开。
-            activeLanes[commit.hash] = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+            // 快照下半段（centerY -> height）活跃泳道：在所有父分配完毕后反应离开本节点向下的分支通道。
+            val botSnapshot = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+            activeBottomLanes[commit.hash] = botSnapshot
+            activeLanes[commit.hash] = botSnapshot
         }
-        return GraphLayout(lanes, edges, activeLanes, maxLane)
+        return GraphLayout(lanes, edges, activeTopLanes, activeBottomLanes, activeLanes, maxLane)
     }
 
     /** [computeLanes] 的输出：泳道映射 + 边列表 + 每行活跃泳道快照 + 最大列号。 */
     private class GraphLayout(
         val lanes: Map<String, Int>,
         val edges: List<GraphEdge>,
+        val activeTopLanes: Map<String, List<Int>>,
+        val activeBottomLanes: Map<String, List<Int>>,
         val activeLanes: Map<String, List<Int>>,
         val maxLane: Int
     )

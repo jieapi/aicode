@@ -46,7 +46,7 @@ data class GraphEdge(
     /** 该边所属泳道号（决定颜色）：出边（分叉）取 [fromLane]（发起分叉的提交所在列），
      *  入边（合并支线汇入）取 [toLane]（父支线沿用其分支主色）。 */
     val lane: Int,
-    /** true=合并入边（父支线从顶部汇入本提交，画上半段贝塞尔）；
+    /** true=合并入边（父支线从下方汇入本提交，画下半段贝塞尔）；
      *  false=出边（本提交向父分叉，画下半段贝塞尔）。 */
     val isMergeIn: Boolean
 )
@@ -61,16 +61,21 @@ data class GraphEdge(
  * @property activeLanes 每个提交哈希 → 该行需要贯穿竖线的活跃泳道列号列表（含本提交所在列）。
  *   非本提交所属但被某分支穿过的泳道也在此列，UI 据此画贯穿竖线避免断裂。
  * @property maxLane 最大泳道列号，决定 Canvas 宽度。
+ * @property hasMore 是否还有更旧的提交可分页加载。首批加载与写操作刷新后按本批返回条数是否达到页大小判定；
+ *   UI 滚到底据此决定是否触发下一页。历史末尾时为 false。
  */
 data class GitGraph(
     val commits: List<GraphCommit>,
     val refs: Map<String, List<GitGraphRef>>,
     val lanes: Map<String, Int>,
     val edges: List<GraphEdge>,
+    val activeTopLanes: Map<String, List<Int>>,
+    val activeBottomLanes: Map<String, List<Int>>,
     val activeLanes: Map<String, List<Int>>,
-    val maxLane: Int
+    val maxLane: Int,
+    val hasMore: Boolean = false
 ) {
     companion object {
-        val EMPTY = GitGraph(emptyList(), emptyMap(), emptyMap(), emptyList(), emptyMap(), 0)
+        val EMPTY = GitGraph(emptyList(), emptyMap(), emptyMap(), emptyList(), emptyMap(), emptyMap(), emptyMap(), 0, false)
     }
 }
