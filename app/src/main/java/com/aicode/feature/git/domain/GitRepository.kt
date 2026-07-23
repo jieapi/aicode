@@ -5,6 +5,10 @@ import com.aicode.feature.agent.domain.container.LinuxContainerEngine
 import com.aicode.feature.git.domain.model.GitBranch
 import com.aicode.feature.git.domain.model.GitCommit
 import com.aicode.feature.git.domain.model.GitFileChange
+import com.aicode.feature.git.domain.model.GitGraph
+import com.aicode.feature.git.domain.model.GitGraphRef
+import com.aicode.feature.git.domain.model.GraphCommit
+import com.aicode.feature.git.domain.model.GraphEdge
 import com.aicode.feature.git.domain.model.GitStatus
 import com.aicode.feature.git.domain.model.GitTag
 import com.aicode.feature.workspace.data.repository.WorkspaceRepository
@@ -29,6 +33,10 @@ class GitRepository @Inject constructor(
     private val engine: LinuxContainerEngine,
     private val workspaceRepository: WorkspaceRepository
 ) {
+    private companion object {
+        /** 提交拓扑图每页加载条数。首批与每次「加载更多」都取这么多条，超过的需滚到底再拉。 */
+        const val GRAPH_PAGE_SIZE = 100
+    }
     /**
      * 执行一条 `git` 子命令，返回合并后的 stdout+stderr 文本。仅用于只读命令（status/branches/log/remote 等）：
      * 这些靠输出解析、容错，git 非零退出码不会让 UI 误判（解析得空罢了）。凭据由 `credential.helper=store`
@@ -130,19 +138,28 @@ class GitRepository @Inject constructor(
     }
 
     /** 本地 + 远程分支列表，当前分支高亮。 */
-    suspend fun branches(): List<GitBranch> {
-        val current = runCatching { git("rev-parse", "--abbrev-ref", "HEAD").trim() }
-            .getOrDefault("")
-        val localRaw = git("for-each-ref", "--format=%(refname:short)", "refs/heads")
-        val remoteRaw = git("for-each-ref", "--format=%(refname:short)", "refs/remotes")
-        val result = mutableListOf<GitBranch>()
-        for (name in localRaw.split('\n').map { it.removeSuffix("\r").trim() }.filter { it.isNotBlank() }) {
-            result.add(GitBranch(name, current = name == current && current.isNotBlank() && current != "HEAD", remote = false))
+    suspend fun branches(): List<GitBranch> = loadAllRefs().branches
+
+    /**
+     * 仅拉本地分支的 refs-by-commit 映射（`for-each-ref refs/heads`，大仓库亚秒级），
+     * 供首屏轻量快照的 graph 标注当前分支位置。远程分支与标签标注延迟到 BRANCHES tab 全量加载。
+     */
+    suspend fun localRefsOnly(): Map<String, List<GitGraphRef>> = withContext(Dispatchers.Default) {
+        val raw = runCatching {
+            git("for-each-ref", "--format=%(refname:short)|%(objectname)|%(HEAD)|%(refname)", "refs/heads")
+        }.getOrDefault("")
+        if (raw.isBlank() || raw.startsWith("fatal:")) return@withContext emptyMap()
+        val result = mutableMapOf<String, MutableList<GitGraphRef>>()
+        for (line in raw.split('\n')) {
+            val l = line.removeSuffix("\r").trim()
+            if (l.isBlank()) continue
+            val parts = l.split('|', limit = 4)
+            if (parts.size < 4) continue
+            val isHead = parts[2].trim() == "*"
+            result.getOrPut(parts[1]) { mutableListOf() }
+                .add(GitGraphRef(parts[0], isBranch = true, isCurrent = isHead, isRemote = false))
         }
-        for (name in remoteRaw.split('\n').map { it.removeSuffix("\r").trim() }.filter { it.isNotBlank() }) {
-            result.add(GitBranch(name, current = false, remote = true))
-        }
-        return result
+        result
     }
 
     /** 最近 [limit] 条提交。 */
@@ -155,6 +172,268 @@ class GitRepository @Inject constructor(
             else GitCommit(parts[0], parts[1], parts[2], parts[3], parts[4])
         }
     }
+
+    /**
+     * 拓扑图视图：提交（含父哈希）+ 引用（分支/标签）+ 泳道布局。
+     *
+     * `git log --pretty=format:...%P` 在常规字段后追加父哈希列表（空格分隔，多个即合并提交）；
+     * `git for-each-ref` 一次拿全部分支/标签及其指向的提交哈希与是否 HEAD。提交与引用解析后，
+     * 在 [Dispatchers.Default] 上跑纯 Kotlin 泳道分配算法（见 [computeLanes]），产出 [GitGraph]。
+     * 失败（非仓库/无提交）返回 [GitGraph.EMPTY]，不抛——UI 据空图显示空态。
+     *
+     * 首批加载取 [GRAPH_PAGE_SIZE] 条；[hasMore] 按本批返回条数是否达到页大小判定，UI 滚到底据此
+     * 触发 [graphAppend] 追加下一页。提交数不足页大小时 hasMore=false，UI 不再显示加载更多。
+     *
+     * [refs] 为外部传入的 refs-by-commit 映射（来自 [loadAllRefs]），避免 graph 内部重复拉全量 refs。
+     * 为空时 graph 不标注任何 ref（首屏轻量快照场景：只拉本地分支，远程/标签标注延迟到 BRANCHES tab）。
+     */
+    suspend fun graph(
+        limit: Int = GRAPH_PAGE_SIZE,
+        refs: Map<String, List<GitGraphRef>> = emptyMap()
+    ): GitGraph =
+        graphAppend(emptyList(), refs, limit)
+
+    /**
+     * 分页加载下一批提交并整体重算泳道布局。
+     *
+     * 从已加载数量处 `git log --skip=<existingCommits.size> -n <limit>` 取下一批提交，与 [existingCommits]
+     * 合并为完整列表后整体调 [computeLanes] 重算布局——泳道分配依赖全局子父顺序，父提交可能跨批次
+     * 指向已加载提交，单算新批次会让列号与旧布局冲突导致连线断裂，故必须整图重算。重算开销 O(已加载数)，
+     * 移动端纯内存 Kotlin 计算毫秒级，可接受。
+     *
+     * 返回含全部已加载提交（旧+新）的完整 [GitGraph]，ViewModel 直接整体替换 state.graph；UI 的 LazyColumn
+     * 因 `item(key=...)` 机制只增量重组新行不闪烁。[hasMore] = 新批次返回条数达到页大小（未到则历史末尾）。
+     */
+    suspend fun graphAppend(
+        existingCommits: List<GraphCommit>,
+        refs: Map<String, List<GitGraphRef>> = emptyMap(),
+        limit: Int = GRAPH_PAGE_SIZE
+    ): GitGraph = withContext(Dispatchers.Default) {
+        val skip = existingCommits.size
+        val logRaw = runCatching { git("log", "--pretty=format:%H|%h|%an|%ar|%s|%P", "--skip", skip.toString(), "-n", limit.toString()) }
+            .getOrDefault("")
+        if (logRaw.isBlank() || logRaw.startsWith("fatal:")) {
+            return@withContext if (existingCommits.isEmpty()) GitGraph.EMPTY
+            else buildGraph(existingCommits, refs, hasMore = false)
+        }
+
+        val newCommits = parseGraphCommits(logRaw)
+        if (newCommits.isEmpty() && existingCommits.isEmpty()) return@withContext GitGraph.EMPTY
+
+        // 合并去重：新批次理论上不会与已加载重复（--skip 跳过已加载数量），但防御性按 hash 去重保顺序。
+        val existingHashes = existingCommits.mapTo(HashSet()) { it.hash }
+        val merged = existingCommits + newCommits.filter { it.hash !in existingHashes }
+        buildGraph(merged, refs, hasMore = newCommits.size >= limit)
+    }
+
+    /** 解析 `git log --pretty=format:%H|%h|%an|%ar|%s|%P` 输出为 [GraphCommit] 列表。 */
+    private fun parseGraphCommits(raw: String): List<GraphCommit> =
+        raw.split('\n').mapNotNull { line ->
+            val parts = line.removeSuffix("\r").split('|', limit = 6)
+            if (parts.size < 6) null
+            else {
+                val parents = parts[5].split(' ').filter { it.isNotBlank() }
+                GraphCommit(parts[0], parts[1], parts[2], parts[3], parts[4], parents)
+            }
+        }
+
+    /**
+     * 对完整提交列表重算泳道布局并组装 [GitGraph]。[refs] 为外部传入的全量 refs-by-commit 映射，
+     * 过滤为只含已加载提交 hash 的条目，减少传给 UI 的数据量（全量 3000+ → 仅当前视图几十条）。
+     */
+    private fun buildGraph(
+        commits: List<GraphCommit>,
+        refs: Map<String, List<GitGraphRef>>,
+        hasMore: Boolean
+    ): GitGraph {
+        if (commits.isEmpty()) return GitGraph.EMPTY
+        val commitHashes = commits.mapTo(HashSet()) { it.hash }
+        val filteredRefs = refs.filterKeys { it in commitHashes }
+        val layout = computeLanes(commits)
+        return GitGraph(
+            commits,
+            filteredRefs,
+            layout.lanes,
+            layout.edges,
+            layout.activeTopLanes,
+            layout.activeBottomLanes,
+            layout.activeLanes,
+            layout.maxLane,
+            hasMore
+        )
+    }
+
+    /**
+     * 一次拉取全部分支/标签及其指向的提交哈希，解析为三份切面：[AllRefs.branches] 列表、[AllRefs.tags] 列表、
+     * [AllRefs.refsByCommit] 映射。`branches()`、`listTags()`、graph 的 refs 标注共用此一次调用，
+     * 消除原先三条独立 `for-each-ref`/`tag` 命令（大仓库各 8-20s）。
+     *
+     * `%(refname:short)` 短名、`%(objectname)` 指向的完整哈希、`%(HEAD)` 标记当前分支（输出 `*` 或空）。
+     * 本地分支（refs/heads）isRemote=false，远程分支（refs/remotes）isRemote=true，标签（refs/tags）isBranch=false。
+     * 标签按 refname 倒序（纯字符串比较，不读对象内容），避免 `--sort=-creatordate` 遍历所有 tag 对象的 8s 开销。
+     */
+    data class AllRefs(
+        val branches: List<GitBranch>,
+        val tags: List<GitTag>,
+        val refsByCommit: Map<String, List<GitGraphRef>>
+    )
+
+    suspend fun loadAllRefs(): AllRefs = withContext(Dispatchers.Default) {
+        val raw = runCatching {
+            git(
+                "for-each-ref",
+                "--format=%(refname:short)|%(objectname)|%(HEAD)|%(refname)",
+                "refs/heads", "refs/remotes", "refs/tags"
+            )
+        }.getOrDefault("")
+        if (raw.isBlank() || raw.startsWith("fatal:")) return@withContext AllRefs(emptyList(), emptyList(), emptyMap())
+        val branches = mutableListOf<GitBranch>()
+        val tags = mutableListOf<GitTag>()
+        val refsByCommit = mutableMapOf<String, MutableList<GitGraphRef>>()
+        for (line in raw.split('\n')) {
+            val l = line.removeSuffix("\r").trim()
+            if (l.isBlank()) continue
+            val parts = l.split('|', limit = 4)
+            if (parts.size < 4) continue
+            val name = parts[0]
+            val hash = parts[1]
+            val isHead = parts[2].trim() == "*"
+            val refname = parts[3]
+            val isRemote = refname.startsWith("refs/remotes")
+            val isBranch = refname.startsWith("refs/heads") || isRemote
+            refsByCommit.getOrPut(hash) { mutableListOf() }
+                .add(GitGraphRef(name, isBranch, isHead && !isRemote, isRemote))
+            if (isBranch) {
+                branches.add(GitBranch(name, current = isHead && !isRemote, remote = isRemote))
+            } else {
+                // 标签：objectname 取短哈希（前 7 位）与原 listTags 行为一致。
+                tags.add(GitTag(name, hash.take(7)))
+            }
+        }
+        // for-each-ref 默认按 refname 排序（本地分支、远程分支、标签各自有序），标签再倒序与原行为对齐。
+        tags.reverse()
+        AllRefs(branches, tags, refsByCommit)
+    }
+
+    /**
+     * 纯 Kotlin 泳道分配算法（IDE 风格拓扑布局）。
+     *
+     * 维护「活跃泳道」数组 `active: Array<String?>`，每个槽位记录当前占据该列的提交哈希。
+     * 按提交从新到旧顺序处理（与 git log 输出一致）：
+     * - 找当前提交是否已占据某泳道（其哈希已在 active 中，即被某子提交的父引用占位）→ 复用该泳道为当前列。
+     * - 未占据则取最左侧空闲槽位为新泳道（该提交是某分支的最新提交，未被任何子提交引用）。
+     * - 记录当前提交的 lane。
+     * - 快照此刻 [active] 中所有非空槽位的列号为该提交的 [GitGraph.activeLanes]：这些泳道
+     *   从上一行延续下来并穿过本行，UI 需为它们画贯穿竖线，避免分支支线在中间行断裂。
+     * - 处理父提交：第一个父若未占位则复用当前提交的泳道（主线延续），若已在其他活跃泳道则
+     *   生成跨列出边并释放当前泳道（主线跳列）；其余父（合并的第二个及以后）各自分配泳道——
+     *   若该父已在某活跃泳道则复用，否则取最左空闲槽位占位。
+     * - 当前提交无父（根提交）则释放其泳道。
+     * - 同时为每个父生成一条 [GraphEdge]：第一父跨列时为出边（fromLane=当前列, toLane=父列,
+     *   lane=当前列）；第一父同列时为竖直边。其余父为合并入边（fromLane=当前列, toLane=父列,
+     *   lane=父列），跨列即合并折线。
+     *
+     * 父提交可能不在本次 limit 范围内（哈希在 active 中查不到对应提交记录），此时仍保留泳道占位
+     * 以维持连线连续性，直至其被后续提交释放。
+     */
+    private fun computeLanes(commits: List<GraphCommit>): GraphLayout {
+        val commitMap = commits.associateBy { it.hash }
+        val lanes = mutableMapOf<String, Int>()
+        val edges = mutableListOf<GraphEdge>()
+        val activeTopLanes = mutableMapOf<String, List<Int>>()
+        val activeBottomLanes = mutableMapOf<String, List<Int>>()
+        val activeLanes = mutableMapOf<String, List<Int>>()
+        // 活跃泳道：槽位索引即列号，值为占据该列的提交哈希（或 null=空闲）。
+        val active = mutableListOf<String?>()
+        var maxLane = 0
+
+        for (commit in commits) {
+            // 当前提交是否已被某子提交的父引用占位。
+            var lane = active.indexOf(commit.hash)
+            if (lane < 0) {
+                // 未占位：取最左空闲槽位。
+                lane = active.indexOf(null)
+                if (lane < 0) {
+                    lane = active.size
+                    active.add(commit.hash)
+                } else {
+                    active[lane] = commit.hash
+                }
+            }
+            if (lane > maxLane) maxLane = lane
+            lanes[commit.hash] = lane
+
+            // 快照上半段（0 -> centerY）活跃泳道：此时 active 反应进入本节点前上方的分支通道。
+            val topSnapshot = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+            activeTopLanes[commit.hash] = topSnapshot
+
+            if (commit.parents.isEmpty()) {
+                // 根提交：释放当前泳道后快照下半段。
+                active[lane] = null
+                val botSnapshot = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+                activeBottomLanes[commit.hash] = botSnapshot
+                activeLanes[commit.hash] = botSnapshot
+                continue
+            }
+
+            // 第一父复用当前泳道（主线延续）。
+            val parents = commit.parents
+            val firstParent = parents[0]
+            val firstParentLane = active.indexOf(firstParent)
+            if (firstParentLane >= 0 && firstParentLane != lane) {
+                edges.add(GraphEdge(lane, firstParentLane, lane, isMergeIn = false))
+                active[lane] = null
+            } else {
+                edges.add(GraphEdge(lane, lane, lane, isMergeIn = false))
+                active[lane] = firstParent
+            }
+
+            // 其余父（合并的第二个及以后）：优先复用活跃列表中后续能继承该父的泳道，否则分配新泳道。
+            for (i in 1 until parents.size) {
+                val p = parents[i]
+                val existing = active.indexOf(p)
+                val pLane = if (existing >= 0) {
+                    existing
+                } else {
+                    // 查找 active 中是否有占位提交 X（非当前列），X 的父引用直接包含 p。
+                    // 若有，说明 p 是 X 的父，会在 X 处理完后自然继承该列，入边直接指向该列而不抢占 active。
+                    val reuse = active.indexOfFirst { aHash ->
+                        aHash != null && active.indexOf(aHash) != lane && commitMap[aHash]?.parents?.contains(p) == true
+                    }
+                    if (reuse >= 0) {
+                        reuse
+                    } else {
+                        val free = active.indexOf(null)
+                        if (free < 0) {
+                            active.add(p)
+                            active.size - 1
+                        } else {
+                            active[free] = p
+                            free
+                        }
+                    }
+                }
+                if (pLane > maxLane) maxLane = pLane
+                edges.add(GraphEdge(lane, pLane, pLane, isMergeIn = true))
+            }
+
+            // 快照下半段（centerY -> height）活跃泳道：在所有父分配完毕后反应离开本节点向下的分支通道。
+            val botSnapshot = active.mapIndexedNotNull { idx, h -> if (h != null) idx else null }
+            activeBottomLanes[commit.hash] = botSnapshot
+            activeLanes[commit.hash] = botSnapshot
+        }
+        return GraphLayout(lanes, edges, activeTopLanes, activeBottomLanes, activeLanes, maxLane)
+    }
+
+    /** [computeLanes] 的输出：泳道映射 + 边列表 + 每行活跃泳道快照 + 最大列号。 */
+    private class GraphLayout(
+        val lanes: Map<String, Int>,
+        val edges: List<GraphEdge>,
+        val activeTopLanes: Map<String, List<Int>>,
+        val activeBottomLanes: Map<String, List<Int>>,
+        val activeLanes: Map<String, List<Int>>,
+        val maxLane: Int
+    )
 
     /**
      * 某次提交改动的文件清单。用 `diff-tree --root` 以兼容无父的根提交；`--no-renames` 让重命名
@@ -210,18 +489,8 @@ class GitRepository @Inject constructor(
         return gitChecked("push", "--set-upstream", remote, branch)
     }
 
-    /** 本地标签列表，按名字排序。 */
-    suspend fun listTags(): List<GitTag> {
-        val raw = git("tag", "--sort=creatordate", "--format=%(refname:short) %(objectname:short)")
-        if (raw.isBlank() || raw.startsWith("fatal:")) return emptyList()
-        return raw.split('\n').mapNotNull { line ->
-            val l = line.removeSuffix("\r").trim()
-            if (l.isBlank()) return@mapNotNull null
-            val parts = l.split(' ', limit = 2)
-            if (parts.size < 2) return@mapNotNull null
-            GitTag(parts[0], parts[1])
-        }
-    }
+    /** 本地标签列表，按创建时间倒序（最新在前）。 */
+    suspend fun listTags(): List<GitTag> = loadAllRefs().tags
 
     /**
      * 创建新分支。name 为新分支名；startPoint 为基准分支名（null/空 → 从当前 HEAD）；
