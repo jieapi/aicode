@@ -264,6 +264,8 @@ fun GitScreen(
                     GitTab.BRANCHES -> BranchesTab(
                         branches = state.branches,
                         tags = state.tags,
+                        branchesLoading = state.branchesLoading,
+                        branchesLoaded = state.branchesLoaded,
                         checkoutLoading = state.checkoutLoading,
                         onCheckout = viewModel::checkoutBranch,
                         onCreateBranch = viewModel::createBranch,
@@ -524,6 +526,8 @@ private fun StatusActionsBar(
 private fun BranchesTab(
     branches: List<GitBranch>,
     tags: List<GitTag>,
+    branchesLoading: Boolean,
+    branchesLoaded: Boolean,
     checkoutLoading: String?,
     onCheckout: (String, Boolean) -> Unit,
     onCreateBranch: (String, String?, Boolean) -> Unit,
@@ -533,6 +537,23 @@ private fun BranchesTab(
     onCreateTag: (String) -> Unit,
     onDeleteTag: (String) -> Unit
 ) {
+    if (branchesLoading || (!branchesLoaded && branches.isEmpty() && tags.isEmpty())) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.height(Spacing.sm))
+                Text(
+                    "正在加载分支列表…",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        return
+    }
     if (branches.isEmpty() && tags.isEmpty()) {
         EmptyState("暂无分支")
         return
@@ -1269,12 +1290,13 @@ private fun LogTab(
     LaunchedEffect(reachedBottom) {
         if (reachedBottom && graph.hasMore && !graphLoadingMore) onLoadMore()
     }
+    val overviewCommits = remember(commits) { commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) } }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         state = listState,
         contentPadding = PaddingValues(bottom = Spacing.xl)
     ) {
-        item { LogOverview(commits = commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }, expandedCount = expandedCommits.size) }
+        item { LogOverview(commits = overviewCommits, expandedCount = expandedCommits.size) }
         item { SectionHeader("提交记录 (${commits.size})") }
         commits.forEachIndexed { index, c ->
             val isExpanded = c.hash in expandedCommits

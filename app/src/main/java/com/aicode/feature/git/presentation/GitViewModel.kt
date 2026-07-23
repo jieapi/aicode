@@ -69,6 +69,10 @@ class GitViewModel @Inject constructor(
         val loadingCommit: String? = null,
         /** 正在分页加载更旧的提交（滚动到底触发）。不置 busy，避免阻塞写操作。 */
         val graphLoadingMore: Boolean = false,
+        /** 全量分支/标签是否已加载（延迟到切 BRANCHES tab 时拉取，避免首屏 20s 卡顿）。 */
+        val branchesLoaded: Boolean = false,
+        /** 正在加载全量分支/标签。 */
+        val branchesLoading: Boolean = false,
         /** 正在切换分支。 */
         val checkoutLoading: String? = null,
         /** diff 视图数据；非 null 时 UI 全屏渲染 diff 页。 */
@@ -82,28 +86,71 @@ class GitViewModel @Inject constructor(
 
     init { refresh() }
 
-    /** 仓库快照：并发拉取 status/branches/graph/remote/tags（+可选 identity）的结果。 */
+    /** 仓库快照：并发拉取 status/graph/remote（+可选 identity）的结果。不含全量分支/标签——
+     * 那些延迟到切 BRANCHES tab 时才拉（[loadBranches]），避免大仓库首屏 20s 卡顿。
+     * graph 的 refs 标注只用本地分支（[repository.localRefsOnly]，亚秒级），远程/标签标注延迟补全。 */
     private data class RepoSnapshot(
         val status: GitStatus,
-        val branches: List<GitBranch>,
         val graph: GitGraph,
         val hasRemote: Boolean,
-        val tags: List<GitTag>,
         val hasIdentity: Boolean = false
     )
 
-    /** 并发拉取仓库快照。[includeIdentity] 为真时额外拉取 user.name 是否已配置（提交按钮门控用）。 */
+    /** 并发拉取轻量快照：status + graph(本地 refs) + remote + 可选 identity。 */
     private suspend fun loadSnapshot(includeIdentity: Boolean): RepoSnapshot = coroutineScope {
         val s = async { repository.status() }
-        val b = async { repository.branches() }
-        val g = async { repository.graph() }
+        val localRefs = async { repository.localRefsOnly() }
         val r = async { repository.hasRemote() }
-        val t = async { repository.listTags() }
         val id = async { if (includeIdentity) repository.getUserName().isNotBlank() else false }
-        RepoSnapshot(s.await(), b.await(), g.await(), r.await(), t.await(), id.await())
+        val g = async { repository.graph(refs = localRefs.await()) }
+        RepoSnapshot(s.await(), g.await(), r.await(), id.await())
     }
 
-    fun setTab(tab: GitTab) = _state.update { it.copy(tab = tab) }
+    fun setTab(tab: GitTab) {
+        _state.update { it.copy(tab = tab) }
+        if (tab == GitTab.BRANCHES && !_state.value.branchesLoaded && !_state.value.branchesLoading) {
+            loadBranches()
+        }
+    }
+
+    /**
+     * 按需加载全量分支/标签（切到 BRANCHES tab 时触发）。一次 [repository.loadAllRefs] 拉取，
+     * 填充 branches/tags 并用全量 refs 更新 graph 的标注。不置 busy，只读不阻塞写操作。
+     * 已加载过则跳过；写操作后需手动调 [refreshBranches] 同步。
+     */
+    fun loadBranches() {
+        if (_state.value.branchesLoading || _state.value.branchesLoaded) return
+        _state.update { it.copy(branchesLoading = true) }
+        viewModelScope.launch {
+            try {
+                val allRefs = repository.loadAllRefs()
+                // 用全量 refs 更新 graph 标注（远程分支+标签补全）。
+                val graph = repository.graphAppend(_state.value.graph.commits, allRefs.refsByCommit)
+                val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
+                _state.update {
+                    it.copy(branches = allRefs.branches, tags = allRefs.tags, graph = graph, commits = commits, branchesLoading = false, branchesLoaded = true)
+                }
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "加载分支列表失败", e)
+                _state.update { it.copy(branchesLoading = false, toast = "加载分支失败: ${e.message}") }
+            }
+        }
+    }
+
+    /**
+     * 写操作后同步刷新已加载的分支/标签（若已加载过）。未加载过则不主动拉，保持延迟加载语义。
+     */
+    private fun refreshBranchesIfLoaded() {
+        if (!_state.value.branchesLoaded) return
+        viewModelScope.launch {
+            try {
+                val allRefs = repository.loadAllRefs()
+                _state.update { it.copy(branches = allRefs.branches, tags = allRefs.tags) }
+            } catch (e: Exception) {
+                FileLogger.e(TAG, "刷新分支列表失败", e)
+            }
+        }
+    }
 
     fun refresh() {
         if (_state.value.busy) return
@@ -117,7 +164,7 @@ class GitViewModel @Inject constructor(
                 val snap = loadSnapshot(includeIdentity = true)
                 val commits = snap.graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
                 _state.update {
-                    it.copy(loading = false, notARepo = false, status = snap.status, branches = snap.branches, commits = commits, graph = snap.graph, tags = snap.tags, hasRemote = snap.hasRemote, hasIdentity = snap.hasIdentity)
+                    it.copy(loading = false, notARepo = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, hasIdentity = snap.hasIdentity, branchesLoaded = false, branchesLoading = false, branches = emptyList(), tags = emptyList())
                 }
             } catch (e: Exception) {
                 FileLogger.e(TAG, "刷新失败", e)
@@ -147,7 +194,8 @@ class GitViewModel @Inject constructor(
                 if (repository.isRepo()) {
                     val snap = loadSnapshot(includeIdentity = false)
                     val commits = snap.graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
-                    _state.update { it.copy(busy = false, status = snap.status, branches = snap.branches, commits = commits, graph = snap.graph, tags = snap.tags, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
+                    _state.update { it.copy(busy = false, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
+                    refreshBranchesIfLoaded()
                 } else {
                     _state.update { it.copy(busy = false, notARepo = true, toast = msg) }
                 }
@@ -218,7 +266,7 @@ class GitViewModel @Inject constructor(
         _state.update { it.copy(graphLoadingMore = true) }
         viewModelScope.launch {
             try {
-                val graph = repository.graphAppend(current.graph.commits)
+                val graph = repository.graphAppend(current.graph.commits, current.graph.refs)
                 val commits = graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
                 _state.update { it.copy(graph = graph, commits = commits, graphLoadingMore = false) }
             } catch (e: Exception) {
@@ -247,7 +295,9 @@ class GitViewModel @Inject constructor(
                 if (repository.isRepo()) {
                     val snap = loadSnapshot(includeIdentity = false)
                     val commits = snap.graph.commits.map { GitCommit(it.hash, it.shortHash, it.author, it.date, it.message) }
-                    _state.update { it.copy(checkoutLoading = null, status = snap.status, branches = snap.branches, commits = commits, graph = snap.graph, tags = snap.tags, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
+                    _state.update { it.copy(checkoutLoading = null, status = snap.status, commits = commits, graph = snap.graph, hasRemote = snap.hasRemote, notARepo = false, toast = msg) }
+                    // 切换分支后分支列表可能变化，若已加载过则刷新。
+                    refreshBranchesIfLoaded()
                 } else {
                     _state.update { it.copy(checkoutLoading = null, notARepo = true, toast = msg) }
                 }

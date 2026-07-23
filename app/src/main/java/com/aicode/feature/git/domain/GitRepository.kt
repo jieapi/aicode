@@ -138,19 +138,28 @@ class GitRepository @Inject constructor(
     }
 
     /** 本地 + 远程分支列表，当前分支高亮。 */
-    suspend fun branches(): List<GitBranch> {
-        val current = runCatching { git("rev-parse", "--abbrev-ref", "HEAD").trim() }
-            .getOrDefault("")
-        val localRaw = git("for-each-ref", "--format=%(refname:short)", "refs/heads")
-        val remoteRaw = git("for-each-ref", "--format=%(refname:short)", "refs/remotes")
-        val result = mutableListOf<GitBranch>()
-        for (name in localRaw.split('\n').map { it.removeSuffix("\r").trim() }.filter { it.isNotBlank() }) {
-            result.add(GitBranch(name, current = name == current && current.isNotBlank() && current != "HEAD", remote = false))
+    suspend fun branches(): List<GitBranch> = loadAllRefs().branches
+
+    /**
+     * 仅拉本地分支的 refs-by-commit 映射（`for-each-ref refs/heads`，大仓库亚秒级），
+     * 供首屏轻量快照的 graph 标注当前分支位置。远程分支与标签标注延迟到 BRANCHES tab 全量加载。
+     */
+    suspend fun localRefsOnly(): Map<String, List<GitGraphRef>> = withContext(Dispatchers.Default) {
+        val raw = runCatching {
+            git("for-each-ref", "--format=%(refname:short)|%(objectname)|%(HEAD)|%(refname)", "refs/heads")
+        }.getOrDefault("")
+        if (raw.isBlank() || raw.startsWith("fatal:")) return@withContext emptyMap()
+        val result = mutableMapOf<String, MutableList<GitGraphRef>>()
+        for (line in raw.split('\n')) {
+            val l = line.removeSuffix("\r").trim()
+            if (l.isBlank()) continue
+            val parts = l.split('|', limit = 4)
+            if (parts.size < 4) continue
+            val isHead = parts[2].trim() == "*"
+            result.getOrPut(parts[1]) { mutableListOf() }
+                .add(GitGraphRef(parts[0], isBranch = true, isCurrent = isHead, isRemote = false))
         }
-        for (name in remoteRaw.split('\n').map { it.removeSuffix("\r").trim() }.filter { it.isNotBlank() }) {
-            result.add(GitBranch(name, current = false, remote = true))
-        }
-        return result
+        result
     }
 
     /** 最近 [limit] 条提交。 */
@@ -174,9 +183,15 @@ class GitRepository @Inject constructor(
      *
      * 首批加载取 [GRAPH_PAGE_SIZE] 条；[hasMore] 按本批返回条数是否达到页大小判定，UI 滚到底据此
      * 触发 [graphAppend] 追加下一页。提交数不足页大小时 hasMore=false，UI 不再显示加载更多。
+     *
+     * [refs] 为外部传入的 refs-by-commit 映射（来自 [loadAllRefs]），避免 graph 内部重复拉全量 refs。
+     * 为空时 graph 不标注任何 ref（首屏轻量快照场景：只拉本地分支，远程/标签标注延迟到 BRANCHES tab）。
      */
-    suspend fun graph(limit: Int = GRAPH_PAGE_SIZE): GitGraph =
-        graphAppend(emptyList(), limit)
+    suspend fun graph(
+        limit: Int = GRAPH_PAGE_SIZE,
+        refs: Map<String, List<GitGraphRef>> = emptyMap()
+    ): GitGraph =
+        graphAppend(emptyList(), refs, limit)
 
     /**
      * 分页加载下一批提交并整体重算泳道布局。
@@ -191,6 +206,7 @@ class GitRepository @Inject constructor(
      */
     suspend fun graphAppend(
         existingCommits: List<GraphCommit>,
+        refs: Map<String, List<GitGraphRef>> = emptyMap(),
         limit: Int = GRAPH_PAGE_SIZE
     ): GitGraph = withContext(Dispatchers.Default) {
         val skip = existingCommits.size
@@ -198,7 +214,7 @@ class GitRepository @Inject constructor(
             .getOrDefault("")
         if (logRaw.isBlank() || logRaw.startsWith("fatal:")) {
             return@withContext if (existingCommits.isEmpty()) GitGraph.EMPTY
-            else buildGraph(existingCommits, hasMore = false)
+            else buildGraph(existingCommits, refs, hasMore = false)
         }
 
         val newCommits = parseGraphCommits(logRaw)
@@ -207,7 +223,7 @@ class GitRepository @Inject constructor(
         // 合并去重：新批次理论上不会与已加载重复（--skip 跳过已加载数量），但防御性按 hash 去重保顺序。
         val existingHashes = existingCommits.mapTo(HashSet()) { it.hash }
         val merged = existingCommits + newCommits.filter { it.hash !in existingHashes }
-        buildGraph(merged, hasMore = newCommits.size >= limit)
+        buildGraph(merged, refs, hasMore = newCommits.size >= limit)
     }
 
     /** 解析 `git log --pretty=format:%H|%h|%an|%ar|%s|%P` 输出为 [GraphCommit] 列表。 */
@@ -221,14 +237,22 @@ class GitRepository @Inject constructor(
             }
         }
 
-    /** 对完整提交列表重算泳道布局并组装 [GitGraph]。 */
-    private suspend fun buildGraph(commits: List<GraphCommit>, hasMore: Boolean): GitGraph {
+    /**
+     * 对完整提交列表重算泳道布局并组装 [GitGraph]。[refs] 为外部传入的全量 refs-by-commit 映射，
+     * 过滤为只含已加载提交 hash 的条目，减少传给 UI 的数据量（全量 3000+ → 仅当前视图几十条）。
+     */
+    private fun buildGraph(
+        commits: List<GraphCommit>,
+        refs: Map<String, List<GitGraphRef>>,
+        hasMore: Boolean
+    ): GitGraph {
         if (commits.isEmpty()) return GitGraph.EMPTY
-        val refs = loadRefs()
+        val commitHashes = commits.mapTo(HashSet()) { it.hash }
+        val filteredRefs = refs.filterKeys { it in commitHashes }
         val layout = computeLanes(commits)
         return GitGraph(
             commits,
-            refs,
+            filteredRefs,
             layout.lanes,
             layout.edges,
             layout.activeTopLanes,
@@ -240,11 +264,21 @@ class GitRepository @Inject constructor(
     }
 
     /**
-     * 一次拉取所有分支/标签及其指向的提交哈希，解析为 `commitHash -> List<GitGraphRef>`。
+     * 一次拉取全部分支/标签及其指向的提交哈希，解析为三份切面：[AllRefs.branches] 列表、[AllRefs.tags] 列表、
+     * [AllRefs.refsByCommit] 映射。`branches()`、`listTags()`、graph 的 refs 标注共用此一次调用，
+     * 消除原先三条独立 `for-each-ref`/`tag` 命令（大仓库各 8-20s）。
+     *
      * `%(refname:short)` 短名、`%(objectname)` 指向的完整哈希、`%(HEAD)` 标记当前分支（输出 `*` 或空）。
      * 本地分支（refs/heads）isRemote=false，远程分支（refs/remotes）isRemote=true，标签（refs/tags）isBranch=false。
+     * 标签按 refname 倒序（纯字符串比较，不读对象内容），避免 `--sort=-creatordate` 遍历所有 tag 对象的 8s 开销。
      */
-    private suspend fun loadRefs(): Map<String, List<GitGraphRef>> {
+    data class AllRefs(
+        val branches: List<GitBranch>,
+        val tags: List<GitTag>,
+        val refsByCommit: Map<String, List<GitGraphRef>>
+    )
+
+    suspend fun loadAllRefs(): AllRefs = withContext(Dispatchers.Default) {
         val raw = runCatching {
             git(
                 "for-each-ref",
@@ -252,8 +286,10 @@ class GitRepository @Inject constructor(
                 "refs/heads", "refs/remotes", "refs/tags"
             )
         }.getOrDefault("")
-        if (raw.isBlank() || raw.startsWith("fatal:")) return emptyMap()
-        val result = mutableMapOf<String, MutableList<GitGraphRef>>()
+        if (raw.isBlank() || raw.startsWith("fatal:")) return@withContext AllRefs(emptyList(), emptyList(), emptyMap())
+        val branches = mutableListOf<GitBranch>()
+        val tags = mutableListOf<GitTag>()
+        val refsByCommit = mutableMapOf<String, MutableList<GitGraphRef>>()
         for (line in raw.split('\n')) {
             val l = line.removeSuffix("\r").trim()
             if (l.isBlank()) continue
@@ -263,12 +299,20 @@ class GitRepository @Inject constructor(
             val hash = parts[1]
             val isHead = parts[2].trim() == "*"
             val refname = parts[3]
-            val isBranch = refname.startsWith("refs/heads") || refname.startsWith("refs/remotes")
             val isRemote = refname.startsWith("refs/remotes")
-            result.getOrPut(hash) { mutableListOf() }
+            val isBranch = refname.startsWith("refs/heads") || isRemote
+            refsByCommit.getOrPut(hash) { mutableListOf() }
                 .add(GitGraphRef(name, isBranch, isHead && !isRemote, isRemote))
+            if (isBranch) {
+                branches.add(GitBranch(name, current = isHead && !isRemote, remote = isRemote))
+            } else {
+                // 标签：objectname 取短哈希（前 7 位）与原 listTags 行为一致。
+                tags.add(GitTag(name, hash.take(7)))
+            }
         }
-        return result
+        // for-each-ref 默认按 refname 排序（本地分支、远程分支、标签各自有序），标签再倒序与原行为对齐。
+        tags.reverse()
+        AllRefs(branches, tags, refsByCommit)
     }
 
     /**
@@ -446,17 +490,7 @@ class GitRepository @Inject constructor(
     }
 
     /** 本地标签列表，按创建时间倒序（最新在前）。 */
-    suspend fun listTags(): List<GitTag> {
-        val raw = git("tag", "--sort=-creatordate", "--format=%(refname:short) %(objectname:short)")
-        if (raw.isBlank() || raw.startsWith("fatal:")) return emptyList()
-        return raw.split('\n').mapNotNull { line ->
-            val l = line.removeSuffix("\r").trim()
-            if (l.isBlank()) return@mapNotNull null
-            val parts = l.split(' ', limit = 2)
-            if (parts.size < 2) return@mapNotNull null
-            GitTag(parts[0], parts[1])
-        }
-    }
+    suspend fun listTags(): List<GitTag> = loadAllRefs().tags
 
     /**
      * 创建新分支。name 为新分支名；startPoint 为基准分支名（null/空 → 从当前 HEAD）；
