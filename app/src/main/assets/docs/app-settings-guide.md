@@ -12,6 +12,7 @@
 6. **容器镜像 (Container)**：请读取 `~/.aicode/docs/container-image.md`
 7. **备份与还原 (Backup)**：请读取 `~/.aicode/docs/backup-and-restore.md`
 8. **Git 版本管理**：请读取 `~/.aicode/docs/git-page.md`
+9. **自定义提示词 (Custom Prompts)**：请读取 `~/.aicode/docs/custom-prompts.md`
 
 ---
 

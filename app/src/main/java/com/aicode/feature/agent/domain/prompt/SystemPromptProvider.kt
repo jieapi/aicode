@@ -19,7 +19,8 @@ import javax.inject.Singleton
 class SystemPromptProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val skillRepository: SkillRepository,
-    private val memoryRepository: com.aicode.feature.agent.domain.memory.MemoryRepository
+    private val memoryRepository: com.aicode.feature.agent.domain.memory.MemoryRepository,
+    private val containerInstaller: com.aicode.feature.agent.domain.container.ContainerInstaller
 ) {
     // 抽象独立的 Source
     interface PromptSource {
@@ -28,21 +29,21 @@ class SystemPromptProvider @Inject constructor(
 
     private inner class StaticRuleSource : PromptSource {
         private val fragments = listOf(
-            "prompts/00-identity.md",
-            "prompts/10-communication.md",
-            "prompts/15-project-rules.md",
-            "prompts/20-coding-discipline.md",
-            "prompts/30-comments.md",
-            "prompts/40-approach.md",
-            "prompts/50-safety.md",
-            "prompts/60-tools-and-paths.md",
-            "prompts/70-skills-and-mcp.md"
+            "00-identity.md",
+            "10-communication.md",
+            "15-project-rules.md",
+            "20-coding-discipline.md",
+            "30-comments.md",
+            "40-approach.md",
+            "50-safety.md",
+            "60-tools-and-paths.md",
+            "70-skills-and-mcp.md"
         )
         @Volatile private var cached: String? = null
 
         override fun build(ctx: AgentContext): String {
-            return cached ?: fragments.joinToString("\n\n") { path ->
-                context.assets.open(path).bufferedReader().use { it.readText() }
+            return cached ?: fragments.joinToString("\n\n") { name ->
+                resolvePrompt(name)
                     .replace(LEADING_COMMENT, "")
                     .trim()
             }.also { cached = it }
@@ -54,7 +55,7 @@ class SystemPromptProvider @Inject constructor(
 
         override fun build(ctx: AgentContext): String? {
             if (ctx.mode != com.aicode.feature.agent.domain.model.AgentMode.PLAN) return null
-            return cached ?: context.assets.open("prompts/80-plan-mode.md").bufferedReader().use { it.readText() }
+            return cached ?: resolvePrompt("80-plan-mode.md")
                 .replace(LEADING_COMMENT, "")
                 .trim()
                 .also { cached = it }
@@ -66,7 +67,7 @@ class SystemPromptProvider @Inject constructor(
 
         override fun build(ctx: AgentContext): String? {
             if (ctx.mode != com.aicode.feature.agent.domain.model.AgentMode.AUTO) return null
-            return cached ?: context.assets.open("prompts/81-auto-mode.md").bufferedReader().use { it.readText() }
+            return cached ?: resolvePrompt("81-auto-mode.md")
                 .replace(LEADING_COMMENT, "")
                 .trim()
                 .also { cached = it }
@@ -252,6 +253,32 @@ class SystemPromptProvider @Inject constructor(
             append("\n\n")
             append(currentTimeSource.build(agentContext))
         }
+    }
+
+    /**
+     * 按优先级解析单个提示词片段：prompts.custom/（用户覆盖） > prompts/（本地默认副本） > assets（内置兑底）。
+     * 本地副本由 [com.aicode.feature.agent.domain.container.ContainerInstaller.extractPrompts] 在启动时全量释放，
+     * App 升级后随之更新；用户只需在 prompts.custom/ 放同名文件即可覆盖，无需改内置。
+     */
+    private fun resolvePrompt(name: String): String {
+        val customDir = File(containerInstaller.aicodeDir, "prompts.custom")
+        val customFile = File(customDir, name)
+        if (customFile.isFile) {
+            try {
+                return customFile.bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "读取自定义提示词失败 $name: ${e.message}", e)
+            }
+        }
+        val defaultFile = File(File(containerInstaller.aicodeDir, "prompts"), name)
+        if (defaultFile.isFile) {
+            try {
+                return defaultFile.bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                FileLogger.w(TAG, "读取本地提示词失败 $name: ${e.message}", e)
+            }
+        }
+        return context.assets.open("prompts/$name").bufferedReader().use { it.readText() }
     }
 
     private companion object {

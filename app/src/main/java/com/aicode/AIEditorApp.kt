@@ -62,6 +62,11 @@ class AIEditorApp : Application() {
         appScope.launch {
             ContainerInstaller.extractDocs(this@AIEditorApp)
         }
+        // 启动即把内置提示词全量释放到 ~/.aicode/prompts/（覆盖式，随 App 升级更新）；
+        // 用户自定义覆盖放在 ~/.aicode/prompts.custom/，同名即覆盖，不被升级覆盖。
+        appScope.launch {
+            ContainerInstaller.extractPrompts(this@AIEditorApp)
+        }
         // 启动即把 Room 凭据 + DataStore 署名落盘到容器持久挂载（/root/.aicode），
         // 让终端裸 git / AI 工具 / UI 三端共用同一份凭据与署名配置。
         appScope.launch {

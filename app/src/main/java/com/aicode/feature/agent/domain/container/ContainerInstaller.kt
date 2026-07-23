@@ -49,6 +49,28 @@ class ContainerInstaller @Inject constructor(
         }
 
         /**
+         * 从 assets 提取内置提示词到 ~/.aicode/prompts/，每次启动全量覆盖，使 App 升级后提示词随之更新。
+         *
+         * 用户自定义覆盖放在 ~/.aicode/prompts.custom/（同名即覆盖），本方法不触碰该目录，
+         * 故用户重写的片段不会被升级覆盖。参见 [com.aicode.feature.agent.domain.prompt.SystemPromptProvider]。
+         */
+        fun extractPrompts(context: Context) {
+            val destDir = File(File(context.filesDir, "aicode"), "prompts")
+            destDir.mkdirs()
+            runCatching {
+                val prompts = context.assets.list("prompts") ?: return
+                for (prompt in prompts) {
+                    val destFile = File(destDir, prompt)
+                    context.assets.open("prompts/$prompt").use { input ->
+                        destFile.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+            }.onFailure {
+                FileLogger.w(TAG, "提取内置提示词失败: ${it.message}", it)
+            }
+        }
+
+        /**
          * 从 assets 提取自定义 git credential helper 到 ~/.aicode/git-credential-aicode 并赋可执行位。
          *
          * 经 [LinuxContainerEngine] 的 -b 绑定即容器内 /root/.aicode/git-credential-aicode，
